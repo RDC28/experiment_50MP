@@ -1,10 +1,15 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
+import yaml
 
 from synthetic_raw_lab import baselines
 from synthetic_raw_lab import color_management as cm
 from synthetic_raw_lab import night_processing as night
 
+ROOT = Path(__file__).resolve().parents[1]
+NIGHT_YAML = ROOT / "configs" / "night_default.yaml"
 SOURCE_SIZE = (192, 108)
 OUTPUT_SIZE = (500, 282)
 NO_DITHER = {"dither_amplitude": 0.0}
@@ -68,6 +73,8 @@ def test_parameters_round_trip_and_accept_levels_or_numbers():
         {"optics": {"vignette": True}},
         {"failure_rule": {"block_size": 8}},
         {"super_resolution": {"mode": "aggressive"}},
+        {"super_resolution": {"tile_size": 32}},
+        {"super_resolution": {"tile_size": "large"}},
     ],
 )
 def test_invalid_parameters_are_rejected(values):
@@ -104,6 +111,71 @@ def test_conservative_parameters_drop_detail_and_tone_changes():
     assert night.tone_curve(safe).lift == 0 and safe.shadows.black_point == 0
     assert safe.texture.sharpening_strength == 0 and safe.highlights.halo_suppression
     assert safe.highlights.rolloff_strength == params.highlights.rolloff_strength
+
+
+# --------------------------------------------------------------------------- night profile
+
+
+def _prd_profile(section: str) -> str:
+    text = (ROOT / "PRD.md").read_text()
+    block = text.split(f"## {section} ", 1)[1]
+    return block.split("```yaml\n", 1)[1].split("```", 1)[0]
+
+
+def test_night_yaml_matches_code_defaults_and_the_prd_profile(tmp_path):
+    prd = tmp_path / "prd_19_1.yaml"
+    prd.write_text(_prd_profile("19.1"))
+    assert night.load_night_config(NIGHT_YAML) == night.NightConfig() == night.load_night_config(prd)
+    config = night.load_night_config(NIGHT_YAML)
+    assert config.experiment.profile == "nighttime_scenery" and config.experiment.input_category == "night"
+    assert config.experiment.export_tiff16 and config.experiment.export_exr
+    assert config.experiment.exr_precision == "half"
+    assert config.night.super_resolution.tile_size == "auto"
+
+
+def test_night_yaml_lists_every_control():
+    raw = yaml.safe_load(NIGHT_YAML.read_text())
+    params = night.NightParams()
+    for section, values in params.to_dict().items():
+        assert set(raw[section]) == set(values), section
+    for key in yaml.safe_load(_prd_profile("19.1")):
+        assert key in raw
+
+
+def test_night_config_overrides_merge_into_sections():
+    config = night.load_night_config(NIGHT_YAML, runtime_preset="quick", shadows={"lift_strength": "none"})
+    assert config.experiment.effective_target_megapixels == config.experiment.quick_target_megapixels
+    assert config.night.shadows.lift_strength == "none"
+    assert config.night.shadows.banding_reduction is True
+    flat = config.to_dict()
+    assert flat["runtime_preset"] == "quick" and flat["shadows"]["lift_strength"] == "none"
+
+
+def test_night_export_block_maps_onto_the_experiment_config(tmp_path):
+    path = tmp_path / "n.yaml"
+    path.write_text("export:\n  tiff16: false\n  exr_half: false\n")
+    config = night.load_night_config(path)
+    assert config.experiment.export_tiff16 is False
+    assert config.experiment.export_exr and config.experiment.exr_precision == "float"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "export:\n  synthetic_dng: true\n",
+        "export:\n  tiff: true\n",
+        "export:\n  tiff16: yes please\n",
+        "export: [tiff16]\n",
+        "shadow_lift: low\n",
+        "shadows:\n  lift: low\n",
+        "night:\n  shadows: {}\n",
+    ],
+)
+def test_invalid_night_profiles_are_rejected(tmp_path, text):
+    path = tmp_path / "n.yaml"
+    path.write_text(text)
+    with pytest.raises(ValueError):
+        night.load_night_config(path)
 
 
 # --------------------------------------------------------------------------- synthetic scene and regions

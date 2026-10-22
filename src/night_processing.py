@@ -38,6 +38,7 @@ from scipy import ndimage
 
 from . import baselines
 from . import color_management as cm
+from . import config as lab_config
 from .quality_metrics import LUMA_WEIGHTS, luma
 
 # --------------------------------------------------------------------------- provenance
@@ -163,12 +164,13 @@ class SuperResolutionParams(_Section):
         "Until the Phase 2 backend lands both modes are Lanczos stand-ins and give identical images.",
         choices=("conservative", "balanced"),
     )
-    tile_size: int = _param(
-        0,
-        "SR tile side in pixels; 0 means automatic (PRD 10.4).",
-        "0 (auto) or 64 to 8192",
+    tile_size: str | int = _param(
+        "auto",
+        "SR tile side in pixels (PRD 6.1, 10.4).",
+        "auto, or 64 to 8192",
         "Recorded for the Phase 2 backend; the Lanczos stand-in does not tile.",
-        bounds=(0, 8192),
+        levels={"auto": 0.0},
+        bounds=(64, 8192),
     )
     tile_overlap: int = _param(
         64,
@@ -600,6 +602,35 @@ def parameter_table(params: NightParams | None = None) -> list[dict]:
                 }
             )
     return rows
+
+
+# Experiment-level defaults of the night profile; the file values override them.
+NIGHT_PROFILE_DEFAULTS = {"profile": "nighttime_scenery", "input_category": "night"}
+
+
+@dataclass(frozen=True)
+class NightConfig:
+    """A validated PRD 19.1 profile: the shared experiment settings plus the Layer 5B controls."""
+
+    experiment: lab_config.ExperimentConfig = field(
+        default_factory=lambda: lab_config.from_dict(NIGHT_PROFILE_DEFAULTS)
+    )
+    night: NightParams = field(default_factory=NightParams)
+
+    def to_dict(self) -> dict:
+        return {**self.experiment.to_dict(), **self.night.to_dict()}
+
+
+def load_night_config(path: str | Path | None = None, **overrides: Any) -> NightConfig:
+    """Load a night profile such as ``configs/night_default.yaml``.
+
+    Flat keys and the ``export`` block are validated by
+    :func:`config.load_profile`, the nested sections by :class:`NightParams`.
+    Overrides are flat experiment keys or section mappings, e.g.
+    ``load_night_config(path, runtime_preset="quick", shadows={"lift_strength": "none"})``.
+    """
+    experiment, sections = lab_config.load_profile(path, tuple(_SECTIONS), NIGHT_PROFILE_DEFAULTS, **overrides)
+    return NightConfig(experiment, NightParams.from_dict(sections))
 
 
 # --------------------------------------------------------------------------- upscaler interface

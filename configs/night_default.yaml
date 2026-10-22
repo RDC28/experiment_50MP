@@ -1,0 +1,81 @@
+# Phase 3 Nighttime Scenery defaults (PRD 19.1), used by notebooks/02_Night_Scenery_50MP.ipynb.
+# Load with night_processing.load_night_config. Flat keys and the export block are the shared experiment
+# settings documented in src/config.py; the nested sections are the Layer 5B controls documented in
+# src/night_processing.py. Both parameter tables show accepted values, effects and warnings, and unknown
+# keys are rejected. Levels such as low or moderate can be replaced by a number in the stated range.
+# PRD 19.2 user controls are marked [19.2].
+profile: nighttime_scenery
+input_category: night
+runtime_preset: standard         # quick (reduced output) | standard (full target) | research (+ repeat runs, memory benchmark)
+quick_target_megapixels: 2.0
+target_megapixels: 50.0
+baselines: [lanczos, bicubic]    # PRD 19.3 bicubic/Lanczos comparisons
+random_seed: 42                  # seeds the simulated dither, grain and bloom
+
+super_resolution:
+  enabled: true
+  mode: balanced                 # conservative | balanced; both are Lanczos stand-ins until the Phase 2 SR backend lands
+  tile_size: auto                # auto | 64 to 8192 (recorded for the Phase 2 backend)
+  tile_overlap: 64
+
+shadows:
+  lift_strength: low             # [19.2 shadow lift] none | low | medium | high | 0 to 1
+  lift_range: 0.05               # linear luminance below which the lift acts
+  preserve_black_level: true     # the lift keeps black at black
+  black_point: 0.0               # [19.2 black point] 0 to 0.02 linear; clips below it
+  color_preservation: 0.85       # [19.2 shadow colour preservation] 1 keeps shadow chroma, 0 neutralises it
+  banding_reduction: true        # [19.2 banding reduction] smooths steps smaller than two 8-bit codes
+  dither_amplitude: 0.5          # triangular dither in 8-bit codes after debanding (simulated)
+  invented_texture_tolerance: low  # low | medium | high
+
+highlights:
+  protect: true
+  rolloff_strength: moderate     # [19.2 highlight shoulder] none | low | moderate | strong | 0 to 1; never recovers clipped radiance
+  halo_suppression: true         # [19.2 halo suppression]
+  halo_suppression_strength: 1.0
+  preserve_light_color: true
+
+color:
+  preserve_source_mood: true     # caps warm/cool and saturation changes
+  saturation_adjustment: minimal # none | minimal | moderate | strong | -1 to 1
+  chromatic_adaptation: optional # optional | off
+  color_temperature_k: 6504      # [19.2 colour temperature] 1700 to 25000; 6504 leaves colour unchanged
+  warm_cool_balance: 0.0         # -1 (cooler) to 1 (warmer)
+  saturation_luminance_coupling: 0.5  # less chroma in the deepest shadows
+  local_color_contrast: 0.0
+  gamut_mapping: preserve_hue    # preserve_hue | clip
+
+texture:
+  architecture_detail_strength: moderate  # [19.2 architectural detail] none | minimal | low | moderate | high | 0 to 2
+  sky_detail_strength: minimal
+  atmospheric_detail_strength: low        # none | low | moderate | high | 0 to 1
+  atmospheric_softness: 0.0               # [19.2 atmospheric softness] 0 to 1
+  sharpening_radius: 1.0                  # [19.2 sharpening radius] source pixels, 0.3 to 5
+  sharpening_strength: 0.35               # [19.2 sharpening strength] 0 to 2
+
+noise:
+  denoise_source: conservative   # [19.2 denoising strength] off | conservative | moderate | strong | 0 to 1
+  synthetic_grain: optional      # optional | off
+  grain_amount: 0.0              # [19.2 grain amount] 0 to 0.05 (simulated)
+  grain_size: 1.0
+  synthetic_sensor_noise: false  # Phase 5
+
+optics:
+  bloom: optional_subtle         # optional_subtle | off
+  bloom_amount: 0.0              # [19.2 light-source bloom] 0 to 0.2 (simulated)
+  bloom_radius: 6.0
+  chromatic_aberration: false
+  vignette: false
+
+# PRD 12.6: fall back to a conservative local result where processing adds artefacts.
+failure_rule:
+  enabled: true
+  block_size: 32
+  halo_increase: 0.02
+  banding_increase: 0.15
+  black_crush_increase: 0.02
+
+export:
+  tiff16: true                   # 16-bit sRGB TIFF master
+  exr_half: true                 # half-float linear EXR master (false writes float32)
+  synthetic_dng: false           # not implemented

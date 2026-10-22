@@ -408,16 +408,63 @@ def from_dict(values: dict[str, Any]) -> ExperimentConfig:
     return ExperimentConfig(**normalized)
 
 
+def _read_mapping(path: str | Path | None) -> dict[str, Any]:
+    if path is None:
+        return {}
+    loaded = yaml.safe_load(Path(path).read_text()) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} must contain a YAML mapping")
+    return loaded
+
+
 def load_config(path: str | Path | None = None, **overrides: Any) -> ExperimentConfig:
     """Load defaults, then a YAML file (if given), then keyword overrides."""
-    values: dict[str, Any] = {}
-    if path is not None:
-        loaded = yaml.safe_load(Path(path).read_text()) or {}
-        if not isinstance(loaded, dict):
-            raise ValueError(f"{path} must contain a YAML mapping")
-        values.update(loaded)
+    return from_dict({**_read_mapping(path), **overrides})
+
+
+# The ``export`` block of the PRD 18.1, 19.1 and 20.1 notebook profiles.
+PROFILE_EXPORT_KEYS = ("tiff16", "exr_half", "synthetic_dng")
+
+
+def load_profile(
+    path: str | Path | None = None,
+    sections: tuple[str, ...] = (),
+    defaults: dict[str, Any] | None = None,
+    **overrides: Any,
+) -> tuple[ExperimentConfig, dict[str, dict]]:
+    """Load a notebook profile (PRD 18.1, 19.1, 20.1).
+
+    Profiles mix flat :class:`ExperimentConfig` keys with an ``export`` block
+    and nested layer sections. The names in ``sections`` are returned as
+    mappings for the caller to validate with its own parameter classes; a
+    mapping override of the same name updates single keys of a section. The
+    ``export`` block maps ``tiff16`` to ``export_tiff16`` and ``exr_half`` to
+    ``exr_precision`` (``export_exr`` still switches the EXR on and off);
+    ``synthetic_dng`` must be false because DNG export is not implemented.
+    Everything else goes through :func:`from_dict`, so unknown keys are
+    rejected. Precedence: ``defaults``, then the file, then ``overrides``.
+    """
+    values = {**(defaults or {}), **_read_mapping(path)}
+    layers = {name: dict(values.pop(name, None) or {}) for name in sections}
+    for name in sections:
+        if name in overrides:
+            layers[name].update(overrides.pop(name) or {})
+    export = values.pop("export", None) or {}
+    if not isinstance(export, dict):
+        raise ValueError("export must be a mapping")
+    unknown = sorted(set(export) - set(PROFILE_EXPORT_KEYS))
+    if unknown:
+        raise ValueError(f"unknown export keys: {', '.join(unknown)}")
+    if any(not isinstance(v, bool) for v in export.values()):
+        raise ValueError(f"export values must be true or false, got {export!r}")
+    if export.get("synthetic_dng", False):
+        raise ValueError("export.synthetic_dng is not available (the PRD 17.2 synthetic DNG export is not implemented)")
+    if "tiff16" in export:
+        values["export_tiff16"] = export["tiff16"]
+    if "exr_half" in export:
+        values["exr_precision"] = "half" if export["exr_half"] else "float"
     values.update(overrides)
-    return from_dict(values)
+    return from_dict(values), layers
 
 
 def parameter_table(config: ExperimentConfig | None = None) -> list[dict]:
