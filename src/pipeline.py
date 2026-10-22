@@ -23,21 +23,52 @@ from pathlib import Path
 import numpy as np
 import psutil
 
-from . import __version__, baselines, comparison, environment, exporters, ingestion, quality_metrics, report_builder
+from . import (
+    __version__,
+    baselines,
+    comparison,
+    environment,
+    exporters,
+    ingestion,
+    quality_metrics,
+    report_builder,
+    sr_models,
+)
 from . import color_management as cm
+from . import super_resolution as sr
 from .config import ExperimentConfig
 from .resolution import TargetResolution, compute_target_resolution
 
 PRESERVATION = "Preservation"
 INTERPOLATION = "Interpolation"
+INFERENCE = "Inference"
 PACKAGING = "Packaging"
 MEASUREMENT = "Measurement (reads data, produces no image data)"
+SETUP = "Setup (loads model weights, produces no image data)"
 
 NOTICE = (
     "Synthetic camera-grade master reconstructed by classical interpolation from an AI-generated source. "
     "It is not a camera capture or camera RAW file and contains no recovered sensor measurements."
 )
+SR_NOTICE = (
+    "Synthetic camera-grade master reconstructed by pretrained super-resolution from an AI-generated source. "
+    "Detail above the source sampling limit was synthesised by a learned model, not recovered; it is not a "
+    "camera capture or camera RAW file and contains no recovered sensor measurements."
+)
+RUN_NOTICE_SR = (
+    "Synthetic camera-grade masters reconstructed from an AI-generated source by classical interpolation "
+    "(baselines) and by pretrained super-resolution (synthesised detail). None is a camera capture or camera "
+    "RAW file and none contains recovered sensor measurements."
+)
 LOW_MEMORY_HEADROOM_GB = 1.0
+# Provisional Phase 2 gates for major seams, to be calibrated in pilot runs (PRD 25.3; data in docs/models.md).
+# Hard seams: a 1 code value offset across a boundary scores 4.7 to 11 on real SR output; seam-free output
+# scores 0.9 to 1.9. Soft seams: with the default tiling, low-frequency tile disagreement (8-bit codes, p99)
+# stayed at or below 2.9 with no visible seam; broken tilings (unaligned windows, small tiles or overlaps)
+# reached 6 to 9. A low-frequency difference of 4 codes crossfaded over 32 source pixels moves the image by
+# at most 2 codes, about the visibility threshold of a smooth luminance change.
+SEAM_SCORE_LIMIT = 3.0
+SEAM_LOW_FREQUENCY_P99_LIMIT = 4.0
 
 
 class StageError(RuntimeError):
@@ -125,8 +156,9 @@ def run(
     stages: list[StageRecord] = []
     manifest: dict = {
         "schema": "synthetic_raw_lab.phase01.manifest/1",
-        "phase": "Phase 0 (feasibility) and Phase 1 (baselines)",
-        "notice": NOTICE,
+        "phase": "Phase 0 (feasibility) and Phase 1 (baselines)"
+        + (" and Phase 2 (pretrained super-resolution)" if config.enable_super_resolution else ""),
+        "notice": RUN_NOTICE_SR if config.enable_super_resolution else NOTICE,
         "started_at": started_at.isoformat(timespec="seconds"),
         "package": {
             "name": "synthetic_raw_lab",
@@ -135,7 +167,12 @@ def run(
         },
         "notebook_version": notebook_version,
         "models": [],
-        "random_seeds": {"random_seed": config.random_seed, "used_by": "nothing (Phase 0/1 is deterministic)"},
+        "random_seeds": {
+            "random_seed": config.random_seed,
+            "used_by": "torch.manual_seed before SR inference (inference itself draws no random numbers)"
+            if config.enable_super_resolution
+            else "nothing (Phase 0/1 is deterministic)",
+        },
         "config": config.to_dict(),
         "runtime": runtime,
         "stages": [],
@@ -210,7 +247,7 @@ def run(
         manifest["storage"] = environment.estimate_storage(
             target.width,
             target.height,
-            len(config.baselines),
+            len(config.baselines) + (len(config.sr_modes) if config.enable_super_resolution else 0),
             tiff=config.export_tiff16,
             exr=config.export_exr,
             exr_bytes_per_sample=2 if config.exr_precision == "half" else 4,
@@ -284,6 +321,24 @@ def run(
             )
             gc.collect()
 
+        if config.enable_super_resolution:
+            _run_super_resolution(
+                manifest,
+                source,
+                target,
+                config,
+                project_root,
+                run_id,
+                masters_dir,
+                figures_dir,
+                crops,
+                source_encoded16,
+                crop_tiles,
+                crop_stats,
+                stage,
+                log,
+            )
+
         with stage(
             StageRecord("crop_comparison", MEASUREMENT, {"crops": len(crops)}, "uint16 sRGB", "uint8 sRGB review PNG")
         ):
@@ -296,7 +351,8 @@ def run(
                 )
                 tiles = {m: cm.srgb_uint16_to_uint8(t) for m, t in crop_tiles[crop.name].items()}
                 path = exporters.write_review_image(
-                    figures_dir / f"crop_{crop.name}.png", comparison.crop_panel(source_tile, tiles)
+                    figures_dir / f"crop_{crop.name}.png",
+                    comparison.crop_panel(source_tile, tiles, difference=_panel_difference(tiles)),
                 )
                 panels.append({"crop": crop.name, "path": str(path), "methods": crop_stats[crop.name]})
             manifest["crop_panels"] = panels
@@ -365,7 +421,49 @@ def _run_baseline(
                 "identical": repeat_hash == summary["working_pixel_sha256"],
             }
 
-    provenance = _provenance(run_id, source, method, target)
+    buffer = [output]
+    del output  # the helper frees the 50 MP buffer as soon as it is encoded
+    _export_and_measure(
+        method,
+        buffer,
+        summary,
+        _provenance(run_id, source, method, target),
+        _exr_attributes(run_id, source, f"{method} baseline"),
+        source,
+        target,
+        config,
+        masters_dir,
+        figures_dir,
+        crops,
+        crop_tiles,
+        crop_stats,
+        stage,
+    )
+
+
+def _export_and_measure(
+    method: str,
+    buffer: list,
+    summary: dict,
+    provenance: dict,
+    exr_attributes: dict,
+    source,
+    target: TargetResolution,
+    config: ExperimentConfig,
+    masters_dir,
+    figures_dir,
+    crops,
+    crop_tiles,
+    crop_stats,
+    stage,
+) -> None:
+    """Exports, source-consistency metrics, crops and preview of one reconstruction (baseline or SR).
+
+    ``buffer`` is a one-item list holding the float32 output; it is emptied so the 50 MP buffer is freed
+    as soon as it is encoded. The caller must not keep its own reference.
+    """
+    size = f"{target.width}x{target.height}"
+    output = buffer.pop()
     if config.export_exr:
         with stage(
             StageRecord(
@@ -383,7 +481,7 @@ def _run_baseline(
             result = exporters.write_exr(
                 masters_dir / f"{_stem(source)}_{method}_{size}_lin_rec709_{suffix}.exr",
                 output,
-                _exr_attributes(run_id, source, f"{method} baseline"),
+                exr_attributes,
                 precision=config.exr_precision,
                 compression=config.exr_compression,
             )
@@ -465,6 +563,204 @@ def _run_baseline(
     gc.collect()
 
 
+def _run_super_resolution(
+    manifest: dict,
+    source,
+    target: TargetResolution,
+    config: ExperimentConfig,
+    project_root: Path,
+    run_id,
+    masters_dir,
+    figures_dir,
+    crops,
+    source_encoded16,
+    crop_tiles,
+    crop_stats,
+    stage,
+    log,
+) -> None:
+    """Phase 2: one pretrained-SR master per configured mode, measured and exported like the baselines."""
+    networks = sr_models.BACKENDS[config.sr_backend]
+    record = manifest["super_resolution"] = {
+        "backend": config.sr_backend,
+        "scale_handling": "network at its native x4, then Lanczos-3 in linear light to the exact target size",
+        "modes": {},
+    }
+    if target.scale_x <= 1 or target.scale_y <= 1:
+        record["skipped"] = (
+            f"target scale {target.scale_x:.3f} x {target.scale_y:.3f} is not an enlargement; super-resolution "
+            "cannot add anything (use the standard preset for the full target)"
+        )
+        log(f"super-resolution skipped: {record['skipped']}")
+        return
+    if not sr_models.available():
+        raise RuntimeError("super-resolution needs PyTorch and spandrel: pip install 'synthetic-raw-50mp-lab[sr]'")
+    weights_dir = Path(config.sr_weights_dir) if config.sr_weights_dir else sr_models.default_weights_dir(project_root)
+    loaded: dict[str, sr_models.TorchModel] = {}
+    for index, mode in enumerate(config.sr_modes):
+        preset = sr.PRESETS[mode]
+        name = f"sr_{mode}"
+        weights = networks[preset.network]
+        consistency = preset.consistency_strength if config.preserve_source_structure else 0.0
+        summary = record["modes"][mode] = {
+            "preset": preset.to_dict(),
+            "classification": INFERENCE,
+            "weights": weights,
+            "strength": config.sr_strength,
+            "consistency_strength": consistency,
+            "exports": {},
+        }
+        if weights not in loaded:
+            with stage(
+                StageRecord(
+                    f"load_model_{weights}",
+                    SETUP,
+                    {"weights": weights, "device": config.sr_device, "precision": config.sr_precision},
+                    "weights file",
+                    "network",
+                )
+            ):
+                loaded[weights] = sr_models.load_model(
+                    weights,
+                    weights_dir,
+                    device=config.sr_device,
+                    precision=config.sr_precision,
+                    seed=config.random_seed,
+                    log=log,
+                )
+        model = loaded[weights]
+        tile = config.sr_tile_size
+        tile_basis = "configured"
+        if not tile:
+            tile, tile_basis = sr_models.auto_tile_size(
+                model.device, model.precision, model.architecture, source_width=source.width, scale=model.scale
+            )
+        tile = max(tile, 2 * config.sr_tile_overlap)
+        resample = target.scale_x / model.scale
+        with stage(
+            StageRecord(
+                f"super_resolution_{mode}",
+                INFERENCE,
+                {
+                    "weights": weights,
+                    "native_scale": model.scale,
+                    "then": f"Lanczos-3 x{resample:.4f} ({'downscale' if resample < 1 else 'upscale'})",
+                    "tile": f"{tile} ({tile_basis})",
+                    "overlap": config.sr_tile_overlap,
+                    "strength": config.sr_strength,
+                    "device": model.device,
+                    "precision": model.precision,
+                },
+                "float32 linear (sRGB-encoded for the network)",
+                "float32 linear",
+            )
+        ) as record_stage:
+            output, tiling = sr.super_resolve(
+                source.linear,
+                target.width,
+                target.height,
+                model,
+                tile_size=tile,
+                tile_overlap=config.sr_tile_overlap,
+                detail_strength=config.sr_strength,
+                log=lambda _: None,
+            )
+            summary["tiling"] = tiling.to_dict()
+            summary["tiling"]["tile_basis"] = tile_basis
+            summary["final_resample"] = {"filter": "Lanczos-3, linear light", "factor": resample}
+            record_stage.notes = [f["message"] for f in tiling.fallbacks]
+            model = loaded[weights] = _current_model(model, tiling)
+            summary["model"] = model.describe()
+            manifest["models"] = [m["model"] for m in record["modes"].values() if "model" in m]
+        log(f"{name}: {tiling.tiles} tiles of {tile} px on {tiling.final_device}, {tiling.inference_seconds:.0f} s")
+
+        if consistency > 0:
+            with stage(
+                StageRecord(
+                    f"source_projection_{mode}",
+                    INTERPOLATION,
+                    {"strength": consistency, "reduction": "area average", "upsampling": "Keys bicubic"},
+                    "float32 linear",
+                    "float32 linear",
+                )
+            ):
+                summary["source_projection"] = sr.project_to_source(output, source.linear, consistency)
+
+        with stage(StageRecord(f"seam_check_{mode}", MEASUREMENT, {"boundaries": len(tiling.boundaries)}, "-", "-")):
+            seams = sr.seam_scores(output, tiling.boundaries, source.linear)
+            disagreement = summary["tiling"]["overlap_disagreement"]
+            seams["passed"] = (seams["max_score"] or 0) <= SEAM_SCORE_LIMIT and (
+                disagreement["low_frequency_p99_abs_max"] or 0
+            ) <= SEAM_LOW_FREQUENCY_P99_LIMIT
+            seams["limits"] = {
+                "max_score": SEAM_SCORE_LIMIT,
+                "overlap_low_frequency_p99_abs_8bit": SEAM_LOW_FREQUENCY_P99_LIMIT,
+            }
+            summary["seams"] = seams
+
+        with stage(StageRecord(f"interpolation_difference_{mode}", MEASUREMENT, {"reference": "Lanczos-3"}, "-", "-")):
+            difference, summary["interpolation_difference"] = sr.interpolation_difference(output, source.linear)
+            report_builder.heatmap_figure(
+                _reduce_map(difference, config.review_max_edge),
+                figures_dir / f"sr_difference_{mode}.png",
+                f"|{name} - Lanczos|, sRGB luma (synthesised detail and drift)",
+                config.review_max_edge,
+                label="8-bit code values",
+            )
+            del difference
+            summary["working_pixel_sha256"] = ingestion.pixel_sha256(output)
+            summary["statistics"] = quality_metrics.image_statistics(output)
+
+        buffer = [output]
+        del output
+        _export_and_measure(
+            name,
+            buffer,
+            summary,
+            _sr_provenance(run_id, source, target, summary),
+            _exr_attributes(run_id, source, f"{name} pretrained super-resolution", notice=SR_NOTICE),
+            source,
+            target,
+            config,
+            masters_dir,
+            figures_dir,
+            crops,
+            crop_tiles,
+            crop_stats,
+            stage,
+        )
+        remaining = {networks[sr.PRESETS[m].network] for m in config.sr_modes[index + 1 :]}
+        for unused in set(loaded) - remaining:
+            loaded.pop(unused).release_cache()
+        gc.collect()
+
+
+def _current_model(model, tiling):
+    """After a device fallback the tiler holds a CPU copy; keep using it for later modes."""
+    if tiling.final_device and tiling.final_device != model.device:
+        return model.fallback() or model
+    return model
+
+
+def _reduce_map(values: np.ndarray, max_edge: int) -> np.ndarray:
+    """Area-reduce a float16 full-resolution map to review size in row bands (no full float32 copy)."""
+    height, width = values.shape
+    scale = min(1.0, max_edge / max(width, height))
+    size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    rows = np.empty((height, size[0]), dtype=np.float32)
+    for start in range(0, height, 512):
+        block = values[start : start + 512].astype(np.float32)[..., None]
+        rows[start : start + 512] = baselines.downsample_area(block, size[0], block.shape[0])[..., 0]
+    return baselines.downsample_area(rows[..., None], size[0], size[1])[..., 0]
+
+
+def _panel_difference(tiles: dict) -> tuple[str, str] | None:
+    """Crop panels show |first SR mode - Lanczos| when SR ran (PRD 10.5), else the two baselines."""
+    reference = "lanczos" if "lanczos" in tiles else next(iter(tiles))
+    learned = [name for name in tiles if name.startswith("sr_")]
+    return (reference, learned[0]) if learned else None
+
+
 @contextmanager
 def _stage(record: StageRecord, stages: list[StageRecord], monitor: environment.MemoryMonitor, log):
     start = time.perf_counter()
@@ -510,7 +806,9 @@ def _checksums(manifest: dict) -> dict:
     sums = {}
     for item in manifest.get("intermediates", []):
         sums[Path(item["path"]).name] = item["file_sha256"]
-    for summary in manifest.get("baselines", {}).values():
+    reconstructions = list(manifest.get("baselines", {}).values())
+    reconstructions += list(manifest.get("super_resolution", {}).get("modes", {}).values())
+    for summary in reconstructions:
         for export in summary.get("exports", {}).values():
             sums[Path(export["path"]).name] = export["file_sha256"]
     return sums
@@ -536,9 +834,35 @@ def _provenance(run_id: str, source, method: str, target: TargetResolution) -> d
     }
 
 
-def _exr_attributes(run_id: str, source, content: str) -> dict[str, str]:
+def _sr_provenance(run_id: str, source, target: TargetResolution, summary: dict) -> dict:
+    weights = sr_models.WEIGHTS[summary["weights"]]
     return {
-        "comments": NOTICE,
+        "notice": SR_NOTICE,
+        "run_id": run_id,
+        "source_name": source.original_path.name,
+        "source_sha256": source.sha256,
+        "source_dimensions": [source.width, source.height],
+        "output_dimensions": [target.width, target.height],
+        "method": f"{summary['preset']['label']}: {weights.name} ({weights.architecture}), x4 then Lanczos-3",
+        "model_weights_sha256": weights.sha256,
+        "model_license": weights.license,
+        "stage_classification": [PRESERVATION, INFERENCE, INTERPOLATION, PACKAGING],
+        "information": {
+            "preserved": "source structure up to the source sampling limit; low-frequency tone and colour are "
+            f"pulled back to the source (correction strength {summary['consistency_strength']})",
+            "interpolated": "the final resample from the network's x4 grid to the target, the low-frequency "
+            f"correction and a {1 - summary['strength']:.0%} Lanczos share",
+            "inferred": f"detail above the source sampling limit, synthesised by {weights.name} from learned "
+            "priors, not recovered",
+            "simulated": "none",
+        },
+        "package_version": __version__,
+    }
+
+
+def _exr_attributes(run_id: str, source, content: str, *, notice: str = NOTICE) -> dict[str, str]:
+    return {
+        "comments": notice,
         "colorSpaceDescription": exporters.EXR_COLOR_DESCRIPTION,
         "channelNaming": "R, G, B: linear-light Rec.709 primaries",
         "syntheticRawLabContent": content,

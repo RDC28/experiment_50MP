@@ -1,0 +1,19 @@
+# Phase 2 defaults: the Phase 0/1 baselines plus inference-only pretrained super-resolution (PRD 10, E02).
+# Every key is documented in src/config.py; keys not listed keep the defaults of baseline_default.yaml.
+# Model choice, licences and checksums: docs/models.md.
+profile: super_resolution
+input_category: universal
+runtime_preset: standard
+
+baselines: [lanczos, bicubic]
+
+enable_super_resolution: true
+sr_backend: swinir               # swinir (evaluated default) | realesrgan (faster, smooths texture)
+sr_modes: [conservative, balanced]  # aggressive is an experimental extra for E02
+sr_tile_size: 0                  # 0 = memory-aware automatic size
+sr_tile_overlap: 64              # PRD 6.1; below 64 the networks' border artefacts reach the image
+sr_strength: 1.0                 # 1 = network output; lower blends towards Lanczos
+preserve_source_structure: true  # low-frequency source-consistency correction (PRD 10.5)
+sr_device: auto                  # auto | cuda | mps | cpu
+sr_precision: auto               # auto | float32 | float16
+sr_weights_dir: ""               # empty = <project>/weights (ignored by Git)

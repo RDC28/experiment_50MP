@@ -59,7 +59,7 @@ def histogram_figure(histograms: dict, path: Path) -> Path:
     return path
 
 
-def heatmap_figure(values: np.ndarray, path: Path, title: str, max_edge: int) -> Path:
+def heatmap_figure(values: np.ndarray, path: Path, title: str, max_edge: int, *, label: str = "delta E 2000") -> Path:
     import cv2
     import matplotlib
 
@@ -79,7 +79,7 @@ def heatmap_figure(values: np.ndarray, path: Path, title: str, max_edge: int) ->
     ax.set_title(title)
     ax.axis("off")
     colorbar_axes = make_axes_locatable(ax).append_axes("right", size="2.5%", pad=0.1)
-    fig.colorbar(image, cax=colorbar_axes, label="delta E 2000")
+    fig.colorbar(image, cax=colorbar_axes, label=label)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
@@ -98,8 +98,11 @@ def render_report(manifest: dict, report_dir: Path) -> str:
     target = manifest.get("target_resolution", {})
     runtime = manifest.get("runtime", {})
     baselines_done = manifest.get("baselines", {})
+    sr_record = manifest.get("super_resolution") or {}
+    methods = {**baselines_done, **{f"sr_{m}": s for m, s in sr_record.get("modes", {}).items()}}
+    title = "Phase 0 to 2 report" if sr_record else "Phase 0/1 baseline report"
 
-    add(f"# Phase 0/1 baseline report: {Path(source.get('original_path', 'unknown source')).name}\n")
+    add(f"# {title}: {Path(source.get('original_path', 'unknown source')).name}\n")
     add(f"> {manifest['notice']}\n")
     add(f"Status: **{manifest.get('status')}**\n")
     if manifest.get("error"):
@@ -118,7 +121,7 @@ def render_report(manifest: dict, report_dir: Path) -> str:
         ),
         ("Pipeline version", _version(manifest)),
         ("Notebook version", manifest.get("notebook_version") or "- (run outside a notebook)"),
-        ("Models", "none (classical interpolation only)"),
+        ("Models", _models_text(manifest)),
         ("GPU", f"{gpu['name']} ({gpu['memory_total_gb']} GB)" if gpu else "none detected (CPU only)"),
         ("Platform", f"{runtime.get('platform', '-')}, Python {runtime.get('python', '-')}"),
         ("Total runtime", f"{manifest.get('total_seconds', 0):.1f} s"),
@@ -136,6 +139,12 @@ def render_report(manifest: dict, report_dir: Path) -> str:
         "- Interpolation estimates samples between source pixels. It adds no information beyond the source "
         "sampling limit; every output pixel is an estimate."
     )
+    if sr_record:
+        add(
+            "- Pretrained super-resolution predicts detail above the source sampling limit from priors learned on "
+            "other photographs. That detail is synthesised, not recovered, and may be wrong even when it looks "
+            "plausible; a sharper result is not accepted for looking sharper (PRD 10.5)."
+        )
     add("- 16-bit and floating-point encodings add numerical precision, not dynamic range or recovered detail.")
     add(
         "- Source-consistency metrics show agreement with the source after reduction; they cannot prove that "
@@ -230,41 +239,54 @@ def render_report(manifest: dict, report_dir: Path) -> str:
     figures = report_dir / "figures"
     if (figures / "source_preview.jpg").exists():
         add("Original source:\n\n![Source](figures/source_preview.jpg)\n")
-    for method in baselines_done:
+    for method in methods:
         if (figures / f"{method}_preview.jpg").exists():
+            kind = "pretrained super-resolution" if method.startswith("sr_") else "baseline"
             add(
-                f"{method.capitalize()} baseline at output size (review downscale):\n\n"
+                f"{method.capitalize()} {kind} at output size (review downscale):\n\n"
                 f"![{method}](figures/{method}_preview.jpg)\n"
             )
     for panel in manifest.get("crop_panels", []):
         name = Path(panel["path"]).name
         add(
-            f"Crop `{panel['crop']}` (source, baselines at 100% output pixels, amplified difference):\n\n"
+            f"Crop `{panel['crop']}` (source, every method at 100% output pixels, amplified difference):\n\n"
             f"![{panel['crop']}](figures/{name})\n"
         )
-    for method in baselines_done:
+    for mode in sr_record.get("modes", {}):
+        if (figures / f"sr_difference_{mode}.png").exists():
+            add(
+                f"Difference heatmap, sr_{mode} vs Lanczos at output resolution (where detail was synthesised or "
+                f"drifted):\n\n![sr_{mode} vs Lanczos](figures/sr_difference_{mode}.png)\n"
+            )
+    for method in methods:
         if (figures / f"delta_e_{method}.png").exists():
             add(
                 f"Difference map, {method} reduced to source resolution vs source:\n\n"
                 f"![delta E {method}](figures/delta_e_{method}.png)\n"
             )
 
-    if baselines_done:
+    if methods:
         add("## 8. Quantitative results (PRD 27.4)\n")
         add("Source consistency, measured on the 16-bit TIFF master after area reduction to source size:\n")
-        add(_table(["Metric"] + list(baselines_done), _metric_rows(baselines_done)))
-        add(f"LPIPS: {next(iter(baselines_done.values())).get('source_consistency', {}).get('lpips_note', '-')}.\n")
+        add(_table(["Metric"] + list(methods), _metric_rows(methods)))
+        if any(s.get("source_projection") for s in sr_record.get("modes", {}).values()):
+            add(
+                "SR modes with a low-frequency correction were pulled towards the source under the same area "
+                "reduction these metrics use, so their PSNR, SSIM and delta E are partly true by construction. Edge "
+                "displacement and the interpolation-difference statistics below remain independent checks.\n"
+            )
+        add(f"LPIPS: {next(iter(methods.values())).get('source_consistency', {}).get('lpips_note', '-')}.\n")
         add("Image statistics and clipping:\n")
-        add(_table(["Quantity"] + list(baselines_done), _statistics_rows(baselines_done)))
+        add(_table(["Quantity"] + list(methods), _statistics_rows(methods)))
         if manifest.get("crop_panels"):
             add("Crop high-frequency energy (variance of the luma Laplacian, encoded domain):\n")
             add(
                 _table(
-                    ["Crop"] + list(baselines_done),
+                    ["Crop"] + list(methods),
                     [
                         (
                             p["crop"],
-                            *[_num(p["methods"].get(m, {}).get("high_frequency_energy"), 6) for m in baselines_done],
+                            *[_num(p["methods"].get(m, {}).get("high_frequency_energy"), 6) for m in methods],
                         )
                         for p in manifest["crop_panels"]
                     ],
@@ -272,6 +294,8 @@ def render_report(manifest: dict, report_dir: Path) -> str:
             )
         add("Export validation (PRD 23.6):\n")
         add(_table(["File", "Kind", "Size", "Compression", "Checks", "SHA-256"], _export_rows(manifest)))
+    if sr_record:
+        add(_sr_section(sr_record))
 
     add("## 9. Information provenance (PRD 27.5)\n")
     source_pixels = (source.get("width") or 0) * (source.get("height") or 0)
@@ -285,8 +309,16 @@ def render_report(manifest: dict, report_dir: Path) -> str:
                     f"All image structure. The source holds {source_pixels:,} samples per channel, "
                     f"{share} of the output pixel count.",
                 ),
-                ("Interpolated values", "Every output sample (classical, deterministic kernels)."),
-                ("Learned inference", "None."),
+                (
+                    "Interpolated values",
+                    "Every baseline sample (classical, deterministic kernels)"
+                    + (
+                        "; in the SR masters, the final resample from the x4 grid and the low-frequency correction."
+                        if sr_record.get("modes")
+                        else "."
+                    ),
+                ),
+                ("Learned inference", _inference_text(sr_record)),
                 ("Simulated sensor effects", "None."),
                 ("Added noise or grain", "None."),
                 (
@@ -310,7 +342,7 @@ def render_report(manifest: dict, report_dir: Path) -> str:
                 ("Decoded pixel SHA-256", f"`{source.get('pixel_sha256', '-')}`"),
                 ("Package", _version(manifest)),
                 ("Notebook version", manifest.get("notebook_version") or "-"),
-                ("Models and weight hashes", "none"),
+                ("Models and weight hashes", _models_text(manifest, hashes=True)),
                 ("GPU", gpu["name"] if gpu else "none"),
                 ("Random seeds", json.dumps(manifest.get("random_seeds", {}))),
                 ("Runtime", f"{manifest.get('total_seconds', 0):.1f} s"),
@@ -324,6 +356,115 @@ def render_report(manifest: dict, report_dir: Path) -> str:
     add("Configuration:\n")
     add("```json\n" + json.dumps(manifest.get("config", {}), indent=2) + "\n```\n")
     return "\n".join(out)
+
+
+def _models_text(manifest: dict, *, hashes: bool = False) -> str:
+    models = manifest.get("models") or []
+    if not models:
+        return "none (classical interpolation only)"
+    parts = []
+    for model in models:
+        weights = model["weights"]
+        text = f"{weights['name']} ({weights['architecture']}, {weights['license']})"
+        if hashes:
+            text += f", SHA-256 `{weights['sha256']}`, {weights['url']}"
+        parts.append(text + f" on {model['device']['name']} ({model['precision']})")
+    return "; ".join(parts)
+
+
+def _inference_text(sr_record: dict) -> str:
+    modes = sr_record.get("modes", {})
+    if not modes:
+        return "None."
+    used = ", ".join(f"sr_{m}: {s['weights']}" for m, s in modes.items())
+    return (
+        f"Detail above the source sampling limit in the SR masters ({used}) is synthesised by pretrained networks "
+        "from learned priors; it is not recovered information. The baselines contain none."
+    )
+
+
+def _sr_section(sr_record: dict) -> str:
+    """PRD 10 and experiment E02: how each SR mode was produced and its seam and hallucination checks."""
+    out = ["## 8b. Pretrained super-resolution (PRD 10, experiment E02)\n"]
+    if sr_record.get("skipped"):
+        out.append(f"Skipped: {sr_record['skipped']}.\n")
+        return "\n".join(out)
+    out.append(f"Backend `{sr_record['backend']}`; scale handling: {sr_record['scale_handling']}.\n")
+    rows = []
+    for mode, s in sr_record.get("modes", {}).items():
+        tiling = s.get("tiling", {})
+        disagreement = tiling.get("overlap_disagreement", {})
+        seams = s.get("seams", {})
+        projection = s.get("source_projection") or {}
+        difference = s.get("interpolation_difference") or {}
+        model = s.get("model", {})
+        rows.append(
+            (
+                f"sr_{mode}",
+                s["preset"]["label"],
+                s["weights"],
+                f"{model.get('device', {}).get('name', '-')} {model.get('precision', '')}".strip(),
+                f"{tiling.get('tile_size', '-')} / {tiling.get('tile_overlap', '-')}",
+                f"{tiling.get('tiles', '-')} ({tiling.get('model_calls', '-')} calls)",
+                f"{tiling.get('inference_seconds', 0):.0f}",
+                _num(model.get("peak_device_memory_mb"), 0),
+                "; ".join(f["message"] for f in tiling.get("fallbacks", [])) or "none",
+                f"{_num(disagreement.get('low_frequency_p99_abs_max'), 3)} "
+                f"({_num(disagreement.get('p99_abs_max'), 2)} raw)",
+                _num(seams.get("max_score"), 3),
+                {True: "pass", False: "FAIL"}.get(seams.get("passed"), "-"),
+                f"{projection.get('mean_abs_residual_linear_before', '-')} -> "
+                f"{projection.get('mean_abs_residual_linear_after', '-')}"
+                if projection
+                else "off",
+                f"{difference.get('mean', '-')} / {difference.get('p99', '-')}",
+            )
+        )
+    out.append(
+        _table(
+            [
+                "Output",
+                "Mode",
+                "Weights",
+                "Device",
+                "Tile / overlap px",
+                "Tiles",
+                "Inference s",
+                "Peak device MB",
+                "Memory fallbacks",
+                "Overlap disagreement p99, low-frequency (raw), 8-bit",
+                "Seam score max",
+                "Seam check",
+                "Low-frequency residual (linear) before -> after",
+                "vs Lanczos mean / p99 (8-bit luma)",
+            ],
+            rows,
+        )
+    )
+    out.append(
+        "Overlap disagreement: how far neighbouring tiles disagree inside their crossfade zones. Its low-frequency "
+        "part (Gaussian of 2 source pixels) is what a soft seam is made of and is gated; the raw value also counts "
+        "texture the two tiles synthesised differently, which the crossfade hides. Seam score: luma step across "
+        "each tile-boundary line relative to nearby lines, divided by the same on Lanczos (about 1 means no hard "
+        "seam). Both gates are provisional until calibrated in pilot runs (PRD 25.3)" + _limits_text(sr_record) + ".\n"
+    )
+    out.append("Mode intents:\n")
+    out += [
+        f"- `sr_{mode}`: {s['preset']['intent']} {s['preset']['warning']}".rstrip()
+        for mode, s in sr_record.get("modes", {}).items()
+    ]
+    out.append("")
+    return "\n".join(out)
+
+
+def _limits_text(sr_record: dict) -> str:
+    limits = next((s["seams"]["limits"] for s in sr_record.get("modes", {}).values() if "seams" in s), None)
+    if not limits:
+        return ""
+    return (
+        f"; a mode passes when the low-frequency disagreement p99 is at most "
+        f"{limits['overlap_low_frequency_p99_abs_8bit']} and the seam score at most {limits['max_score']}"
+    )
 
 
 def conclusions(manifest: dict) -> list[str]:
@@ -391,14 +532,72 @@ def conclusions(manifest: dict) -> list[str]:
                 f"Kernel overshoot outside [0, 1] (a ringing indicator) is largest for {most} "
                 f"({overshoot[most]:.4%} of samples); the TIFF clips it, the EXR keeps it."
             )
+    lines += _sr_conclusions(manifest)
     lines.append(
         "Visual acceptance (PRD 25.2: seams, ringing, halos, banding) needs human review of the crop "
         "panels at 100% and 200%."
     )
-    lines.append(
-        "No new detail was inferred: interpolation cannot recover information above the source sampling "
-        "limit, which is the reference that later pretrained SR phases must beat."
+    if manifest.get("super_resolution", {}).get("modes"):
+        lines.append(
+            "Detail in the SR masters above the source sampling limit was inferred by pretrained networks; "
+            "source consistency shows it agrees with the source after reduction, not that it is correct."
+        )
+    else:
+        lines.append(
+            "No new detail was inferred: interpolation cannot recover information above the source sampling "
+            "limit, which is the reference that later pretrained SR phases must beat."
+        )
+    return lines
+
+
+def _sr_conclusions(manifest: dict) -> list[str]:
+    record = manifest.get("super_resolution")
+    if not record:
+        return []
+    if record.get("skipped"):
+        return [f"Phase 2 super-resolution was skipped: {record['skipped']}."]
+    modes = record.get("modes", {})
+    target = manifest.get("target_resolution") or {}
+    lines = []
+    finished = {m: s for m, s in modes.items() if s.get("exports") and "seams" in s}
+    complete = (
+        manifest.get("status") == "complete"
+        and finished
+        and len(finished) == len(modes)
+        and all(e.get("valid") for s in finished.values() for e in s["exports"].values())
     )
+    seams_ok = all(s["seams"].get("passed") for s in finished.values())
+    if not target.get("target_pixels", 0) >= 50_000_000:
+        lines.append(
+            "Phase 2 exit criterion not assessed: this run used a reduced target "
+            f"({target.get('target_pixels', 0) / 1e6:g} MP)."
+        )
+    elif complete and seams_ok:
+        lines.append(
+            "Phase 2 exit criterion met by the automated checks: full-resolution SR ran for every mode, every "
+            "export passed validation and no tile boundary exceeded the seam gates. Confirm visually."
+        )
+    else:
+        lines.append(
+            "Phase 2 exit criterion not met: "
+            + ("a seam gate failed." if complete else "at least one SR mode did not finish or failed validation.")
+        )
+    fallbacks = sum(len(s.get("tiling", {}).get("fallbacks", [])) for s in modes.values())
+    if fallbacks:
+        lines.append(f"Memory fallback was used {fallbacks} time(s); see the SR table for details.")
+    measured = {f"sr_{m}": s["source_consistency"] for m, s in modes.items() if "source_consistency" in s}
+    base = {m: s["source_consistency"] for m, s in manifest.get("baselines", {}).items() if "source_consistency" in s}
+    if measured and base:
+        reference = "lanczos" if "lanczos" in base else next(iter(base))
+        ref_edges = base[reference]["edge_displacement"]["mean_px"]
+        for name, metrics in measured.items():
+            edges = metrics["edge_displacement"]["mean_px"]
+            difference = modes[name[3:]].get("interpolation_difference", {})
+            lines.append(
+                f"{name}: source PSNR {metrics['psnr_db']:.2f} dB vs {base[reference]['psnr_db']:.2f} dB for "
+                f"{reference}; edge displacement {_num(edges, 3)} px vs {_num(ref_edges, 3)} px; mean departure "
+                f"from Lanczos {difference.get('mean', '-')} 8-bit luma codes (p99 {difference.get('p99', '-')})."
+            )
     return lines
 
 
@@ -523,7 +722,9 @@ def _clipped_fraction(clipping: dict | None) -> str:
 def _export_rows(manifest: dict) -> list[tuple]:
     rows = []
     exports = list(manifest.get("intermediates", []))
-    for summary in manifest.get("baselines", {}).values():
+    reconstructions = list(manifest.get("baselines", {}).values())
+    reconstructions += list(manifest.get("super_resolution", {}).get("modes", {}).values())
+    for summary in reconstructions:
         exports += list(summary.get("exports", {}).values())
     for e in exports:
         passed = sum(e["checks"].values())

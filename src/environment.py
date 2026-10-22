@@ -46,6 +46,8 @@ _PACKAGES = (
     "psutil",
     "matplotlib",
     "torch",
+    "torchvision",
+    "spandrel",
 )
 
 
