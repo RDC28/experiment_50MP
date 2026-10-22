@@ -73,6 +73,10 @@ class OutOfMemoryModel(LocalModel):
         super().__init__(device)
         self.limit = limit
         self.fallback_model = fallback_model
+        self.releases = 0
+
+    def release_cache(self):
+        self.releases += 1
 
     def __call__(self, encoded):
         if max(encoded.shape[:2]) > self.limit:
@@ -225,6 +229,7 @@ def test_out_of_memory_tiles_are_split_and_the_result_is_unchanged(source):
     out, report = run(source, model, tile_size=128, tile_overlap=32)
     assert np.abs(out - untiled(source, LocalModel())).max() < 1e-5
     assert [e["kind"] for e in report.fallbacks] == ["split", "split"]  # 128 -> 64 -> 32
+    assert model.releases == 2  # the device cache is emptied before every retry
     assert max(max(shape) for shape in model.calls) <= 48
     assert report.final_device == "gpu"
 

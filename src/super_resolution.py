@@ -35,6 +35,7 @@ interpolation, which is where inferred detail lives.
 
 from __future__ import annotations
 
+import gc
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -236,22 +237,30 @@ class _Inference:
         try:
             out = self.model(encoded)
         except DeviceOutOfMemory as error:
-            smaller = side // 2 // 8 * 8
-            if smaller >= MIN_TILE:
-                self.max_side = smaller
-                self._event("split", f"{error}; tiles reduced to {smaller} px", side)
-            else:
-                fallback = self.model.fallback()
-                if fallback is None:
-                    raise
-                self._event("device", f"{error}; continuing on {fallback.device}", side)
-                self.model = fallback
-                self.max_side = 1 << 30
-            return self(encoded)
-        self.report.inference_seconds += time.perf_counter() - start
-        self.report.model_calls += 1
-        self.report.final_device = getattr(self.model, "device", "")
-        return out
+            message = str(error)
+        else:
+            self.report.inference_seconds += time.perf_counter() - start
+            self.report.model_calls += 1
+            self.report.final_device = getattr(self.model, "device", "")
+            return out
+        # Retry outside the except block: the exception's traceback holds the failed attempt's device tensors,
+        # which must be released before the cache can be emptied.
+        gc.collect()
+        release = getattr(self.model, "release_cache", None)
+        if release is not None:
+            release()
+        smaller = side // 2 // 8 * 8
+        if smaller >= MIN_TILE:
+            self.max_side = smaller
+            self._event("split", f"{message}; tiles reduced to {smaller} px", side)
+        else:
+            fallback = self.model.fallback()
+            if fallback is None:
+                raise DeviceOutOfMemory(f"{message}; no fallback device left")
+            self._event("device", f"{message}; continuing on {fallback.device}", side)
+            self.model = fallback
+            self.max_side = 1 << 30
+        return self(encoded)
 
     def _event(self, kind: str, message: str, side: int) -> None:
         self.report.fallbacks.append({"kind": kind, "tile_side": side, "message": message})

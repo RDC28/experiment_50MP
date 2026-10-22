@@ -329,7 +329,7 @@ class TorchModel:
         except (RuntimeError, MemoryError) as error:
             if not _is_out_of_memory(error):
                 raise
-            self.release_cache()
+            # The tiler empties the device cache once this exception (and the tensors it holds) is released.
             raise DeviceOutOfMemory(f"{self.device}: {str(error).splitlines()[0]}") from error
         return out
 
