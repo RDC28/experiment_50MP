@@ -731,10 +731,12 @@ class RegionThresholds:
     light_tophat: float = 0.2
     specular_luminance: float = 0.25
     specular_tophat: float = 0.08
+    specular_streak_width: float = 0.1  # fraction of source height; reflections are narrower than this
+    specular_streak_length: float = 0.2  # fraction of source height; reflections run at least this far down
     clipped_linear: float = 0.996
     smooth_texture: float = 0.004
     smooth_edge: float = 0.03
-    sky_texture: float = 0.008
+    sky_texture: float = 0.004
     sky_max_luminance: float = 0.6
     sky_max_row_fraction: float = 0.75
     halo_ring_px: int = 3
@@ -828,7 +830,15 @@ class RegionMap:
 
 
 def segment_regions(source_linear: np.ndarray, thresholds: RegionThresholds | None = None) -> RegionMap:
-    """Label the source into the PRD 8.3 night regions (deterministic heuristics, no models)."""
+    """Label the source into the PRD 8.3 night regions (deterministic heuristics, no models).
+
+    Specular reflections are compact bright glints, or bright streaks that are
+    horizontally narrow, vertically elongated and lie below a light source,
+    as reflections on wet ground or water do. Sky is the low-texture top of
+    each column: a pixel is sky only if every pixel above it is sky-like or a
+    light such as a star, so smooth facades and roads below a skyline never
+    join the sky.
+    """
     t = thresholds or RegionThresholds()
     encoded = cm.linear_to_srgb(np.clip(source_linear, 0, 1))
     y = luma(encoded)
@@ -839,9 +849,23 @@ def segment_regions(source_linear: np.ndarray, thresholds: RegionThresholds | No
     tophat15 = cv2.morphologyEx(y, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
     bright = (y >= t.bright_light) | ((y >= 0.45) & (tophat15 >= t.light_tophat))
     bright = cv2.dilate(bright.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool) & ~clipped
-    tophat9 = cv2.morphologyEx(y, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
-    specular = (y >= t.specular_luminance) & (tophat9 >= t.specular_tophat) & ~bright & ~clipped
-    lights = clipped | bright | specular
+    sources = clipped | bright
+    compact = np.minimum(  # bright only on a small spot: narrower than 9 px both across and along
+        cv2.morphologyEx(y, cv2.MORPH_TOPHAT, np.ones((1, 9), np.uint8)),
+        cv2.morphologyEx(y, cv2.MORPH_TOPHAT, np.ones((9, 1), np.uint8)),
+    )
+    glints = (y >= t.specular_luminance) & (compact >= t.specular_tophat) & ~sources
+    across = 2 * int(t.specular_streak_width * height / 2) + 1
+    along = 2 * int(t.specular_streak_length * height / 2) + 1
+    narrow = cv2.morphologyEx(y, cv2.MORPH_TOPHAT, np.ones((1, across), np.uint8))
+    streaks = ((y >= t.specular_luminance) & (narrow >= t.specular_tophat)).astype(np.uint8)
+    streaks = cv2.morphologyEx(streaks, cv2.MORPH_OPEN, np.ones((along, 1), np.uint8)).astype(bool)
+    # Only a light outside the streak can cast it; streak pixels below light-source level are reflection.
+    anchors = cv2.dilate((sources & ~streaks).astype(np.uint8), np.ones((1, across), np.uint8)).astype(bool)
+    reflected = streaks & np.logical_or.accumulate(anchors, axis=0) & ~clipped & (y < t.bright_light)
+    specular = glints | reflected
+    bright &= ~specular
+    lights = sources | specular
 
     detail = y - _blur(y, 1.5)
     texture = np.sqrt(_blur(detail * detail, 2.5))
@@ -850,11 +874,16 @@ def segment_regions(source_linear: np.ndarray, thresholds: RegionThresholds | No
     edges = ndimage.maximum_filter(gradient, size=5)
     smooth = (texture < t.smooth_texture) & (edges < t.smooth_edge) & ~lights
 
-    sky_candidate = (texture < t.sky_texture) & (y < t.sky_max_luminance) & ~lights
-    sky_candidate[int(height * t.sky_max_row_fraction) :] = False
-    components, _ = ndimage.label(sky_candidate, structure=np.ones((3, 3)))
-    top = np.unique(components[0][components[0] > 0])
-    sky = np.isin(components, top) if top.size else np.zeros_like(sky_candidate)
+    # Small lights such as stars are replaced by their surroundings before judging the sky's texture,
+    # and lights do not end the sky below them.
+    unlit = cv2.dilate(lights.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    unlit = np.where(
+        unlit, cv2.morphologyEx(y, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))), y
+    )
+    unlit_detail = unlit - _blur(unlit, 1.5)
+    sky_like = (np.sqrt(_blur(unlit_detail * unlit_detail, 2.5)) < t.sky_texture) & (y < t.sky_max_luminance) & ~lights
+    sky_like[int(height * t.sky_max_row_fraction) :] = False
+    sky = np.logical_and.accumulate(sky_like | lights, axis=0) & sky_like
 
     labels = np.full((height, width), REGION_NAMES.index("midtone"), dtype=np.uint8)
     # Assigned from lowest to highest priority, so later assignments win.

@@ -212,6 +212,65 @@ def test_segmentation_finds_every_night_region(scene):
     assert sky[0].mean() > 0.9 and not sky[-1].any()
 
 
+def _encoded_scene(encoded: np.ndarray) -> np.ndarray:
+    return cm.srgb_to_linear(np.clip(encoded, 0, 1).astype(np.float32))
+
+
+def test_sky_stops_at_the_skyline_even_where_facades_are_smooth():
+    rng = np.random.default_rng(3)
+    height, width = 160, 240
+    v = np.linspace(0, 1, height, dtype=np.float32)[:, None, None]
+    encoded = np.broadcast_to(0.04 + 0.05 * v, (height, width, 3)).copy()  # smooth sky gradient
+    # A building with the sky on both sides: floor lines, then wide facade bands at the sky's
+    # luminance carrying the mild luma and chroma noise of make_night_scene, the top band noiseless.
+    facade = (slice(40, height), slice(80, 160))
+    shape = (height - 40, 80)
+    noise = rng.normal(0, 1.2 / 255, shape)[..., None] + rng.normal(0, 1.6 / 255, (*shape, 3))
+    encoded[facade] = 0.07 + noise.astype(np.float32)
+    encoded[42:62, 80:160] = 0.07
+    for row in range(40, height, 22):
+        encoded[row : row + 2, 80:160] = 0.12  # roofline and floor lines
+    encoded[8:10, 20:22] = encoded[12:14, 200:202] = 1.0  # stars
+    regions = night.segment_regions(_encoded_scene(encoded))
+    sky = regions.mask("sky_atmosphere")
+    assert sky[:35].mean() > 0.9
+    assert sky[20:120, 21].all() and sky[25:120, 201].all()  # a star does not end the sky below it
+    assert not sky[facade].any()
+    assert sky[:120, :70].mean() > 0.9  # open sky beside the building is still sky
+
+    full = night.make_night_scene(384, 216)
+    sky = night.segment_regions(_encoded_scene(full / 255)).mask("sky_atmosphere")
+    assert sky[0].mean() > 0.9
+    assert not sky[int(0.5 * 216) :].any()  # every column is facade or road below the tallest roofline
+
+
+def test_reflections_below_lights_are_specular():
+    height, width = 160, 240
+    encoded = np.full((height, width, 3), 0.06, dtype=np.float32)
+    encoded[20:26, 57:63] = 1.0  # a clipped lamp
+    encoded[70:150, 54:66] = 0.4  # its reflection: narrow, long and below the lamp
+    encoded[70:150, 174:186] = 0.4  # the same streak with no light above it
+    encoded[100:108, 100:150] = 0.4  # a wide, short bright patch
+    regions = night.segment_regions(_encoded_scene(encoded))
+    specular = regions.mask("specular_reflection")
+    assert specular[75:145, 56:64].mean() > 0.9
+    assert not specular[:, 150:].any()
+    assert not specular[100:108, 100:150].any()
+
+    scene_size = (384, 216)
+    full = night.make_night_scene(*scene_size)
+    regions = night.segment_regions(_encoded_scene(full / 255))
+    specular = regions.mask("specular_reflection")
+    lit = regions.mask("specular_reflection", "bright_light", "clipped_highlight")
+    assert regions.fractions()["specular_reflection"] > 0.005
+    road = slice(int(0.66 * scene_size[1]), scene_size[1])
+    for lamp_x in (0.12, 0.33, 0.55, 0.78, 0.93):  # the street lamps of make_night_scene
+        column = int(lamp_x * scene_size[0])
+        # Reflections are specular; only their brightest ripples count as lights.
+        assert lit[road, column - 1 : column + 2].mean() > 0.95, lamp_x
+        assert specular[road, column - 4 : column + 5].any(axis=1).mean() > 0.9, lamp_x
+
+
 def test_regions_can_be_overridden_and_visualised(scene):
     _, source, regions, _ = scene
     edited = regions.override("sky_atmosphere", [[0, 0, 10, 5]], note="manual")
