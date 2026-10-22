@@ -1,0 +1,537 @@
+"""Markdown run report and figures (PRD section 27).
+
+The report is rebuilt from ``manifest.json`` alone, so a partial manifest from
+a failed run still produces a readable report of what completed.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+
+from . import baselines
+from . import color_management as cm
+from .exporters import write_review_image
+
+
+def write_preview(encoded16: np.ndarray, path: Path, max_edge: int) -> Path:
+    """Downscale a 16-bit sRGB image in linear light and write an 8-bit review JPEG."""
+    height, width = encoded16.shape[:2]
+    scale = min(1.0, max_edge / max(width, height))
+    size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    preview = np.empty((size[1], size[0], 3), dtype=np.float32)
+    for channel in range(3):
+        plane = cm.srgb_uint16_to_linear(encoded16[..., channel])[..., None]
+        preview[..., channel] = baselines.downsample_area(plane, *size)[..., 0]
+        del plane
+    encoded, _ = cm.encode_srgb_uint16(preview)
+    return write_review_image(path, cm.srgb_uint16_to_uint8(encoded))
+
+
+def histogram_figure(histograms: dict, path: Path) -> Path:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colors = {"R": "#d62728", "G": "#2ca02c", "B": "#1f77b4", "Y": "#555555", "luma": "#111111"}
+    bins = np.arange(histograms["bins"])
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.2), dpi=110)
+    for name in ("R", "G", "B", "Y"):
+        if name in histograms:
+            axes[0].plot(bins, histograms[name], color=colors[name], linewidth=1, label=name)
+    axes[1].fill_between(bins, histograms["luma"], color=colors["luma"], alpha=0.6, linewidth=0)
+    axes[0].set_title("Channel histograms (encoded values)")
+    axes[1].set_title("Luma histogram")
+    for ax in axes:
+        ax.set_xlim(0, histograms["bins"] - 1)
+        ax.set_yscale("symlog")
+        ax.set_xlabel("code value (256 bins)")
+    axes[0].legend(frameon=False)
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def heatmap_figure(values: np.ndarray, path: Path, title: str, max_edge: int) -> Path:
+    import cv2
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    height, width = values.shape
+    scale = min(1.0, max_edge / max(width, height))
+    if scale < 1.0:
+        values = cv2.resize(
+            values, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA
+        )
+    upper = max(float(np.percentile(values, 99.5)), 1.0)
+    fig, ax = plt.subplots(figsize=(10, 10 * values.shape[0] / values.shape[1] + 0.8), dpi=110)
+    image = ax.imshow(values, cmap="inferno", vmin=0, vmax=upper, interpolation="nearest")
+    ax.set_title(title)
+    ax.axis("off")
+    fig.colorbar(image, ax=ax, fraction=0.03, pad=0.02, label="delta E 2000")
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def write_report(manifest: dict, path: Path) -> Path:
+    path.write_text(render_report(manifest, path.parent))
+    return path
+
+
+def render_report(manifest: dict, report_dir: Path) -> str:
+    out: list[str] = []
+    add = out.append
+    source = manifest.get("source", {})
+    target = manifest.get("target_resolution", {})
+    runtime = manifest.get("runtime", {})
+    baselines_done = manifest.get("baselines", {})
+
+    add(f"# Phase 0/1 baseline report: {Path(source.get('original_path', 'unknown source')).name}\n")
+    add(f"> {manifest['notice']}\n")
+    add(f"Status: **{manifest.get('status')}**\n")
+    if manifest.get("error"):
+        add(f"Failure: `{manifest['error']['message']}`. Outputs written before the failure are kept.\n")
+
+    add("## 1. Run summary\n")
+    gpu = runtime.get("gpu")
+    rows = [
+        ("Run ID", manifest.get("run_id", "-")),
+        ("Source", f"`{Path(source.get('original_path', '-')).name}`"),
+        ("Source SHA-256", f"`{source.get('sha256', '-')}`"),
+        ("Input dimensions", _dims(source.get("width"), source.get("height"))),
+        (
+            "Output dimensions",
+            _dims(target.get("width"), target.get("height")) + (f" ({target['megapixels']:.3f} MP)" if target else ""),
+        ),
+        ("Pipeline version", _version(manifest)),
+        ("Notebook version", manifest.get("notebook_version") or "- (run outside a notebook)"),
+        ("Models", "none (classical interpolation only)"),
+        ("GPU", f"{gpu['name']} ({gpu['memory_total_gb']} GB)" if gpu else "none detected (CPU only)"),
+        ("Platform", f"{runtime.get('platform', '-')}, Python {runtime.get('python', '-')}"),
+        ("Total runtime", f"{manifest.get('total_seconds', 0):.1f} s"),
+        ("Peak resident memory", f"{manifest.get('memory', {}).get('pipeline_peak_rss_mb', '-')} MB"),
+        ("Storage used", _bytes(manifest.get("storage_used_bytes"))),
+    ]
+    add(_table(["Item", "Value"], rows))
+
+    add("## 2. Scientific limitations\n")
+    add(
+        "- The source is a rendered, display-referred image. Linearising it gives linear-light display-referred "
+        "values, not scene-referred radiance; the EXR master is synthetic linear RGB."
+    )
+    add(
+        "- Interpolation estimates samples between source pixels. It adds no information beyond the source "
+        "sampling limit; every output pixel is an estimate."
+    )
+    add("- 16-bit and floating-point encodings add numerical precision, not dynamic range or recovered detail.")
+    add(
+        "- Source-consistency metrics show agreement with the source after reduction; they cannot prove that "
+        "detail above the source resolution is correct.\n"
+    )
+
+    validation = manifest.get("validation")
+    if validation:
+        add("## 3. Input validation (PRD 3.4)\n")
+        add(_table(["Check", "Result"], _validation_rows(validation)))
+        if validation.get("warnings"):
+            add("Warnings:\n")
+            add("\n".join(f"- {w}" for w in validation["warnings"]) + "\n")
+        add("![Source histograms](figures/source_histograms.png)\n")
+
+    if target:
+        add("## 4. Target resolution (PRD 3.5)\n")
+        add(
+            _table(
+                ["Quantity", "Value"],
+                [
+                    ("Mode", target["mode"]),
+                    ("Requested pixels", f"{target['target_pixels']:,}"),
+                    ("Achieved pixels", f"{target['pixels']:,}"),
+                    ("Pixel-count error", f"{target['pixel_count_error']:+.4%}"),
+                    ("Aspect-ratio error", f"{target['aspect_ratio_error']:+.5%}"),
+                    ("Nominal linear scale", f"{target['nominal_scale']:.5f}"),
+                    ("Scale x / y", f"{target['scale_x']:.5f} / {target['scale_y']:.5f}"),
+                ],
+            )
+        )
+
+    add("## 5. Processing log (PRD 27.2)\n")
+    stage_rows = []
+    for stage in manifest.get("stages", []):
+        issues = "; ".join(stage["memory_warnings"] + ([stage["error"]] if stage["error"] else []) + stage["notes"])
+        stage_rows.append(
+            (
+                stage["name"],
+                stage["classification"],
+                "yes" if stage["enabled"] else "no",
+                f"{stage['seconds']:.2f}",
+                f"{stage['input_precision']} -> {stage['output_precision']}",
+                f"{stage['rss_peak_mb']:.0f}" if stage["rss_peak_mb"] is not None else "-",
+                _short_params(stage["parameters"]),
+                issues or "-",
+            )
+        )
+    add(
+        _table(
+            [
+                "Stage",
+                "Class (PRD 5.2)",
+                "Enabled",
+                "Seconds",
+                "Precision",
+                "Peak RSS MB",
+                "Parameters",
+                "Warnings, errors, notes",
+            ],
+            stage_rows,
+        )
+    )
+
+    memory = manifest.get("memory", {})
+    if memory.get("estimates"):
+        add("## 6. Memory (PRD 21.3, 28.1)\n")
+        add("Base-image estimates at the output size (decimal MB, excluding temporaries):\n")
+        add(
+            _table(
+                ["Representation", "Bytes/pixel", "Estimated MB"],
+                [(r["representation"], r["bytes_per_pixel"], r["estimated_mb"]) for r in memory["estimates"]],
+            )
+        )
+        if memory.get("benchmark"):
+            add("Measured allocation benchmark:\n")
+            add(
+                _table(
+                    ["Representation", "Estimated MB", "Measured RSS MB", "Allocate s"],
+                    [
+                        (r["representation"], r["estimated_mb"], r["measured_rss_mb"], r["allocate_seconds"])
+                        for r in memory["benchmark"]
+                    ],
+                )
+            )
+        add(
+            f"Pipeline peak resident memory: {memory.get('pipeline_peak_rss_mb', '-')} MB; process lifetime peak: "
+            f"{memory.get('process_lifetime_peak_rss_mb', '-')} MB.\n"
+        )
+
+    add("## 7. Visual results (PRD 27.3)\n")
+    figures = report_dir / "figures"
+    if (figures / "source_preview.jpg").exists():
+        add("Original source:\n\n![Source](figures/source_preview.jpg)\n")
+    for method in baselines_done:
+        if (figures / f"{method}_preview.jpg").exists():
+            add(
+                f"{method.capitalize()} baseline at output size (review downscale):\n\n"
+                f"![{method}](figures/{method}_preview.jpg)\n"
+            )
+    for panel in manifest.get("crop_panels", []):
+        name = Path(panel["path"]).name
+        add(
+            f"Crop `{panel['crop']}` (source, baselines at 100% output pixels, amplified difference):\n\n"
+            f"![{panel['crop']}](figures/{name})\n"
+        )
+    for method in baselines_done:
+        if (figures / f"delta_e_{method}.png").exists():
+            add(
+                f"Difference map, {method} reduced to source resolution vs source:\n\n"
+                f"![delta E {method}](figures/delta_e_{method}.png)\n"
+            )
+
+    if baselines_done:
+        add("## 8. Quantitative results (PRD 27.4)\n")
+        add("Source consistency, measured on the 16-bit TIFF master after area reduction to source size:\n")
+        add(_table(["Metric"] + list(baselines_done), _metric_rows(baselines_done)))
+        add(f"LPIPS: {next(iter(baselines_done.values())).get('source_consistency', {}).get('lpips_note', '-')}.\n")
+        add("Image statistics and clipping:\n")
+        add(_table(["Quantity"] + list(baselines_done), _statistics_rows(baselines_done)))
+        if manifest.get("crop_panels"):
+            add("Crop high-frequency energy (variance of the luma Laplacian, encoded domain):\n")
+            add(
+                _table(
+                    ["Crop"] + list(baselines_done),
+                    [
+                        (
+                            p["crop"],
+                            *[_num(p["methods"].get(m, {}).get("high_frequency_energy"), 6) for m in baselines_done],
+                        )
+                        for p in manifest["crop_panels"]
+                    ],
+                )
+            )
+        add("Export validation (PRD 23.6):\n")
+        add(_table(["File", "Kind", "Size", "Compression", "Checks", "SHA-256"], _export_rows(manifest)))
+
+    add("## 9. Information provenance (PRD 27.5)\n")
+    source_pixels = (source.get("width") or 0) * (source.get("height") or 0)
+    share = f"{source_pixels / target['pixels']:.1%}" if target and source_pixels else "-"
+    add(
+        _table(
+            ["Contribution", "In this run"],
+            [
+                (
+                    "Original source data",
+                    f"All image structure. The source holds {source_pixels:,} samples per channel, "
+                    f"{share} of the output pixel count.",
+                ),
+                ("Interpolated values", "Every output sample (classical, deterministic kernels)."),
+                ("Learned inference", "None."),
+                ("Simulated sensor effects", "None."),
+                ("Added noise or grain", "None."),
+                (
+                    "File encoding",
+                    "16-bit sRGB integer TIFF (clips interpolation overshoot); half or float linear EXR "
+                    "(keeps overshoot). Precision only, no new information.",
+                ),
+            ],
+        )
+    )
+
+    add("## 10. Conclusions (PRD 27.6)\n")
+    add("\n".join(f"- {line}" for line in conclusions(manifest)) + "\n")
+
+    add("## 11. Provenance record (PRD 6.2)\n")
+    add(
+        _table(
+            ["Item", "Value"],
+            [
+                ("Source SHA-256", f"`{source.get('sha256', '-')}`"),
+                ("Decoded pixel SHA-256", f"`{source.get('pixel_sha256', '-')}`"),
+                ("Package", _version(manifest)),
+                ("Notebook version", manifest.get("notebook_version") or "-"),
+                ("Models and weight hashes", "none"),
+                ("GPU", gpu["name"] if gpu else "none"),
+                ("Random seeds", json.dumps(manifest.get("random_seeds", {}))),
+                ("Runtime", f"{manifest.get('total_seconds', 0):.1f} s"),
+            ],
+        )
+    )
+    add("Dependency versions:\n")
+    add(_table(["Package", "Version"], sorted(runtime.get("packages", {}).items())))
+    add("Output checksums (SHA-256):\n")
+    add(_table(["File", "SHA-256"], [(f"`{k}`", f"`{v}`") for k, v in manifest.get("output_checksums", {}).items()]))
+    add("Configuration:\n")
+    add("```json\n" + json.dumps(manifest.get("config", {}), indent=2) + "\n```\n")
+    return "\n".join(out)
+
+
+def conclusions(manifest: dict) -> list[str]:
+    """Factual, automatically checkable statements; visual judgements are left to human review."""
+    lines = []
+    target = manifest.get("target_resolution")
+    done = manifest.get("baselines", {})
+    config = manifest.get("config", {})
+    if manifest.get("status") != "complete":
+        lines.append(f"The run did not complete ({manifest.get('status')}); conclusions cover finished stages only.")
+    if target:
+        within = abs(target["pixel_count_error"]) <= config.get("pixel_count_tolerance", 0.001) or (
+            target["mode"] == "exact" and target["pixels"] == target["target_pixels"]
+        )
+        lines.append(
+            f"Output size {target['width']}x{target['height']} ({target['pixels']:,} pixels) "
+            f"{'meets' if within else 'misses'} the configured pixel-count target."
+        )
+        is_full = target["target_pixels"] >= 50_000_000
+        exports_ok = (
+            bool(done)
+            and all(e.get("valid") for s in done.values() for e in s.get("exports", {}).values())
+            and all(s.get("exports") for s in done.values())
+        )
+        if is_full and within and exports_ok:
+            lines.append(
+                "Phase 0 exit criterion met: a valid 50 MP master was created and exported from the "
+                "source by classical interpolation, and every export passed read-back validation."
+            )
+        elif not is_full:
+            lines.append(
+                "Phase 0 exit criterion not assessed: this run used a reduced target "
+                f"({target['target_pixels'] / 1e6:g} MP, preset {config.get('runtime_preset')})."
+            )
+        else:
+            lines.append("Phase 0 exit criterion not met: at least one export is missing or failed validation.")
+    if done:
+        measured = all("source_consistency" in s for s in done.values())
+        reproducible = [s["reproducibility"]["identical"] for s in done.values() if "reproducibility" in s]
+        if reproducible:
+            lines.append(
+                f"Reproducibility: {sum(reproducible)}/{len(reproducible)} baselines produced bit-identical "
+                "float32 output on a repeat run."
+            )
+        else:
+            lines.append(
+                "Reproducibility was not re-run in this preset; compare the recorded working_pixel_sha256 "
+                "values across runs (the research preset repeats each baseline)."
+            )
+        if measured and (not reproducible or all(reproducible)):
+            lines.append(
+                "Phase 1 baselines are measurable: source-consistency metrics are reported for every baseline."
+            )
+        if len(done) >= 2 and measured and all("statistics" in s for s in done.values()):
+            names = list(done)
+            best_psnr = max(names, key=lambda m: done[m]["source_consistency"]["psnr_db"])
+            best_de = min(names, key=lambda m: done[m]["source_consistency"]["color_difference_ciede2000"]["mean"])
+            lines.append(f"Highest source PSNR: {best_psnr}; lowest mean delta E 2000: {best_de}.")
+            overshoot = {
+                m: done[m]["statistics"]["below_zero_fraction"] + done[m]["statistics"]["above_one_fraction"]
+                for m in names
+            }
+            most = max(overshoot, key=overshoot.get)
+            lines.append(
+                f"Kernel overshoot outside [0, 1] (a ringing indicator) is largest for {most} "
+                f"({overshoot[most]:.4%} of samples); the TIFF clips it, the EXR keeps it."
+            )
+    lines.append(
+        "Visual acceptance (PRD 25.2: seams, ringing, halos, banding) needs human review of the crop "
+        "panels at 100% and 200%."
+    )
+    lines.append(
+        "No new detail was inferred: interpolation cannot recover information above the source sampling "
+        "limit, which is the reference that later pretrained SR phases must beat."
+    )
+    return lines
+
+
+# --------------------------------------------------------------------------- formatting helpers
+
+
+def _table(header: list[str], rows) -> str:
+    lines = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
+    for row in rows:
+        lines.append("| " + " | ".join(str(c).replace("|", "\\|").replace("\n", " ") for c in row) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def _dims(width, height) -> str:
+    return f"{width} x {height}" if width and height else "-"
+
+
+def _bytes(value) -> str:
+    if value is None:
+        return "-"
+    return f"{value / 1e6:,.1f} MB"
+
+
+def _num(value, digits: int = 4) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, float) and value == float("inf"):
+        return "inf"
+    return f"{value:.{digits}f}"
+
+
+def _version(manifest: dict) -> str:
+    package = manifest.get("package", {})
+    git = package.get("git") or {}
+    commit = git.get("commit")
+    text = f"synthetic_raw_lab {package.get('version', '?')}"
+    if commit:
+        text += f", commit `{commit[:12]}`" + (" (uncommitted changes)" if git.get("dirty") else "")
+    return text
+
+
+def _short_params(parameters: dict) -> str:
+    return ", ".join(f"{k}={v}" for k, v in parameters.items()) or "-"
+
+
+def _validation_rows(validation: dict) -> list[tuple]:
+    file, dims, samples = validation["file"], validation["dimensions"], validation["samples"]
+    color, clipping, compression = validation["color"], validation["clipping"], validation["compression"]
+    alpha, metadata = validation["alpha"], validation["metadata"]
+    clip_text = ", ".join(
+        f"{n} {c['at_min_fraction']:.3%} / {c['at_max_fraction']:.3%}" for n, c in clipping["channels"].items()
+    )
+    return [
+        ("Format", f"{file['format']} ({file['size_bytes']:,} bytes), decoded by {file['decoder']}"),
+        ("Read-only stored copy", f"`{Path(file['stored_copy']).name}` (read-only: {file['stored_read_only']})"),
+        (
+            "Dimensions",
+            f"{dims['width']} x {dims['height']} ({dims['megapixels']:.2f} MP), aspect {dims['aspect_ratio_reduced']}",
+        ),
+        (
+            "Bit depth",
+            f"{samples['bit_depth']}-bit {samples['dtype']} (effective {samples['effective_bit_depth']}-bit)",
+        ),
+        ("Channels", f"{samples['channels_in_file']} in file, {samples['color_channels']} colour"),
+        ("Alpha", "none" if not alpha["present"] else ("opaque" if alpha["opaque"] else f"min {alpha['min']:.4f}")),
+        ("ICC profile", color["icc_profile_description"] or ("present" if color["icc_profile_present"] else "none")),
+        ("Source interpretation", f"{color['resolved']['description']} ({color['resolved']['origin']})"),
+        ("Working signal", color["working_signal"]),
+        ("EXIF", json.dumps(metadata["exif"]) if metadata["exif_present"] else "none"),
+        ("Embedded text keys", ", ".join(metadata["text_keys"]) or "none"),
+        ("Clipping (at min / at max)", clip_text),
+        ("JPEG quality estimate", compression["jpeg_quality_estimate"] or "-"),
+        ("8x8 blockiness ratio", f"{compression['blockiness_ratio']:.3f} (about 1.0 means no block artefacts)"),
+        (
+            "Integrity",
+            "structure verified and fully decoded" if validation["integrity"]["structure_verified"] else "decoded",
+        ),
+        ("Duplicates", ", ".join(d["match"] for d in validation["duplicates"]) or "none"),
+    ]
+
+
+def _metric_rows(done: dict) -> list[tuple]:
+    def col(fn):
+        return [fn(s["source_consistency"]) if "source_consistency" in s else "-" for s in done.values()]
+
+    return [
+        ("PSNR (dB)", *col(lambda m: _num(m["psnr_db"], 2))),
+        ("SSIM", *col(lambda m: _num(m["ssim"], 5))),
+        ("MS-SSIM (luma)", *col(lambda m: _num(m["ms_ssim"]["value"], 5))),
+        ("Edge displacement mean (px)", *col(lambda m: _num(m["edge_displacement"]["mean_px"], 3))),
+        ("Edge displacement p95 (px)", *col(lambda m: _num(m["edge_displacement"]["p95_px"], 3))),
+        ("Edge pixel ratio", *col(lambda m: _num(m["edge_displacement"]["edge_pixel_ratio"], 3))),
+        ("delta E 2000 mean", *col(lambda m: _num(m["color_difference_ciede2000"]["mean"], 4))),
+        ("delta E 2000 p95", *col(lambda m: _num(m["color_difference_ciede2000"]["p95"], 4))),
+        ("L* mean shift", *col(lambda m: _num(m["luminance_distribution"]["mean_shift"], 4))),
+        ("L* std ratio", *col(lambda m: _num(m["luminance_distribution"]["std_ratio"], 4))),
+        ("L* Wasserstein-1", *col(lambda m: _num(m["luminance_distribution"]["wasserstein_1"], 4))),
+    ]
+
+
+def _statistics_rows(done: dict) -> list[tuple]:
+    def col(fn):
+        return [fn(s) if "statistics" in s else "-" for s in done.values()]
+
+    return [
+        ("Linear mean R/G/B", *col(lambda s: " / ".join(f"{v:.4f}" for v in s["statistics"]["mean"].values()))),
+        ("Linear min", *col(lambda s: f"{min(s['statistics']['min'].values()):.4f}")),
+        ("Linear max", *col(lambda s: f"{max(s['statistics']['max'].values()):.4f}")),
+        ("Samples below 0", *col(lambda s: f"{s['statistics']['below_zero_fraction']:.4%}")),
+        ("Samples above 1", *col(lambda s: f"{s['statistics']['above_one_fraction']:.4%}")),
+        ("Clipped in TIFF", *col(lambda s: _clipped_fraction(s.get("tiff_clipping")))),
+        ("Float32 pixel SHA-256", *col(lambda s: f"`{s['working_pixel_sha256'][:16]}...`")),
+    ]
+
+
+def _clipped_fraction(clipping: dict | None) -> str:
+    if not clipping:
+        return "-"
+    return f"{clipping['below_zero_fraction'] + clipping['above_one_fraction']:.4%}"
+
+
+def _export_rows(manifest: dict) -> list[tuple]:
+    rows = []
+    exports = list(manifest.get("intermediates", []))
+    for summary in manifest.get("baselines", {}).values():
+        exports += list(summary.get("exports", {}).values())
+    for e in exports:
+        passed = sum(e["checks"].values())
+        rows.append(
+            (
+                f"`{Path(e['path']).name}`",
+                e["kind"],
+                _bytes(e["size_bytes"]),
+                e["compression"],
+                f"{passed}/{len(e['checks'])} passed",
+                f"`{e['file_sha256'][:16]}...`",
+            )
+        )
+    return rows

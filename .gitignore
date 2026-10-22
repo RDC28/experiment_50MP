@@ -1,0 +1,32 @@
+# Source images, generated masters and reports stay out of Git (PRD 21.5).
+inputs/**
+!inputs/README.md
+!inputs/*/
+!inputs/*/.gitkeep
+outputs/**
+!outputs/README.md
+!outputs/*/
+!outputs/*/.gitkeep
+reports/**
+!reports/README.md
+
+# Model weights (later phases) never belong in Git.
+weights/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+
+# Python and notebook tooling
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.DS_Store

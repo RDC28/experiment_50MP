@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "synthetic-raw-50mp-lab"
+version = "0.1.0"
+description = "Shared package for the Synthetic RAW 50MP Lab reconstruction notebooks"
+readme = "README.md"
+requires-python = ">=3.10"
+# Lower bounds only, so installing into Google Colab keeps its preinstalled stack.
+# requirements.txt pins the exact set the tests were run with.
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pillow>=10.0",
+    "opencv-python-headless>=4.8",
+    "scikit-image>=0.21",
+    "tifffile>=2023.7.10",
+    "OpenEXR>=3.3",
+    "PyYAML>=6.0",
+    "psutil>=5.9",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.9", "nbclient>=0.10", "ipykernel>=6.29"]
+
+[project.scripts]
+synthetic-raw-lab = "synthetic_raw_lab.__main__:main"
+
+[tool.setuptools]
+# PRD 4.4 keeps the modules directly in src/; they install as the synthetic_raw_lab package.
+package-dir = { "synthetic_raw_lab" = "src" }
+packages = ["synthetic_raw_lab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["synthetic_raw_lab", "helpers"]
