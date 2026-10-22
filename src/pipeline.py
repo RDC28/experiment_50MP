@@ -92,6 +92,19 @@ def make_run_id(source_sha256: str, profile: str, now: datetime | None = None) -
     return f"{now.strftime('%Y%m%dT%H%M%SZ')}_{source_sha256[:8]}_{profile}"
 
 
+def resolve_roots(config: ExperimentConfig, project_root: str | Path) -> tuple[Path, Path, Path]:
+    """The inputs, output and reports folders a run uses; empty config values mean folders in the project."""
+    project_root = Path(project_root)
+    return tuple(
+        Path(value) if value else project_root / default
+        for value, default in (
+            (config.inputs_root, "inputs"),
+            (config.output_root, "outputs"),
+            (config.reports_root, "reports"),
+        )
+    )
+
+
 def run(
     source_path: str | Path,
     config: ExperimentConfig,
@@ -103,9 +116,7 @@ def run(
     log: Callable[[str], None] = print,
 ) -> RunResult:
     project_root = Path(project_root).resolve()
-    inputs_root = Path(config.inputs_root) if config.inputs_root else project_root / "inputs"
-    output_root = Path(config.output_root) if config.output_root else project_root / "outputs"
-    reports_root = Path(config.reports_root) if config.reports_root else project_root / "reports"
+    inputs_root, output_root, reports_root = resolve_roots(config, project_root)
     started = time.perf_counter()
     started_at = datetime.now(timezone.utc)
 
