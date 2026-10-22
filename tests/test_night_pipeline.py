@@ -2,11 +2,12 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from synthetic_raw_lab import night_pipeline, pipeline
+from synthetic_raw_lab import baselines, night_pipeline, pipeline
 from synthetic_raw_lab import night_processing as night
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -166,6 +167,30 @@ def test_light_centre_picks_a_lamp_core_not_the_neon_tube():
     x, y = night_pipeline.light_centre(regions)
     assert regions.labels[y, x] == night.REGION_NAMES.index("clipped_highlight")
     assert abs(y - (0.62 - 0.08) * 180) <= 2  # the street-lamp row of make_night_scene
+
+
+def test_halo_profile_shows_the_adjacent_source_row_that_upscales_blend_in():
+    # A lit window ends one source row above the lamp centre (row 10), as in the full-size synthetic run, and
+    # the output row through the lamp lies at source y 9.91: Lanczos sits between the two source rows.
+    linear = np.full((20, 40, 3), 0.05, dtype=np.float32)
+    linear[:10, :20] = 0.7
+    source = SimpleNamespace(linear=linear, width=40, height=20)
+    width, height = 98, 49
+    profiles = night_pipeline._ProfileLines({"highlight": (0, 0, width, height)}, source, (width, height), (10, 10))
+    profiles.add("lanczos", baselines.resample(linear, width, height, "lanczos"))
+    rows = profiles.halo_rows
+    assert (rows["output_row"], rows["nearest"], rows["adjacent"]) == (25, 10, 9)
+    assert rows["source_y"] == pytest.approx(25.5 * 20 / 49 - 0.5)
+    lines = profiles.lines["highlight"]
+    nearest, adjacent, lanczos = lines["source"], lines["source_adjacent"], lines["lanczos"]
+    under_window = slice(10, 40)
+    assert np.all(lanczos[under_window] > nearest[under_window] + 10)
+    assert np.all(lanczos[under_window] < adjacent[under_window])
+    assert np.allclose(lanczos[65:85], nearest[65:85], atol=1)
+    # Column mapping: the window's right edge (source x 20, output 49) falls in the same place in both curves.
+    step = int(np.argmax(adjacent < adjacent[0] - 1))
+    crossing = int(np.argmax(lanczos < (lanczos[under_window].mean() + nearest[70]) / 2))
+    assert step == 49 and abs(crossing - step) <= 1
 
 
 def test_night_crops_cover_each_category_and_manual_crops_replace_them():

@@ -554,6 +554,7 @@ class _ProfileLines:
         self.lines: dict[str, dict[str, np.ndarray]] = {}
         self.coords: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         self.banding: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        self.halo_rows: dict | None = None
         sx, sy = source.width / size[0], source.height / size[1]
         for name, axis in (("gradient", 0), ("highlight", 1)):
             if name not in boxes:
@@ -570,6 +571,15 @@ class _ProfileLines:
             src_y = np.minimum(((ys + 0.5) * sy).astype(int), source.height - 1)
             self.lines[name] = {"source": self._luma(source.linear[src_y, src_x])}
             self.coords[name] = (ys, xs)
+            if axis == 1:
+                # At a non-integer scale the output row lies between two source rows, and every interpolating
+                # upscale blends in the other one (e.g. the lit edge of a window just above the lamp centre),
+                # so the figure also shows that row; the nearest sample alone cannot explain such plateaus.
+                y = (ys[0] + 0.5) * sy - 0.5
+                nearest = int(src_y[0])
+                adjacent = int(np.clip(nearest + (1 if y > nearest else -1), 0, source.height - 1))
+                self.lines[name]["source_adjacent"] = self._luma(source.linear[adjacent, src_x])
+                self.halo_rows = {"output_row": int(ys[0]), "source_y": y, "nearest": nearest, "adjacent": adjacent}
 
     @staticmethod
     def _luma(pixels: np.ndarray) -> np.ndarray:
@@ -656,15 +666,22 @@ def halo_figure(profiles: _ProfileLines, keys: list[str], path: Path) -> Path:
     import matplotlib.pyplot as plt
 
     lines = profiles.lines["highlight"]
+    rows = profiles.halo_rows
     fig, ax = plt.subplots(figsize=(10, 4.2), dpi=120)
-    ax.plot(lines["source"], drawstyle="steps-mid", color="black", linewidth=1.2, label="source (nearest)")
+    nearest = f"source row {rows['nearest']} (nearest, {abs(rows['source_y'] - rows['nearest']):.2f} px away)"
+    adjacent = f"source row {rows['adjacent']} ({abs(rows['source_y'] - rows['adjacent']):.2f} px away)"
+    ax.plot(lines["source"], drawstyle="steps-mid", color="black", linewidth=1.2, label=nearest)
+    ax.plot(lines["source_adjacent"], drawstyle="steps-mid", color="0.6", linestyle=":", linewidth=1.2, label=adjacent)
     for key in keys:
         if key in lines:
             # The SR stand-ins equal the Lanczos baseline; dashes keep the overlapping lines visible.
             style = "--" if key.endswith("_sr") else "-"
             ax.plot(lines[key], style, linewidth=1.8 if key == FINAL else 1.0, label=_label(key))
     ax.set_title("Light-source halo comparison: luma through the widest clipped light (undershoot = dark halo)")
-    ax.set_xlabel("output column in the highlight crop")
+    ax.set_xlabel(
+        f"output column in the highlight crop (output row {rows['output_row']} = source y {rows['source_y']:.2f}; "
+        "upscales blend both source rows)"
+    )
     ax.set_ylabel("8-bit code value")
     ax.legend(frameon=False, fontsize=8)
     fig.tight_layout()
