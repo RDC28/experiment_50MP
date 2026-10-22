@@ -1,0 +1,45 @@
+# Phase 0 and Phase 1 defaults: classical baselines, exports and source-consistency metrics.
+# Every key is documented in src/config.py; the notebook's configuration table (config.parameter_table)
+# shows the accepted values, effects and warnings. Unknown keys are rejected.
+profile: baselines
+input_category: universal        # human | night | universal
+runtime_preset: standard         # quick (reduced output) | standard (full target) | research (+ repeat runs, memory benchmark)
+quick_target_megapixels: 2.0
+
+# Target resolution (PRD 3.5, 6.1, 25.3)
+target_megapixels: 50.0
+resolution_mode: tolerance       # tolerance | exact
+pixel_count_tolerance: 0.001     # +/-0.1 %
+dimension_multiple: 2            # even dimensions, like camera sensors
+preserve_aspect_ratio: true
+max_aspect_ratio_error: 0.001
+
+# Colour (PRD 7.1, 7.2)
+source_color_space: auto         # auto | srgb | linear_srgb | display_p3 | adobe_rgb
+working_color_space: linear_rec709
+processing_precision: float32
+
+# Baselines (PRD 9.1)
+baselines: [lanczos, bicubic]
+
+# Exports (PRD 17.1)
+export_tiff16: true
+tiff_compression: zlib           # zlib | none
+export_exr: true
+exr_precision: half              # half | float
+exr_compression: zip             # zip | piz | none
+export_review: true              # full-frame review JPEGs; crop comparison PNGs are always written
+review_max_edge: 2048
+save_intermediates: true
+
+# Evaluation crops (PRD 9.2, 26)
+crop_size: 256
+crop_count: 4
+crops: []                        # manual [x, y, width, height] boxes in source pixels
+
+random_seed: 42
+
+# Storage (PRD 21.5); empty means <project>/outputs, <project>/reports, <project>/inputs
+output_root: ""
+reports_root: ""
+inputs_root: ""
