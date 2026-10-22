@@ -1635,6 +1635,15 @@ def _banding_maps(y: np.ndarray, scale: float) -> tuple[np.ndarray, np.ndarray]:
     return flat & ramp, ramp
 
 
+def banding_map(linear: np.ndarray, scale: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    """Banding diagnostic of a working-space image: (flat inside a ramp, ramp) masks of its encoded luma.
+
+    ``scale`` is the output-to-source scale; the banding score is the flat share of ramp pixels
+    in the smooth and sky regions.
+    """
+    return _banding_maps(_encoded_luma(linear), scale)
+
+
 # --------------------------------------------------------------------------- night metrics (PRD 23.5)
 
 
