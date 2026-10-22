@@ -105,6 +105,7 @@ def test_run_from_an_exr_master_writes_labelled_validated_outputs(project):
     report = result.report_path.read_text()
     assert sr.NOTICE in report and ss.SYNTHETIC_RAW_LABEL in report
     assert "Phase 5 exit criterion met" in report
+    assert "stored at half precision" in report
     assert "Camera-native RAW" in report and "Synthetic mosaic DNG" in report
     for panel in manifest["crop_panels"]:
         assert Path(panel["path"]).exists()

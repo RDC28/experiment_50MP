@@ -104,7 +104,9 @@ def read_linear_master(path: str | Path) -> LinearInput:
         missing = [name for name in "RGB" if name not in channels]
         if missing:
             raise ValueError(f"{path.name} lacks EXR channels {missing}; expected linear R, G, B")
-        linear = np.stack([np.asarray(channels[name].pixels, dtype=np.float32) for name in "RGB"], axis=-1)
+        linear = np.empty((*channels["R"].pixels.shape, 3), dtype=np.float32)
+        for index, name in enumerate("RGB"):
+            linear[..., index] = channels[name].pixels  # one plane at a time keeps a single float32 copy
         chromaticities = header.get("chromaticities")
         lineage = {
             key: str(value)

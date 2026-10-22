@@ -212,6 +212,12 @@ def render_report(manifest: dict, report_dir: Path) -> str:
             "the input clipped to what the representation can hold; clipping is reported separately.\n"
         )
         add(_table(["Quantity", *[r["name"] for r in bit_depth["representations"]]], _bit_depth_rows(bit_depth)))
+        half = next((r for r in bit_depth["representations"] if r["name"] == "rgb16_float_linear"), None)
+        if half and half["quantization_rmse_linear"] == 0 and half["outside_range_fraction"] == 0:
+            add(
+                "The input is itself stored at half precision (for example a half EXR master), so the half "
+                "representation reproduces it exactly here; its precision limit shows only on float32 inputs.\n"
+            )
     if quantization:
         add(
             f"Optional row, the {quantization['description']}: {quantization['levels_in_unit_range']:,} levels, "
