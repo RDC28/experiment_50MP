@@ -79,11 +79,13 @@ def select_crops(encoded: np.ndarray, size: int, count: int, manual=()) -> list[
     return crops
 
 
-def crop_panel(source_tile: np.ndarray, tiles: dict[str, np.ndarray]) -> np.ndarray:
-    """Side-by-side uint8 panel: source (nearest-neighbour), each method, and their difference."""
+def crop_panel(
+    source_tile: np.ndarray, tiles: dict[str, np.ndarray], *, source_label: str = "source (nearest)"
+) -> np.ndarray:
+    """Side-by-side uint8 panel: source (nearest-neighbour), each method, and the first two methods' difference."""
     names = list(tiles)
     tile_h, tile_w = tiles[names[0]].shape[:2]
-    columns = [("source (nearest)", cv2.resize(source_tile, (tile_w, tile_h), interpolation=cv2.INTER_NEAREST))]
+    columns = [(source_label, cv2.resize(source_tile, (tile_w, tile_h), interpolation=cv2.INTER_NEAREST))]
     columns += [(name, tiles[name]) for name in names]
     if len(names) >= 2:
         a, b = names[0], names[1]

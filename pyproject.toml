@@ -21,6 +21,7 @@ dependencies = [
     "PyYAML>=6.0",
     "psutil>=5.9",
     "matplotlib>=3.7",
+    "rawpy>=0.19",  # LibRaw reader check of the Phase 5 synthetic DNG
 ]
 
 [project.optional-dependencies]
