@@ -701,6 +701,10 @@ def _display_gain(tile: np.ndarray, ev: float) -> np.ndarray:
     return np.round(255 * cm.linear_to_srgb(np.clip(linear, 0, 1))).astype(np.uint8)
 
 
+def _blocks(count: int) -> str:
+    return f"{count} block" if count == 1 else f"{count} blocks"
+
+
 def fallback_figure(
     canvas: np.ndarray, source_linear: np.ndarray, fallbacks: list[dict], fraction: float, path: Path
 ) -> Path:
@@ -724,13 +728,13 @@ def fallback_figure(
     fig, ax = plt.subplots(figsize=(10, 10 * height / width + 1.0), dpi=150)
     ax.imshow(picture, interpolation="nearest")
     ax.set_title(
-        f"Failure-rule fallback blocks (PRD 12.6): {len(fallbacks)} blocks, {fraction:.2%} of output pixels "
+        f"Failure-rule fallback blocks (PRD 12.6): {_blocks(len(fallbacks))}, {fraction:.2%} of output pixels "
         "(over the dimmed source)",
         fontsize=11,
     )
     ax.axis("off")
     handles = [
-        Patch(color=np.array(colour) / 255, label=f"{reason.replace('_', ' ')}: {counts[reason]} blocks")
+        Patch(color=np.array(colour) / 255, label=f"{reason.replace('_', ' ')}: {_blocks(counts[reason])}")
         for reason, colour in night.FALLBACK_COLORS.items()
     ]
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=4, frameon=False, fontsize=9)
@@ -1040,7 +1044,7 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
         )
         fallbacks = record["fallbacks"]
         add(
-            f"Failure rule (PRD 12.6): {len(fallbacks)} blocks fell back to the conservative result "
+            f"Failure rule (PRD 12.6): {_blocks(len(fallbacks))} fell back to the conservative result "
             f"({record['fallback_fraction']:.3%} of output pixels).\n"
         )
         if fallbacks:
@@ -1259,7 +1263,7 @@ def night_conclusions(manifest: dict) -> list[str]:
         reasons = sorted({r for f in record["fallbacks"] for r in f["reasons"]})
         if reasons:
             lines.append(
-                f"The failure rule fell back in {len(record['fallbacks'])} blocks ({', '.join(reasons)}). "
+                f"The failure rule fell back in {_blocks(len(record['fallbacks']))} ({', '.join(reasons)}). "
                 "Recommended: " + "; ".join(_ADVICE[r] for r in reasons) + "."
             )
         else:

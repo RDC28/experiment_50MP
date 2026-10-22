@@ -282,3 +282,9 @@ def test_fallback_figure_has_a_legend_and_marks_blocks_over_the_source(tmp_path)
     # The source shows through, dimmed, outside the blocks instead of a flat background.
     grey = round(255 * (0.08 + 0.4 * float(cm.linear_to_srgb(np.float32(0.2)))))
     assert any(abs(c[0] - grey) <= 1 and c[0] == c[1] == c[2] for c in colours)
+
+
+def test_block_counts_read_as_english():
+    assert night_pipeline._blocks(1) == "1 block"
+    assert night_pipeline._blocks(0) == "0 blocks"
+    assert night_pipeline._blocks(9) == "9 blocks"
