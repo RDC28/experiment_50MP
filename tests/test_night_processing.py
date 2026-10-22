@@ -442,6 +442,32 @@ def test_failure_rule_falls_back_on_banding(scene, monkeypatch):
     assert any({"sky_atmosphere", "smooth_gradient"} & set(r["regions"]) for r in banded)
 
 
+def test_debanding_smooths_quantised_ramps_without_flattening_texture_into_plateaus():
+    # Left: an 8-bit quantised dark ramp. Right: a noisy facade at the synthetic scene's noise level.
+    # Both are labelled sky, as the old segmentation labelled facades.
+    height, width = 120, 160
+    rows = np.linspace(20, 32, height, dtype=np.float32)[:, None] * np.ones((1, width), np.float32)
+    encoded = np.round(rows) / 255
+    noise = np.random.default_rng(3).normal(0, 1.4, (height, width // 2)).astype(np.float32)
+    encoded[:, width // 2 :] = np.round(rows[:, width // 2 :] + noise) / 255
+    source = np.repeat(cm.srgb_to_linear(encoded)[..., None], 3, axis=2)
+    regions = night.RegionMap(np.full((height, width), night.REGION_NAMES.index("sky_atmosphere")))
+    upscale = night.sr_slot("balanced")(source, 393, 295)
+    result = night.process_night(upscale.image, regions, source, night.NightParams.from_dict({"shadows": NO_DITHER}))
+    assert result.fallbacks == []
+
+    margin, split = 40, upscale.image.shape[1] // 2
+
+    def score(image, part):
+        flat, ramp = night.banding_map(image, upscale.image.shape[1] / width)
+        ys = slice(margin, -margin)
+        xs = slice(margin, split - margin) if part == "ramp" else slice(split + margin, -margin)
+        return flat[ys, xs].sum() / ramp[ys, xs].sum()
+
+    assert score(upscale.image, "ramp") > 0.3 and score(result.image, "ramp") < 0.5 * score(upscale.image, "ramp")
+    assert score(result.image, "noise") <= score(upscale.image, "noise") + 0.02
+
+
 def test_banding_maps_separate_steps_from_ramps_and_dither():
     width = 400
     ramp = np.tile(np.linspace(0.1, 0.1 + 20 * night._CODE, width, dtype=np.float32), (32, 1))

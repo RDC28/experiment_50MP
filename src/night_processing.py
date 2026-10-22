@@ -103,6 +103,9 @@ _SHADOW_DETAIL = {"low": 0.15, "medium": 0.4, "high": 0.8}
 # Sharpening ignores detail below this many 8-bit codes (noise coring), so it does not amplify noise.
 _CORING_CODES = {"low": 2.0, "medium": 1.0, "high": 0.5}
 _TEXTURE_RATIO_LIMIT = {"low": 1.6, "medium": 2.5, "high": 4.0}
+# Debanding acts fully where the local RMS residual from the mean is below this many codes, not at all
+# above twice it: quantised gradients stay below, noisy or textured surfaces above.
+_DEBAND_RESIDUAL_CODES = 0.5
 _MOOD_CAP = 0.15
 
 
@@ -1180,6 +1183,10 @@ def _process(linear: np.ndarray, strip: _Strip, params: NightParams, regions_sca
         average = _blur(y, 6.0 * s)
         difference = average - y
         accept = np.clip(2 - np.abs(difference) / _CODE, 0, 1)
+        # Quantisation steps leave residuals of at most half a code (RMS about 0.3); noise and texture
+        # leave larger ones. Snapping those pixels to the mean would flatten texture into plateaus.
+        residual = np.sqrt(_blur(difference * difference, 3.0 * s))
+        accept *= np.clip(2 - residual / (_DEBAND_RESIDUAL_CODES * _CODE), 0, 1)
         y += np.clip(smooth + near_black, 0, 1) * (1 - protected) * (1 - ring) * accept * difference
 
     # Detail: sharpening by region (PRD 19.2), limited by the invented-texture tolerance.
