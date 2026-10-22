@@ -41,14 +41,16 @@ def histogram_figure(histograms: dict, path: Path) -> Path:
     fig, axes = plt.subplots(1, 2, figsize=(10, 3.2), dpi=110)
     for name in ("R", "G", "B", "Y"):
         if name in histograms:
-            axes[0].plot(bins, histograms[name], color=colors[name], linewidth=1, label=name)
-    axes[1].fill_between(bins, histograms["luma"], color=colors["luma"], alpha=0.6, linewidth=0)
+            axes[0].plot(bins, np.asarray(histograms[name]) + 1, color=colors[name], linewidth=1, label=name)
+    axes[1].fill_between(bins, np.asarray(histograms["luma"]) + 1, 1, color=colors["luma"], alpha=0.6, linewidth=0)
     axes[0].set_title("Channel histograms (encoded values)")
     axes[1].set_title("Luma histogram")
     for ax in axes:
         ax.set_xlim(0, histograms["bins"] - 1)
-        ax.set_yscale("symlog")
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=1)
         ax.set_xlabel("code value (256 bins)")
+        ax.set_ylabel("pixels + 1")
     axes[0].legend(frameon=False)
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -63,6 +65,7 @@ def heatmap_figure(values: np.ndarray, path: Path, title: str, max_edge: int) ->
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
 
     height, width = values.shape
     scale = min(1.0, max_edge / max(width, height))
@@ -71,14 +74,14 @@ def heatmap_figure(values: np.ndarray, path: Path, title: str, max_edge: int) ->
             values, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA
         )
     upper = max(float(np.percentile(values, 99.5)), 1.0)
-    fig, ax = plt.subplots(figsize=(10, 10 * values.shape[0] / values.shape[1] + 0.8), dpi=110)
+    fig, ax = plt.subplots(figsize=(10, 10 * values.shape[0] / values.shape[1]), dpi=200)
     image = ax.imshow(values, cmap="inferno", vmin=0, vmax=upper, interpolation="nearest")
     ax.set_title(title)
     ax.axis("off")
-    fig.colorbar(image, ax=ax, fraction=0.03, pad=0.02, label="delta E 2000")
-    fig.tight_layout()
+    colorbar_axes = make_axes_locatable(ax).append_axes("right", size="2.5%", pad=0.1)
+    fig.colorbar(image, cax=colorbar_axes, label="delta E 2000")
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path)
+    fig.savefig(path, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
     return path
 
