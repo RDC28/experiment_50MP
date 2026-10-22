@@ -16,7 +16,7 @@ import pytest
 from PIL import Image
 
 from synthetic_raw_lab import color_management as cm
-from synthetic_raw_lab import sr_models
+from synthetic_raw_lab import pipeline, sr_models
 from synthetic_raw_lab import super_resolution as sr
 from synthetic_raw_lab.test_images import make_test_image
 
@@ -176,8 +176,8 @@ def test_real_network_smoke(name):
     assert out.shape == (768, 922, 3) and np.isfinite(out).all()
     assert report.tiles == 4  # 2 x 2
     # the Phase 2 seam gates (pipeline.SEAM_*), on the real network
-    assert report.to_dict()["overlap_disagreement"]["low_frequency_p99_abs_max"] < 1.0
-    assert sr.seam_scores(out, report.boundaries, source)["max_score"] < 3.0
+    assert report.to_dict()["overlap_disagreement"]["blend_error_p99_abs_max"] <= pipeline.SEAM_BLEND_ERROR_LIMIT
+    assert sr.seam_scores(out, report.boundaries, source)["max_score"] <= pipeline.SEAM_SCORE_LIMIT
     lanczos = sr.resample_box(source, 922, 768, (0.0, 0.0, 384.0, 320.0), Image.Resampling.LANCZOS)
     encoded = [cm.linear_to_srgb(np.clip(x, 0, 1)) for x in (out, lanczos)]
     mse = float(np.mean((encoded[0] - encoded[1]) ** 2))

@@ -409,8 +409,9 @@ def _sr_section(sr_record: dict) -> str:
                 f"{tiling.get('inference_seconds', 0):.0f}",
                 _num(model.get("peak_device_memory_mb"), 0),
                 "; ".join(f["message"] for f in tiling.get("fallbacks", [])) or "none",
-                f"{_num(disagreement.get('low_frequency_p99_abs_max'), 3)} "
-                f"({_num(disagreement.get('p99_abs_max'), 2)} raw)",
+                f"{_num(disagreement.get('blend_error_p99_abs_max'), 3)} "
+                f"({_num(disagreement.get('low_frequency_p99_abs_max'), 2)} / "
+                f"{_num(disagreement.get('p99_abs_max'), 2)})",
                 _num(seams.get("max_score"), 3),
                 {True: "pass", False: "FAIL"}.get(seams.get("passed"), "-"),
                 f"{projection.get('mean_abs_residual_linear_before', '-')} -> "
@@ -432,8 +433,8 @@ def _sr_section(sr_record: dict) -> str:
                 "Inference s",
                 "Peak device MB",
                 "Memory fallbacks",
-                "Overlap disagreement p99, low-frequency (raw), 8-bit",
-                "Seam score max",
+                "Blend error p99 (tile disagreement low-freq. / raw), 8-bit",
+                "Hard-seam height max, 8-bit",
                 "Seam check",
                 "Low-frequency residual (linear) before -> after",
                 "vs Lanczos mean / p99 (8-bit luma)",
@@ -442,11 +443,13 @@ def _sr_section(sr_record: dict) -> str:
         )
     )
     out.append(
-        "Overlap disagreement: how far neighbouring tiles disagree inside their crossfade zones. Its low-frequency "
-        "part (Gaussian of 2 source pixels) is what a soft seam is made of and is gated; the raw value also counts "
-        "texture the two tiles synthesised differently, which the crossfade hides. Seam score: luma step across "
-        "each tile-boundary line relative to nearby lines, divided by the same on Lanczos (about 1 means no hard "
-        "seam). Both gates are provisional until calibrated in pilot runs (PRD 25.3)" + _limits_text(sr_record) + ".\n"
+        "Blend error: inside each crossfade, the low-frequency (Gaussian of 2 source pixels) difference between the "
+        "two tiles times the smaller blending weight, which bounds how far blending moves the image from the "
+        "better-placed tile (the soft-seam measure). Tile disagreement itself, low-frequency and raw, also counts "
+        "texture the networks synthesised differently where one tile has almost no weight. Hard-seam height: the "
+        "luma step across each tile-boundary line beyond the step across nearby lines, on samples where the "
+        "content is flat (0 means no hard seam). Both gates are provisional until calibrated in pilot runs "
+        "(PRD 25.3)" + _limits_text(sr_record) + ".\n"
     )
     out.append("Mode intents:\n")
     out += [
@@ -462,8 +465,8 @@ def _limits_text(sr_record: dict) -> str:
     if not limits:
         return ""
     return (
-        f"; a mode passes when the low-frequency disagreement p99 is at most "
-        f"{limits['overlap_low_frequency_p99_abs_8bit']} and the seam score at most {limits['max_score']}"
+        f"; a mode passes when the blend error p99 is at most {limits['blend_error_p99_abs_8bit']} and the "
+        f"hard-seam height at most {limits['max_score']} code values"
     )
 
 

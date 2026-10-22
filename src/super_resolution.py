@@ -17,9 +17,9 @@ partition of unity: inside each overlap the outer quarter next to each tile
 edge, where zero padding and missing context disturb the network, gets no
 weight, and the middle half is a raised-cosine crossfade. Weights depend only
 on the tile geometry, so the result is deterministic and a flat image stays
-flat. Where two tiles overlap, their disagreement is measured and reported
-(seam detection), and the finished image gets a hard-seam score at every tile
-boundary.
+flat. Tile starts follow the network's attention-window grid. Where two tiles
+overlap, their disagreement and the resulting blend error are measured (soft
+seams), and the finished image gets a hard-seam height at every tile boundary.
 
 Memory fallback (PRD 10.4, 21.4, 22.3). When the device runs out of memory on
 a tile, that tile is split into smaller overlapping sub-tiles and later tiles
@@ -196,6 +196,7 @@ class TilingReport:
     def to_dict(self) -> dict:
         disagreements = [b["mean_abs_8bit"] for b in self.boundaries]
         low = [b["low_frequency_p99_abs_8bit"] for b in self.boundaries]
+        blend = [b["blend_error_p99_abs_8bit"] for b in self.boundaries]
         return {
             "tile_size": self.tile_size,
             "tile_overlap": self.tile_overlap,
@@ -207,9 +208,11 @@ class TilingReport:
             "final_device": self.final_device,
             "overlap_disagreement": {
                 "unit": "sRGB 8-bit code values, inside the crossfade zones",
-                "low_frequency": "difference smoothed with a Gaussian of 2 source pixels: the part a seam is made "
-                "of; raw differences also count texture that the crossfade hides",
+                "low_frequency": "difference smoothed with a Gaussian of 2 source pixels",
+                "blend_error": "low-frequency difference times the smaller blending weight: how far the crossfade "
+                "can move the image from the better-placed tile (the soft-seam measure)",
                 "boundaries": len(self.boundaries),
+                "blend_error_p99_abs_max": max(blend, default=None),
                 "low_frequency_p99_abs_max": max(low, default=None),
                 "mean_abs_max": max(disagreements, default=None),
                 "p99_abs_max": max((b["p99_abs_8bit"] for b in self.boundaries), default=None),
@@ -268,7 +271,12 @@ class _Inference:
 
 
 def _tiled_native(
-    encoded: np.ndarray, tile: int, overlap: int, infer: Callable, report: TilingReport | None = None
+    encoded: np.ndarray,
+    tile: int,
+    overlap: int,
+    infer: Callable,
+    report: TilingReport | None = None,
+    origin_y: int = 0,
 ) -> np.ndarray:
     """Super-resolve an encoded image tile by tile, blended at model scale (x and y)."""
     height, width = encoded.shape[:2]
@@ -287,7 +295,9 @@ def _tiled_native(
             if report is not None:
                 report.tiles += 1
                 if previous is not None and len(ys) == 1:
-                    report.boundaries.append(_disagreement("x", previous, (x0, x1), prediction, wx, ix, scale))
+                    boundary = _disagreement("x", previous, (x0, x1), prediction, wx, ix, scale)
+                    boundary["source_rows"] = [origin_y + y0, origin_y + y1]
+                    report.boundaries.append(boundary)
                 previous = (prediction, (x0, x1))
     return out
 
@@ -300,13 +310,21 @@ def _disagreement(axis, previous, span, prediction, weights, index, scale) -> di
     both = np.nonzero((weights[index - 1, lo:hi] > 0) & (weights[index, lo:hi] > 0))[0]
     a = prev_prediction[:, lo - px0 * scale + both]
     b = prediction[:, lo - x0 * scale + both]
-    return _difference_stats(axis, (x0 + px1) / 2, (a - b) * 255, 2.0 * scale)
+    mix = np.minimum(weights[index - 1, lo + both], weights[index, lo + both])[None, :, None]
+    return _difference_stats(axis, (x0 + px1) / 2, (a - b) * 255, 2.0 * scale, mix)
 
 
-def _difference_stats(axis: str, position: float, diff8: np.ndarray, sigma: float) -> dict:
-    """Statistics of a signed difference (8-bit units) between two tiles, raw and low-pass filtered."""
+def _difference_stats(axis: str, position: float, diff8: np.ndarray, sigma: float, mix: np.ndarray) -> dict:
+    """Statistics of a signed difference (8-bit units) between two overlapping tiles.
+
+    Raw and low-pass (Gaussian of 2 source pixels) differences describe how much the tiles disagree.
+    The blend error weights the low-pass difference by the smaller of the two blending weights: the
+    crossfaded result lies within that distance of the tile with more weight, so it bounds how far
+    blending can move the image from either tile's own result at each sample. It is what a soft seam
+    is made of; raw differences also count texture that the crossfade hides.
+    """
     if diff8.size == 0:
-        diff8 = np.zeros((1, 1, 3), np.float32)
+        diff8, mix = np.zeros((1, 1, 3), np.float32), np.zeros((1, 1, 1), np.float32)
     low = np.abs(ndimage.gaussian_filter(diff8, (sigma, sigma, 0), mode="nearest"))
     diff8 = np.abs(diff8)
     return {
@@ -316,6 +334,7 @@ def _difference_stats(axis: str, position: float, diff8: np.ndarray, sigma: floa
         "p99_abs_8bit": round(float(np.percentile(diff8, 99)), 4),
         "max_abs_8bit": round(float(diff8.max()), 4),
         "low_frequency_p99_abs_8bit": round(float(np.percentile(low, 99)), 4),
+        "blend_error_p99_abs_8bit": round(float(np.percentile(low * mix, 99)), 4),
     }
 
 
@@ -356,7 +375,7 @@ def super_resolve(
     for index, (y0, y1) in enumerate(strips):
         rows = np.nonzero(wy[index])[0]
         j0, j1 = int(rows[0]), int(rows[-1]) + 1
-        native = _tiled_native(encoded[y0:y1], tile_size, tile_overlap, infer, report)
+        native = _tiled_native(encoded[y0:y1], tile_size, tile_overlap, infer, report, origin_y=y0)
         for start in range(0, native.shape[0], 128):  # decode in place, in row blocks, to bound temporaries
             native[start : start + 128] = cm.srgb_to_linear(native[start : start + 128])
         box = (0.0, (j0 * step_y - y0) * scale, float(src_w * scale), (j1 * step_y - y0) * scale)
@@ -383,8 +402,9 @@ def _strip_disagreement(previous, strip: np.ndarray, j0: int, wy: np.ndarray, in
     rows = rows[(wy[index - 1, rows] > 0) & (wy[index, rows] > 0)]
     a = cm.linear_to_srgb(np.clip(prev_strip[rows - prev_j0], 0, 1))
     b = cm.linear_to_srgb(np.clip(strip[rows - j0], 0, 1))
+    mix = np.minimum(wy[index - 1, rows], wy[index, rows])[:, None, None]
     position = (rows.mean() + 0.5) * step_y if rows.size else j0 * step_y
-    return _difference_stats("y", position, (a - b) * 255, 2.0 / step_y)
+    return _difference_stats("y", position, (a - b) * 255, 2.0 / step_y, mix)
 
 
 def resample_box(image: np.ndarray, width: int, height: int, box: tuple, resampling) -> np.ndarray:
@@ -483,14 +503,16 @@ def interpolation_difference(
 
 
 def seam_scores(image_linear: np.ndarray, boundaries: list[dict], source_linear: np.ndarray) -> dict:
-    """Hard-seam check at every tile-boundary line, normalised by the same check on Lanczos interpolation.
+    """Hard-seam height at every tile-boundary line, in sRGB 8-bit code values, where the content is flat.
 
-    For each boundary line p the trimmed-mean |luma step| across p (three pixels wide) is divided by the
-    median of the same quantity 4 to 12 lines away. The same ratio is computed on the Lanczos
-    interpolation of the source, which has no tiles, and the score is the SR ratio divided by the Lanczos
-    ratio when that exceeds 1: image content lying on the line raises both and cancels, while a hard seam
-    raises only the SR ratio. A score near 1 means no seam. Soft (feathered) seams are bounded by the overlap
-    disagreement instead.
+    Luma is smoothed along each line (Gaussian, 8 pixels; texture crossing the line averages out, a seam's
+    offset does not) and the step across a line is measured three pixels wide, because resampling spreads
+    a hard tile edge over two to three output pixels. At every sample along a boundary line p, the excess
+    is the step across p minus the median step across the lines 4 to 12 pixels away; the score is the mean
+    excess over the samples where the Lanczos interpolation of the source is flat across p (content edges
+    lying on the line are left out). A score near 0 means no seam; a seam of k code values scores about k on
+    smooth content and somewhat less where texture crosses the line.
+    Soft (feathered) seams are measured by the blend error instead.
     """
     height, width = image_linear.shape[:2]
     src_h, src_w = source_linear.shape[:2]
@@ -510,36 +532,32 @@ def seam_scores(image_linear: np.ndarray, boundaries: list[dict], source_linear:
                 band = image_linear[lo:hi]
                 box = (0.0, lo * src_h / height, float(src_w), hi * src_h / height)
                 reference = resample_box(source_linear, width, hi - lo, box, Image.Resampling.LANCZOS)
-            sr_ratio = _relative_step(band, axis, [q - lo for q in lines])
-            reference_ratio = _relative_step(reference, axis, [q - lo for q in lines])
-            # Content that steps on the line raises both ratios and cancels; a reference ratio below 1 only
-            # means Lanczos is smoother there than the network, which is no evidence of a seam.
-            score = sr_ratio / max(reference_ratio or 1.0, 1.0) if sr_ratio is not None else None
+            score = _excess_step(band, reference, axis, [q - lo for q in lines])
             results.append({"axis": axis, "position_px": p, "score": None if score is None else round(score, 4)})
     scores = [r["score"] for r in results if r["score"] is not None]
     return {
-        "method": "boundary-line luma step relative to lines 4 to 12 px away, divided by the same on Lanczos",
+        "method": "mean excess luma step (8-bit codes) across each boundary line over lines 4 to 12 px away, "
+        "on samples where the content is flat across the line",
         "max_score": max(scores, default=None),
         "mean_score": round(float(np.mean(scores)), 4) if scores else None,
         "per_boundary": results,
     }
 
 
-def _relative_step(band: np.ndarray, axis: str, lines: list[int]) -> float | None:
-    """Step across lines[0] over the median step across the other lines (trimmed means along each line).
-
-    The step at line p is |y[p + 1] - y[p - 2]|: three pixels wide, because resampling to the target
-    spreads a hard tile edge over two to three output pixels. Luma is first smoothed along the line
-    (Gaussian, 8 pixels), so texture crossing the line averages out while a seam's offset does not.
-    """
-    y = luma(cm.linear_to_srgb(np.clip(band, 0, 1)))
+def _line_steps(band: np.ndarray, axis: str, lines: list[int]) -> np.ndarray:
+    """|y[p + 1] - y[p - 2]| in 8-bit codes along each line p, luma smoothed along the line; (lines, samples)."""
+    y = luma(cm.linear_to_srgb(np.clip(band, 0, 1))) * 255
     if axis == "y":
         y = y.T
     y = ndimage.gaussian_filter1d(y, 8.0, axis=0, mode="nearest")
-    values = []
-    for line in lines:
-        samples = np.sort(np.abs(y[:, line + 1] - y[:, line - 2]))
-        trim = len(samples) // 10
-        values.append(float(samples[trim : len(samples) - trim].mean()))
-    local = float(np.median(values[1:]))
-    return values[0] / local if local > 0 else None
+    return np.stack([np.abs(y[:, line + 1] - y[:, line - 2]) for line in lines])
+
+
+def _excess_step(band: np.ndarray, reference: np.ndarray, axis: str, lines: list[int]) -> float | None:
+    """Mean of (step at lines[0] - median step at the other lines) over samples flat in the reference."""
+    steps = _line_steps(band, axis, lines)
+    flat = _line_steps(reference, axis, lines[:1])[0] <= 1.0
+    if flat.mean() < 0.1:
+        return None
+    excess = steps[0] - np.median(steps[1:], axis=0)
+    return max(0.0, float(excess[flat].mean()))

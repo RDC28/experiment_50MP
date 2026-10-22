@@ -61,14 +61,9 @@ RUN_NOTICE_SR = (
     "RAW file and none contains recovered sensor measurements."
 )
 LOW_MEMORY_HEADROOM_GB = 1.0
-# Provisional Phase 2 gates for major seams, to be calibrated in pilot runs (PRD 25.3; data in docs/models.md).
-# Hard seams: a 1 code value offset across a boundary scores 4.7 to 11 on real SR output; seam-free output
-# scores 0.9 to 1.9. Soft seams: with the default tiling, low-frequency tile disagreement (8-bit codes, p99)
-# stayed at or below 2.9 with no visible seam; broken tilings (unaligned windows, small tiles or overlaps)
-# reached 6 to 9. A low-frequency difference of 4 codes crossfaded over 32 source pixels moves the image by
-# at most 2 codes, about the visibility threshold of a smooth luminance change.
-SEAM_SCORE_LIMIT = 3.0
-SEAM_LOW_FREQUENCY_P99_LIMIT = 4.0
+# Provisional Phase 2 gates for major seams, calibrated on the measurements in docs/models.md (PRD 25.3).
+SEAM_SCORE_LIMIT = 1.0  # hard seams: excess step across a boundary line, sRGB 8-bit code values
+SEAM_BLEND_ERROR_LIMIT = 2.0  # soft seams: p99 blend error, sRGB 8-bit code values
 
 
 class StageError(RuntimeError):
@@ -690,12 +685,9 @@ def _run_super_resolution(
             seams = sr.seam_scores(output, tiling.boundaries, source.linear)
             disagreement = summary["tiling"]["overlap_disagreement"]
             seams["passed"] = (seams["max_score"] or 0) <= SEAM_SCORE_LIMIT and (
-                disagreement["low_frequency_p99_abs_max"] or 0
-            ) <= SEAM_LOW_FREQUENCY_P99_LIMIT
-            seams["limits"] = {
-                "max_score": SEAM_SCORE_LIMIT,
-                "overlap_low_frequency_p99_abs_8bit": SEAM_LOW_FREQUENCY_P99_LIMIT,
-            }
+                disagreement["blend_error_p99_abs_max"] or 0
+            ) <= SEAM_BLEND_ERROR_LIMIT
+            seams["limits"] = {"max_score": SEAM_SCORE_LIMIT, "blend_error_p99_abs_8bit": SEAM_BLEND_ERROR_LIMIT}
             summary["seams"] = seams
 
         with stage(StageRecord(f"interpolation_difference_{mode}", MEASUREMENT, {"reference": "Lanczos-3"}, "-", "-")):

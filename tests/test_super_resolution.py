@@ -192,7 +192,7 @@ def test_seams_are_blended_and_detected(scene):
     out, report = run(scene, ContextModel())
     disagreement = report.to_dict()["overlap_disagreement"]
     assert disagreement["low_frequency_p99_abs_max"] > 2  # the tiles really disagree
-    assert sr.seam_scores(out, report.boundaries, scene)["max_score"] < 2.0
+    assert sr.seam_scores(out, report.boundaries, scene)["max_score"] < 0.3
 
     # Negative control: the same tiles pasted without overlap or blending leave visible seams.
     encoded = cm.linear_to_srgb(np.clip(scene, 0, 1))
@@ -204,8 +204,8 @@ def test_seams_are_blended_and_detected(scene):
     cut = sr.resample_box(native, OUT_W, OUT_H, (0.0, 0.0, SRC_W * 4.0, SRC_H * 4.0), Image.Resampling.LANCZOS)
     lines = [{"axis": "x", "position_source_px": 100}, {"axis": "x", "position_source_px": 200}]
     lines += [{"axis": "y", "position_source_px": 100}]
-    assert sr.seam_scores(cut, lines, scene)["max_score"] > 3.0
-    assert sr.seam_scores(out, lines, scene)["max_score"] < 2.0
+    assert sr.seam_scores(cut, lines, scene)["max_score"] > 1.5  # in 8-bit code values
+    assert sr.seam_scores(out, lines, scene)["max_score"] < 0.3
 
 
 def test_seam_score_grows_with_an_injected_step(scene):
@@ -214,11 +214,13 @@ def test_seam_score_grows_with_an_injected_step(scene):
     boundary = [{"axis": "x", "position_source_px": 175.0}]
     column = round(175.0 * OUT_W / SRC_W)
     scores = []
-    for step in (0, 2, 8):
+    for step in (0, 2, 8):  # code values
         encoded = cm.linear_to_srgb(np.clip(output, 0, 1))
         encoded[:, column:] += step / 255
         scores.append(sr.seam_scores(cm.srgb_to_linear(np.clip(encoded, 0, 1)), boundary, source)["max_score"])
-    assert scores[0] < 1.6 < 2.5 < scores[1] < scores[2]
+    assert scores[0] < 0.2
+    # on smooth content a k-code seam scores about k; texture crossing the line lowers it somewhat
+    assert 1.0 < scores[1] <= 2.2 and 5.0 < scores[2] <= 8.5
 
 
 # --------------------------------------------------------------------------- memory fallback

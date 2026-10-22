@@ -123,17 +123,36 @@ values; "photo" is a 256 x 384 crop of the scikit-image astronaut, "chart" the s
 | real-world GAN | 256 / 64 | 0.14 to 0.48 (4.6 to 9.8) | 1.5 to 5.3 | 0.48 to 0.88 |
 
 So the overlap floor is 64 px (the PRD's initial value) and automatic tiles are at least 256 px, at about
-2.1 GB of MPS memory per tile; out-of-memory splitting can still go lower. A larger overlap did not help the
-GAN once tiles were aligned and large enough (96 px gave the same disagreement as 64 px on the 1280 x 720 run
-before alignment, which is how the window effect was found).
+2.1 GB of MPS memory per tile; out-of-memory splitting can still go lower. Before alignment, a 96 px overlap
+gave the same disagreement as 64 px on the 1280 x 720 run, which ruled out border effects and led to the
+window-grid finding.
 
-Two seam gates are reported for every SR mode (provisional, PRD 25.3):
+### Seam gates
 
-- **Soft seams:** the low-frequency part (Gaussian of 2 source pixels) of the disagreement between
-  neighbouring tiles inside their crossfade, at most 4.0 code values at p99. Raw disagreement also counts
-  texture that two tiles synthesise differently, which the crossfade hides. With the defaults the worst
-  boundary reached 2.9 (GAN, dense chart) with no visible seam on inspection; broken tilings reached 6 to 9.
-  A 4-code low-frequency difference crossfaded over 32 source pixels moves the image by at most 2 codes.
-- **Hard seams:** the luma step across each boundary line, smoothed along the line and relative to lines
-  4 to 12 px away, divided by the same ratio on Lanczos where that exceeds 1; at most 3.0. Seam-free SR output
-  scores 0.9 to 1.9; a 1-code offset injected at a boundary scores 4.7 to 11.
+Two gates are reported for every SR mode (provisional, PRD 25.3). Both are in sRGB 8-bit code values.
+
+- **Soft seams, blend error at most 2.0 (p99).** Inside each crossfade the low-frequency difference between the
+  two tiles (Gaussian of 2 source pixels) is multiplied by the smaller blending weight: the crossfaded result
+  lies within that distance of the better-placed tile. Raw tile disagreement is not a seam measure: where one
+  tile has almost no weight it counts texture the network synthesised from less context, which the crossfade
+  discards. Measured against untiled references, blend error tracks the real tiling error and raw disagreement
+  does not:
+
+  | Network, content, tile / overlap | Blend error p99 | Low-frequency disagreement p99 | Tiled vs untiled p99 |
+  |---|---:|---:|---:|
+  | GAN, colour patches, 128 / 32 | 7.06 | 16.7 | 12.3 |
+  | GAN, colour patches, 192 / 64 | 3.46 | 13.1 | 3.23 |
+  | GAN, colour patches, 256 / 64 | 0.79 | 6.21 | 0.70 |
+  | GAN, dense chart, 128 / 32 | 1.15 | 3.49 | 3.04 |
+  | GAN, dense chart, 256 / 64 | 0.13 | 0.88 | 0.47 |
+  | GAN, photo, 256 / 64 | 0.07 | 0.48 | 0.14 |
+  | classical, any of the above, 256 / 64 | 0.00 to 0.03 | 0.00 to 0.20 | 0.00 to 0.07 |
+
+- **Hard seams, height at most 1.0.** Across each tile-boundary line, luma is smoothed along the line (texture
+  averages out, an offset does not) and the step across the line, three pixels wide, is compared with the step
+  across lines 4 to 12 pixels away. The mean excess over samples where the Lanczos interpolation of the source
+  is flat (so content edges on the line do not count) is the seam height. Seam-free SR output measures 0 to
+  0.18; a step of k code values injected at a boundary measures about k (0.76 to 0.92 for 1, 1.75 to 1.92 for 2).
+
+An earlier, ratio-based hard-seam score flagged a chart edge that happened to lie on a boundary and was
+dominated by tiny steps in smooth gradients; the height above replaced it.
