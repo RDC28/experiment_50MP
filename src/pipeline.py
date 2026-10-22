@@ -109,7 +109,7 @@ def run(
     started = time.perf_counter()
     started_at = datetime.now(timezone.utc)
 
-    runtime = environment.inspect_runtime(output_root if output_root.exists() else project_root)
+    runtime = environment.inspect_runtime(output_root)
     monitor = environment.MemoryMonitor().start()
     stages: list[StageRecord] = []
     manifest: dict = {
@@ -120,7 +120,7 @@ def run(
         "package": {
             "name": "synthetic_raw_lab",
             "version": __version__,
-            "git": environment.git_revision(Path(__file__).parent),
+            "git": environment.git_revision(Path(__file__).parent) or environment.git_revision(project_root),
         },
         "notebook_version": notebook_version,
         "models": [],

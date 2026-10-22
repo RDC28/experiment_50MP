@@ -1,6 +1,6 @@
 # Phase 0 and Phase 1 defaults: classical baselines, exports and source-consistency metrics.
-# Every key is documented in src/config.py; `python -m synthetic_raw_lab describe-config` prints
-# the accepted values, effects and warnings. Unknown keys are rejected.
+# Every key is documented in src/config.py; the notebook's configuration table (config.parameter_table)
+# shows the accepted values, effects and warnings. Unknown keys are rejected.
 profile: baselines
 input_category: universal        # human | night | universal
 runtime_preset: standard         # quick (reduced output) | standard (full target) | research (+ repeat runs, memory benchmark)

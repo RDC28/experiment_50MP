@@ -1,12 +1,13 @@
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from synthetic_raw_lab import exporters, pipeline
-from synthetic_raw_lab.__main__ import main
-from synthetic_raw_lab.config import ExperimentConfig
+from synthetic_raw_lab import environment, exporters, pipeline
+from synthetic_raw_lab.config import ExperimentConfig, load_config
 from synthetic_raw_lab.test_images import make_test_image, write_test_image
 
 ALLOWED_CLASSES = {pipeline.PRESERVATION, pipeline.INTERPOLATION, pipeline.PACKAGING, pipeline.MEASUREMENT}
@@ -135,33 +136,46 @@ def test_test_image_is_deterministic():
         make_test_image(32, 32)
 
 
-def test_cli(tmp_path, capsys, project):
-    image = tmp_path / "cli.png"
-    assert main(["make-test-image", str(image), "--width", "160", "--height", "90"]) == 0
-    assert main(["target", "3840", "2160"]) == 0
-    assert json.loads(capsys.readouterr().out.split("\n", 1)[1])["width"] == 9426
-    config = tmp_path / "c.yaml"
-    config.write_text("quick_target_megapixels: 0.1\ncrop_size: 32\ncrop_count: 1\nreview_max_edge: 256\n")
-    assert (
-        main(
-            [
-                "run",
-                str(image),
-                "--config",
-                str(config),
-                "--project-root",
-                str(project),
-                "--preset",
-                "quick",
-                "--category",
-                "night",
-            ]
-        )
-        == 0
+def test_yaml_config_and_category_route_the_run(tmp_path, project):
+    path = tmp_path / "c.yaml"
+    path.write_text("quick_target_megapixels: 0.1\ncrop_size: 32\ncrop_count: 1\nreview_max_edge: 256\n")
+    config = load_config(path, runtime_preset="quick", input_category="night")
+    image = write_test_image(tmp_path / "night.png", 160, 90)
+    result = pipeline.run(image, config, project, log=lambda _: None)
+    assert result.masters_dir.parent == project / "outputs" / "night"
+    assert list(result.masters_dir.glob("*_srgb16.tif"))
+    assert (project / "inputs" / "night").is_dir()
+
+
+def test_storage_check_measures_the_disk_of_a_new_output_folder(source, project, tmp_path, monkeypatch):
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    real_disk_usage = shutil.disk_usage
+
+    def disk_usage(path):
+        usage = real_disk_usage(path)
+        return usage._replace(free=1000) if Path(path) == drive.resolve() else usage
+
+    monkeypatch.setattr(environment.shutil, "disk_usage", disk_usage)
+    config = small_config(baselines=("bicubic",), output_root=str(drive / "new" / "masters"))
+    manifest = pipeline.run(source, config, project, log=lambda _: None).manifest
+    assert manifest["runtime"]["disk_free_gb"] == 0.0
+    assert "below the uncompressed upper bound" in manifest["storage"]["warning"]
+
+
+def test_installed_package_records_the_project_commit(source, project, monkeypatch):
+    def git(*args):
+        subprocess.run(["git", "-C", str(project), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+    head = subprocess.run(["git", "-C", str(project), "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+    monkeypatch.setattr(
+        pipeline, "__file__", str(project.parent / "site-packages" / "synthetic_raw_lab" / "pipeline.py")
     )
-    assert list((project / "outputs" / "night").glob("*/*_srgb16.tif"))
-    assert main(["describe-config"]) == 0
-    assert "target_megapixels" in capsys.readouterr().out
+    config = small_config(baselines=("bicubic",))
+    manifest = pipeline.run(source, config, project, log=lambda _: None).manifest
+    assert manifest["package"]["git"] == {"commit": head.strip(), "dirty": False}
 
 
 def _export_paths(manifest):

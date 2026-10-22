@@ -56,13 +56,15 @@ Notebooks `01_Human_Crowd_50MP`, `02_Night_Scenery_50MP` and `03_Universal_50MP`
 
 1. Open `notebooks/00_Feasibility_Baselines.ipynb` in Colab (File > Open notebook > GitHub, or upload it).
 2. The repository is private: add a Colab secret named `GITHUB_TOKEN` holding a read-only token for it, or
-   copy the repository to Google Drive and set `PROJECT_DIR`.
+   copy the repository to Google Drive and set `PROJECT_DIR`. The token is sent with each Git request only and
+   is never stored in the clone.
 3. To keep the masters, enable `MOUNT_DRIVE` and point `OUTPUT_ROOT` at a Drive folder.
 4. Choose the input (`upload`, a `path`, or the `synthetic` test image) and a preset, then run all cells.
 
-The setup cell clones the repository and installs the package with `pip install`. The package declares
-minimum versions only, so Colab keeps its preinstalled NumPy, SciPy, Pillow and OpenCV; each run records the
-versions it actually used.
+Without `PROJECT_DIR`, the setup cell keeps a clone in `/content/experiment_50MP`, checks out `REPO_REF` there
+on every run and reinstalls the package from it with `pip install`, so re-running the cell picks up new
+commits. The package declares minimum versions only, so Colab keeps its preinstalled NumPy, SciPy, Pillow and
+OpenCV; each run records the versions and the Git commit it actually used.
 
 ## Running locally
 
@@ -70,13 +72,18 @@ versions it actually used.
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -e .
 
-python -m synthetic_raw_lab make-test-image /tmp/synthetic_4k.png          # 3840 x 2160 test image
-python -m synthetic_raw_lab run /tmp/synthetic_4k.png --project-root .     # full 50 MP, both baselines
-python -m synthetic_raw_lab run /tmp/synthetic_4k.png --preset quick       # 2 MP smoke run
-python -m synthetic_raw_lab target 4096 2304                               # target dimensions only
-python -m synthetic_raw_lab describe-config                                # every parameter, documented
-python -m pytest
+python -m pytest                          # unit tests plus a run of the notebook on a small synthetic input
 ruff check . && ruff format --check .
+```
+
+For a full local run, open the notebook in Jupyter with `INPUT_MODE` set to `synthetic` or `path`, or call the
+package directly:
+
+```python
+from synthetic_raw_lab import config, pipeline, test_images
+
+source = test_images.write_test_image("/tmp/synthetic_4k.png", 3840, 2160)
+pipeline.run(source, config.load_config("configs/baseline_default.yaml"), ".")  # full 50 MP, both baselines
 ```
 
 A full 50 MP run holds one float32 50 MP buffer (about 600 MB) at a time; peak resident memory is reported

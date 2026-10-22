@@ -39,6 +39,7 @@ def test_overrides_and_quick_preset(tmp_path):
         {"resolution_mode": "nearest"},
         {"baselines": ["lanczos", "nearest"]},
         {"baselines": []},
+        {"baselines": ["lanczos", "lanczos"]},
         {"target_megapixels": 0},
         {"pixel_count_tolerance": 0.5},
         {"export_exr": "yes"},

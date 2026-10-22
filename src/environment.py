@@ -50,9 +50,8 @@ _PACKAGES = (
 
 
 def inspect_runtime(path: str | Path = ".") -> dict:
-    """Environment facts every run records (PRD 6.2 and 21.2)."""
+    """Environment facts every run records (PRD 6.2 and 21.2); free disk is measured for ``path``."""
     memory = psutil.virtual_memory()
-    disk = shutil.disk_usage(Path(path).resolve() if Path(path).exists() else Path.cwd())
     return {
         "python": sys.version.split()[0],
         "platform": platform.platform(),
@@ -61,10 +60,18 @@ def inspect_runtime(path: str | Path = ".") -> dict:
         "in_colab": "google.colab" in sys.modules or _module_available("google.colab"),
         "ram_total_gb": round(memory.total / 1e9, 2),
         "ram_available_gb": round(memory.available / 1e9, 2),
-        "disk_free_gb": round(disk.free / 1e9, 2),
+        "disk_free_gb": disk_free_gb(path),
         "gpu": gpu_info(),
         "packages": package_versions(),
     }
+
+
+def disk_free_gb(path: str | Path) -> float:
+    """Free space on the disk that holds ``path``, or will hold it once its missing folders are created."""
+    existing = Path(path).expanduser().resolve()
+    while not existing.exists():
+        existing = existing.parent
+    return round(shutil.disk_usage(existing).free / 1e9, 2)
 
 
 def gpu_info() -> dict | None:

@@ -257,8 +257,8 @@ class ExperimentConfig:
             _check_type(f, value)
             choices, bounds = f.metadata["choices"], f.metadata["bounds"]
             if isinstance(value, tuple) and choices is not None:
-                if not value or any(v not in choices for v in value):
-                    raise ValueError(f"{f.name} must be a non-empty subset of {choices}, got {value!r}")
+                if not value or len(set(value)) != len(value) or any(v not in choices for v in value):
+                    raise ValueError(f"{f.name} must be a non-empty subset of {choices} without repeats, got {value!r}")
             elif choices is not None and value not in choices:
                 raise ValueError(f"{f.name} must be one of {choices}, got {value!r}")
             if bounds is not None and not bounds[0] <= value <= bounds[1]:

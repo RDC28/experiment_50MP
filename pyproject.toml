@@ -26,9 +26,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.9", "nbclient>=0.10", "ipykernel>=6.29"]
 
-[project.scripts]
-synthetic-raw-lab = "synthetic_raw_lab.__main__:main"
-
 [tool.setuptools]
 # PRD 4.4 keeps the modules directly in src/; they install as the synthetic_raw_lab package.
 package-dir = { "synthetic_raw_lab" = "src" }
