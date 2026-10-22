@@ -124,6 +124,53 @@ def test_run_from_an_array_without_dng(project):
     assert "no DNG was exported" in result.report_path.read_text()
 
 
+def test_a_high_key_input_without_shadows_completes_its_report(project):
+    bright = 0.4 + 0.5 * master()
+    config = small_config(export_synthetic_dng=False, bit_depth_write_files=False, demosaic_methods=["malvar"])
+    result = sr.run(bright, config, project, log=lambda _: None)
+    assert result.manifest["status"] == "complete"
+    assert result.manifest["bit_depth"]["shadow_pixel_fraction"] == 0
+    assert "shadow-level comparison is unavailable" in result.report_path.read_text()
+
+
+def test_crops_start_on_the_cfa_phase_for_an_odd_crop_size_at_the_edge(project):
+    height, width = 64, 4098
+    image = np.full((height, width, 3), 0.2, dtype=np.float32)
+    rng = np.random.default_rng(1)
+    image[32:, -32:] = rng.uniform(0, 1, (32, 32, 3)).astype(np.float32)
+    config = small_config(
+        crop_size=33, export_synthetic_dng=False, bit_depth_study=False, demosaic_methods=["bilinear"]
+    )
+    crops = sr.run(image, config, project, log=lambda _: None).manifest["crops"]
+    detail = next(c for c in crops if c["name"] != "center")
+    assert detail["x"] + detail["width"] == width and detail["y"] + detail["height"] == height
+    for crop in crops:
+        assert crop["x"] % 2 == crop["y"] % 2 == crop["width"] % 2 == 0, crop
+
+
+def test_labels_with_quotes_and_non_ascii_are_found_in_the_sidecars(project):
+    label = 'SYNTHETIC "mosaic" \u2013 simulated Bayer sampling, not camera RAW'
+    config = small_config(synthetic_raw_label=label, bit_depth_study=False, demosaic_methods=["bilinear"])
+    manifest = sr.run(master(), config, project, log=lambda _: None).manifest
+    assert manifest["labels"]["all_labelled"], manifest["labels"]
+    assert manifest["labels"]["checks"]["dng_sidecar"] and manifest["labels"]["checks"]["mosaic_tiff_sidecar"]
+
+
+def test_exiftool_runs_once_and_the_gating_result_is_recorded(project, monkeypatch):
+    calls = []
+    report = {"ok": True, "output": ["Validate: 0 Warnings"], "unexpected": []}
+
+    def fake_exiftool(path):
+        calls.append(path)
+        return report
+
+    monkeypatch.setattr(sr.synthetic_dng, "exiftool_validate", fake_exiftool)
+    config = small_config(bit_depth_study=False, demosaic_methods=["bilinear"], libraw_roundtrip=False)
+    dng = sr.run(master(), config, project, log=lambda _: None).manifest["exports"]["dng"]
+    assert calls == [Path(dng["path"])]
+    assert dng["exiftool"] == report and dng["checks"]["exiftool_validate_ok"]
+
+
 def test_a_failing_stage_keeps_a_partial_report(project, monkeypatch):
     def broken(*args, **kwargs):
         raise RuntimeError("demosaic exploded")

@@ -345,7 +345,12 @@ def conclusions(manifest: dict) -> list[str]:
     if bit_depth:
         rows = {r["name"]: r for r in bit_depth["representations"]}
         eight, sixteen = rows.get("rgb8_srgb"), rows.get("rgb16_srgb")
-        if eight and sixteen:
+        if eight and sixteen and None in (eight["edit_shadow_level_ratio"], sixteen["edit_shadow_level_ratio"]):
+            lines.append(
+                "PRD 14.5: the shadow-level comparison is unavailable because no input pixel has "
+                f"{bit_depth['parameters']['shadow_definition']}."
+            )
+        elif eight and sixteen:
             lines.append(
                 "PRD 14.5: after the identical shadow push, 8-bit keeps "
                 f"{eight['edit_shadow_level_ratio']:.1%} and 16-bit integer "

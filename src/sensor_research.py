@@ -290,10 +290,9 @@ def run(
                     synthetic_dng.preview_from_linear(linear),
                 )
                 exporters.write_sidecar(result, metadata)
-                exiftool = synthetic_dng.exiftool_validate(result.path)
                 manifest["exports"]["dng"] = {
                     **result.to_dict(),
-                    "exiftool": exiftool or {"ok": None, "output": ["exiftool not installed; check skipped"]},
+                    "exiftool": result.exiftool or {"ok": None, "output": ["exiftool not installed; check skipped"]},
                 }
                 dng_path = result.path
 
@@ -450,7 +449,9 @@ def label_checks(manifest: dict) -> dict:
     for name, export in manifest.get("exports", {}).items():
         checks[f"{name}_provenance_in_file"] = bool(export.get("checks", {}).get("provenance_roundtrip"))
         sidecar = Path(export["path"] + ".json")
-        checks[f"{name}_sidecar"] = sidecar.exists() and label in sidecar.read_text()
+        checks[f"{name}_sidecar"] = (
+            sidecar.exists() and json.loads(sidecar.read_text())["provenance"].get("synthetic_raw_label") == label
+        )
     if "dng" in manifest.get("exports", {}):
         checks["dng_unique_camera_model"] = bool(
             manifest["exports"]["dng"]["checks"].get("unique_camera_model_synthetic")
@@ -508,7 +509,7 @@ def _select_crops(linear: np.ndarray, config: SensorResearchConfig) -> list[comp
     crops = []
     for crop in chosen:
         x0, y0, _, _ = crop.output_box(small_size, (width, height))
-        side = min(config.crop_size, width, height)
+        side = min(config.crop_size, width, height) // 2 * 2
         x0, y0 = min(x0 // 2 * 2, width - side), min(y0 // 2 * 2, height - side)
         crops.append(comparison.Crop(crop.name, x0, y0, side, side))
     return crops

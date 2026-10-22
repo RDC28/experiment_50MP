@@ -68,9 +68,10 @@ def test_dng_metadata_must_be_labelled_synthetic(tmp_path):
         sd.write_synthetic_dng(tmp_path / "x.dng", mosaic, {"run_id": "x"}, sd.preview_from_linear(gradient()))
 
 
-def test_libraw_develops_the_dng_back_to_the_input_colour(tmp_path):
+@pytest.mark.parametrize("balance", [ss.DEFAULT_WHITE_BALANCE, (2.0, 1.25, 1.6), (1.6, 0.8, 1.28)])
+def test_libraw_develops_the_dng_back_to_the_input_colour(tmp_path, balance):
     image = np.ones((64, 96, 3), dtype=np.float32) * np.array([0.30, 0.45, 0.20], dtype=np.float32)
-    result, mosaic = write(tmp_path, ss.SensorModel(), image)
+    result, mosaic = write(tmp_path, ss.SensorModel(white_balance_multipliers=balance), image)
     developed = sd.develop_with_libraw(result.path, mosaic)
     assert developed.shape == image.shape
     np.testing.assert_allclose(developed[8:-8, 8:-8], image[8:-8, 8:-8], atol=2e-3)
@@ -81,7 +82,7 @@ def test_exiftool_validates_the_dng(tmp_path):
     result, _ = write(tmp_path)
     report = sd.exiftool_validate(result.path)
     assert report["ok"], report
-    assert result.checks["exiftool_validate_ok"]
+    assert result.checks["exiftool_validate_ok"] and result.exiftool == report
 
 
 def test_mosaic_tiff_keeps_the_codes_and_label(tmp_path):

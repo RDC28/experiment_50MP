@@ -11,7 +11,7 @@ adc_bit_depth: 14                # 10 | 12 | 14 | 16
 black_level:                     # empty: 2^(bits-5), 512 at 14 bits
 white_level:                     # empty: 2^bits - 1
 analog_gain: 1.0                 # ISO multiplier over base gain
-exposure_scale: 0.8              # working white on the green channel as a fraction of the ADC range
+exposure_scale: 0.8              # working white on a channel with WB multiplier 1, as a fraction of the ADC range
 full_well_electrons: 45000
 shot_noise_enabled: false        # PRD 14.4 default
 read_noise_enabled: false        # PRD 14.4 default

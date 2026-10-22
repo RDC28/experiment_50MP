@@ -71,8 +71,9 @@ class SensorResearchConfig:
     )
     exposure_scale: float = _param(
         0.8,
-        "Synthetic exposure scaling: camera-native signal of a working-space white on the channel with the "
-        "smallest white-balance multiplier, as a fraction of the ADC range.",
+        "Synthetic exposure scaling: camera-native signal of a working-space white on a channel with "
+        "white-balance multiplier 1, as a fraction of the ADC range (a channel with multiplier m receives "
+        "exposure_scale / m).",
         "0.01 to 1",
         "Lower values leave headroom for values above 1.0 in the master and push shadows toward the black level.",
         bounds=(0.01, 1.0),

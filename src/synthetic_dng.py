@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -71,9 +72,19 @@ _PROFILE_NAME = 50936
 _PHOTOMETRIC_CFA = 32803
 
 
+@dataclass
+class DngExportResult(ExportResult):
+    """Export record of a synthetic DNG plus the ExifTool ``-validate`` report that gated it (None: not run)."""
+
+    exiftool: dict | None = None
+
+    def to_dict(self) -> dict:
+        return {**super().to_dict(), "exiftool": self.exiftool}
+
+
 def write_synthetic_dng(
     path: Path, mosaic: SyntheticMosaic, metadata: dict, preview_rgb8: np.ndarray, *, run_exiftool: bool = True
-) -> ExportResult:
+) -> DngExportResult:
     """Write a synthetic mosaic DNG and validate it; ``metadata`` is stored as JSON in ImageDescription."""
     import tifffile
 
@@ -124,11 +135,10 @@ def write_synthetic_dng(
     expected_hash = pixel_sha256(dn)
     checks = structural_checks(path, mosaic, json.loads(description), expected_hash)
     checks.update(libraw_checks(path, mosaic))
-    if run_exiftool:
-        exiftool = exiftool_validate(path)
-        if exiftool is not None:
-            checks["exiftool_validate_ok"] = exiftool["ok"]
-    result = ExportResult(
+    exiftool = exiftool_validate(path) if run_exiftool else None
+    if exiftool is not None:
+        checks["exiftool_validate_ok"] = exiftool["ok"]
+    result = DngExportResult(
         path,
         "synthetic_mosaic_dng",
         dn.shape[1],
@@ -140,6 +150,7 @@ def write_synthetic_dng(
         expected_hash,
         path.stat().st_size,
         checks,
+        exiftool,
     )
     failed = [name for name, ok in checks.items() if not ok]
     if failed:
@@ -223,7 +234,9 @@ def develop_with_libraw(path: Path, mosaic: SyntheticMosaic) -> np.ndarray:
     """Decode the DNG with LibRaw's own pipeline (AHD demosaic, embedded matrix) to working-space linear RGB.
 
     LibRaw outputs linear sRGB (Rec.709 primaries, D65) in 16 bits with the white
-    level at 65535; dividing by the exposure scale puts it on the input's scale.
+    level at 65535. It normalises the white-balance gains to a smallest gain of 1,
+    so a working-space white lands at ``exposure_scale / min(white_balance_multipliers)``
+    of that range; dividing by this factor puts the output on the input's scale.
     Automatic brightening and LibRaw's data-driven maximum adjustment are off, so
     the scale comes from the DNG tags alone. LibRaw clips at its white level.
     """
@@ -241,7 +254,8 @@ def develop_with_libraw(path: Path, mosaic: SyntheticMosaic) -> np.ndarray:
             user_flip=0,
         )
     linear = np.empty(rgb16.shape, dtype=np.float32)
-    scale = np.float32(1.0 / (65535.0 * mosaic.model.exposure_scale))
+    model = mosaic.model
+    scale = np.float32(min(model.white_balance_multipliers) / (65535.0 * model.exposure_scale))
     for start in range(0, rgb16.shape[0], 512):
         linear[start : start + 512] = rgb16[start : start + 512].astype(np.float32) * scale
     return linear
