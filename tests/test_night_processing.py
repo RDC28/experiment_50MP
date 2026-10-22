@@ -358,7 +358,8 @@ def test_default_processing_improves_night_metrics(default_result):
     assert np.isfinite(image).all() and image.min() >= 0 and image.max() <= 1
     before, after = result.metrics_before, result.metrics_after
     assert before["halo"]["fraction"] > 0.05  # Lanczos ringing around the lights
-    assert after["halo"]["fraction"] < 0.01
+    assert after["halo"]["fraction"] < 0.8 * before["halo"]["fraction"]
+    assert after["halo"]["mean_excursion_codes"] < 0.5 * before["halo"]["mean_excursion_codes"]
     assert after["banding_score"] < before["banding_score"]
     assert after["shadow_chroma_noise_codes"] < before["shadow_chroma_noise_codes"]
     clip_before = before["highlight_clipping_fraction"]["any_channel"]
@@ -368,6 +369,26 @@ def test_default_processing_improves_night_metrics(default_result):
     protected = result.comparison["protected_color_difference_ciede2000"]
     assert protected["pixels"] > 0 and protected["chromatic_mean"] <= protected["mean"] < 2
     assert set(result.comparison["local_contrast_change"]) == set(night.REGION_NAMES)
+
+
+def test_halo_metric_sees_dark_rings_inside_the_halo_clamp_range(scene, default_result):
+    # The clamp keeps each channel near lights inside the 3x3 source range plus one code. A halo metric
+    # measured against that same range reads exactly 0 after the clamp, whatever the image looks like.
+    _, source, regions, _ = scene
+    params = night.NightParams()
+    height, width = default_result.image.shape[:2]
+    clean = night.night_metrics(default_result.image, regions, source, params=params)["halo"]
+    # Darken every ring pixel to the bottom of the clamp range: a dark ring around each light
+    # that halo suppression at full strength leaves exactly as it is.
+    low, high = night._Envelope(source).strip(width, height, 0, height, params)[:2]
+    ring = regions.soft_strip(width, height, 0, height)["ring"] > 0.5
+    ringed = default_result.image.copy()
+    ringed[ring] = cm.srgb_to_linear(low[ring])
+    encoded = cm.linear_to_srgb(ringed)[ring]
+    assert np.all((encoded >= low[ring] - 1e-5) & (encoded <= high[ring] + 1e-5))
+    halo = night.night_metrics(ringed, regions, source, params=params)["halo"]
+    assert halo["fraction"] > clean["fraction"] + 0.2
+    assert halo["mean_excursion_codes"] > 3 * clean["mean_excursion_codes"]
 
 
 def test_stages_carry_provenance_labels(default_result):

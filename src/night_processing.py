@@ -106,6 +106,8 @@ _TEXTURE_RATIO_LIMIT = {"low": 1.6, "medium": 2.5, "high": 4.0}
 # Debanding acts fully where the local RMS residual from the mean is below this many codes, not at all
 # above twice it: quantised gradients stay below, noisy or textured surfaces above.
 _DEBAND_RESIDUAL_CODES = 0.5
+# A halo pixel lies more than this many codes outside the luma range of the source samples it sits between.
+_HALO_CODES = 2.0
 _MOOD_CAP = 0.15
 
 
@@ -270,13 +272,14 @@ class HighlightParams(_Section):
         True,
         "Suppress halos around bright edges (PRD 12.2).",
         "true | false",
-        "Clamps luminance near lights to the range of the surrounding source pixels.",
+        "Clamps every channel near lights to the range of the surrounding source pixels.",
     )
     halo_suppression_strength: float = _param(
         1.0,
         "Strength of the halo clamp.",
         "0 to 1",
-        "1 removes ringing and sharpening halos completely near lights.",
+        "1 clamps each channel near lights to the 3x3 source range plus one code; overshoot "
+        "within that range (up to one source pixel's step) remains and the halo metric reports it.",
         bounds=(0.0, 1.0),
     )
     preserve_light_color: bool = _param(
@@ -1049,6 +1052,12 @@ def _warp_rows(plane: np.ndarray, out_width: int, out_height: int, y0: int, y1: 
     return _bilinear(plane, ys, xs)
 
 
+def _neighbours(coords: np.ndarray, size: int, origin: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """Indices of the two samples around each coordinate (edge replicated); sample ``origin`` is index 0."""
+    index = np.floor(coords).astype(np.int64) - origin
+    return np.clip(index, 0, size - 1), np.clip(index + 1, 0, size - 1)
+
+
 def _bilinear(plane: np.ndarray, ys: np.ndarray, xs: np.ndarray, y_origin: int = 0) -> np.ndarray:
     """float32 samples of ``plane`` at rows ``ys`` and columns ``xs`` (edge replicated).
 
@@ -1095,24 +1104,34 @@ class _Strip:
     def hard(self, *names: str) -> np.ndarray:
         return self.w(*names) > 0.5
 
-    def envelope(self, params: NightParams | None) -> tuple[np.ndarray, np.ndarray]:
-        """Encoded per-channel source range around each padded pixel, after ``params``' pointwise operations."""
+    def _source(self, params: NightParams | None) -> tuple[np.ndarray, ...]:
         key = None if params is None else id(params)
         if key not in self._envelopes:
             self._envelopes[key] = self.source.strip(*self.size, self.p0, self.p1, params)
         return self._envelopes[key]
 
-    def luma_range(self, params: NightParams | None) -> tuple[np.ndarray, np.ndarray]:
-        low, high = self.envelope(params)
-        return low @ LUMA_WEIGHTS, high @ LUMA_WEIGHTS
+    def envelope(self, params: NightParams | None) -> tuple[np.ndarray, np.ndarray]:
+        """Encoded per-channel source range around each padded pixel, after ``params``' pointwise operations."""
+        low, high = self._source(params)[:2]
+        return low, high
+
+    def footprint(self, params: NightParams | None) -> tuple[np.ndarray, np.ndarray]:
+        """Encoded luma range of the 2x2 source samples around each padded pixel, after ``params``' operations."""
+        low, high = self._source(params)[2:]
+        return low, high
 
 
 class _Envelope:
-    """Source channel ranges (3x3 neighbourhoods), the reference of the halo clamp and the halo metric.
+    """Source ranges: the reference of the halo clamp and, separately, of the halo check.
 
-    Computed per strip from the source rows the strip needs, after the same
-    pointwise operations (colour adaptation, tone curve) as the image, so the
-    clamp and the metric compare like with like.
+    The clamp uses per-channel ranges of 3x3 source neighbourhoods. The halo
+    check uses the luma range of the 2x2 source samples an output pixel lies
+    between, which every interpolation without overshoot stays inside. That
+    range is tighter than the clamp's (which reaches one more source pixel out,
+    plus one code), so a dark ring the clamp lets through still counts.
+    Both are computed per strip from the source rows the strip needs, after the
+    same pointwise operations (colour adaptation, tone curve) as the image, so
+    they compare like with like.
     """
 
     def __init__(self, source_linear: np.ndarray):
@@ -1120,7 +1139,7 @@ class _Envelope:
 
     def strip(
         self, out_width: int, out_height: int, p0: int, p1: int, params: NightParams | None
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         height, width = self.linear.shape[:2]
         ys = (np.arange(p0, p1, dtype=np.float64) + 0.5) * (height / out_height) - 0.5
         xs = (np.arange(out_width, dtype=np.float64) + 0.5) * (width / out_width) - 0.5
@@ -1130,7 +1149,17 @@ class _Envelope:
         encoded = cm.linear_to_srgb(np.clip(part, 0, 1))
         low = ndimage.minimum_filter(encoded, size=(3, 3, 1), mode="nearest")
         high = ndimage.maximum_filter(encoded, size=(3, 3, 1), mode="nearest")
-        return _bilinear(low, ys, xs, y_origin=a), _bilinear(high, ys, xs, y_origin=a)
+        y = encoded @ LUMA_WEIGHTS
+        r0, r1 = _neighbours(ys, y.shape[0], a)
+        c0, c1 = _neighbours(xs, y.shape[1])
+        top, bottom = y[r0], y[r1]
+        a00, a01, a10, a11 = top[:, c0], top[:, c1], bottom[:, c0], bottom[:, c1]
+        return (
+            _bilinear(low, ys, xs, y_origin=a),
+            _bilinear(high, ys, xs, y_origin=a),
+            np.minimum(np.minimum(a00, a01), np.minimum(a10, a11)),
+            np.maximum(np.maximum(a00, a01), np.maximum(a10, a11)),
+        )
 
 
 def _filter_margin(params: NightParams, scale: float) -> int:
@@ -1238,7 +1267,7 @@ def _process(linear: np.ndarray, strip: _Strip, params: NightParams, regions_sca
 
     encoded = y[..., None] + chroma
     # Halo suppression (PRD 12.2): clamp each channel near lights to the source range around the pixel,
-    # which removes ringing and sharpening halos without leaving coloured fringes.
+    # which removes most ringing and sharpening overshoot without leaving coloured fringes.
     if hi.halo_suppression and hi.halo_suppression_strength > 0:
         low, high = strip.envelope(params)
         clamped = np.clip(encoded, low - _CODE, high + _CODE)
@@ -1493,9 +1522,9 @@ def process_night(
             envelope,
             (width, height),
         )
-        before.add(padded, strip, strip.luma_range(None))
+        before.add(padded, strip, strip.footprint(None))
         candidate = _process(padded, strip, params, scale)
-        reference = strip.luma_range(params)
+        reference = strip.footprint(params)
         if params.failure_rule.enabled:
             safe = _process(padded, strip, conservative, scale)
             weight, records = _failure_rule(padded, candidate, strip, params, block, width, height)
@@ -1505,7 +1534,7 @@ def process_night(
             fallback_weight += float(weight[strip.core].sum())
             # Halo reference for the blended result: each pixel against the tone curve it went through.
             reference = tuple(
-                r + weight * (c - r) for r, c in zip(reference, strip.luma_range(conservative), strict=True)
+                r + weight * (c - r) for r, c in zip(reference, strip.footprint(conservative), strict=True)
             )
             del safe
         result, applied = _simulated(candidate, strip, params, seed)
@@ -1555,15 +1584,13 @@ def _failure_rule(
 
     y_in = _encoded_luma(before)
     y_out = _encoded_luma(candidate)
-    low, high = strip.luma_range(None)
-    low_out, high_out = strip.luma_range(params)
     ring = strip.hard("ring")[rows]
     smooth = strip.hard("smooth_gradient", "sky_atmosphere")[rows]
     near_black = strip.hard("near_black")[rows]
     quiet = strip.hard("near_black", "low_luminance_textured", "sky_atmosphere", "smooth_gradient")[rows]
 
-    halo_in = _outside(y_in, low, high)[rows] & ring
-    halo_out = _outside(y_out, low_out, high_out)[rows] & ring
+    halo_in = (_halo_excursion(y_in, *strip.footprint(None)) > _HALO_CODES * _CODE)[rows] & ring
+    halo_out = (_halo_excursion(y_out, *strip.footprint(params)) > _HALO_CODES * _CODE)[rows] & ring
     flat_in, ramp_in = (m[rows] & smooth for m in _banding_maps(y_in, strip.scale))
     flat_out, ramp_out = (m[rows] & smooth for m in _banding_maps(y_out, strip.scale))
     crush_in = (y_in < 0.5 * _CODE)[rows] & near_black
@@ -1642,8 +1669,9 @@ def _encoded_luma(linear: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(cm.linear_to_srgb(np.clip(linear, 0, 1)) @ LUMA_WEIGHTS)
 
 
-def _outside(y: np.ndarray, low: np.ndarray, high: np.ndarray, tolerance: float = 2 * _CODE) -> np.ndarray:
-    return (y < low - tolerance) | (y > high + tolerance)
+def _halo_excursion(y: np.ndarray, low: np.ndarray, high: np.ndarray) -> np.ndarray:
+    """How far each luma lies outside the range of the source samples around it (undershoot is a dark halo)."""
+    return np.maximum(low - y, 0) + np.maximum(y - high, 0)
 
 
 def _high_pass(y: np.ndarray, scale: float) -> np.ndarray:
@@ -1715,8 +1743,8 @@ class _Metrics:
     ) -> None:
         """Measure ``core_image`` (the strip's core rows); ``padded`` gives filter context around them.
 
-        ``reference`` is the luma of the encoded source channel range around each padded pixel,
-        after the same pointwise operations as the image, used by the halo check.
+        ``reference`` is the encoded luma range of the 2x2 source samples around each padded
+        pixel, after the same pointwise operations as the image, used by the halo check.
         """
         core = strip.core
         context = padded.copy()
@@ -1738,11 +1766,10 @@ class _Metrics:
         n["flat"] += int((flat[core] & smooth).sum())
 
         ring = strip.hard("ring")[core]
-        low, high = reference[0][core], reference[1][core]
         yc = y[core]
-        excursion = np.maximum(low - yc, 0) + np.maximum(yc - high, 0)
+        excursion = _halo_excursion(yc, reference[0][core], reference[1][core])
         n["ring"] += int(ring.sum())
-        n["halo"] += int((ring & (excursion > 2 * _CODE)).sum())
+        n["halo"] += int((ring & (excursion > _HALO_CODES * _CODE)).sum())
         self.halo_excursion += float(excursion[ring].sum())
 
         near_black = strip.hard("near_black")[core]
@@ -1781,6 +1808,8 @@ class _Metrics:
                 "fraction": ratio("halo", "ring"),
                 "mean_excursion_codes": None if n["ring"] == 0 else self.halo_excursion / n["ring"] / _CODE,
                 "ring_pixels": n["ring"],
+                "note": "share of ring pixels more than 2 codes outside the luma range of the 2x2 source samples "
+                "around them; independent of the halo clamp, which uses the wider 3x3 range",
             },
             "shadow_chroma_noise_codes": None
             if n["shadow"] == 0
@@ -1868,7 +1897,7 @@ def night_metrics(
 
     ``params`` are the night parameters the image was processed with (None for
     an unprocessed image), so the halo check compares it with an equally
-    processed source range.
+    processed source.
     """
     height, width = image.shape[:2]
     scale = width / source_linear.shape[1]
@@ -1877,7 +1906,7 @@ def night_metrics(
     metrics = _Metrics(scale)
     for y0, y1, p0, p1 in _strips(height, strip_rows, margin):
         strip = _Strip(y0, y1, p0, p1, scale, regions.soft_strip(width, height, p0, p1), envelope, (width, height))
-        metrics.add(np.ascontiguousarray(image[p0:p1]), strip, strip.luma_range(params))
+        metrics.add(np.ascontiguousarray(image[p0:p1]), strip, strip.footprint(params))
     return metrics.result()
 
 

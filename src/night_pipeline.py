@@ -725,7 +725,7 @@ METRIC_ROWS = (
     ("Highlight clipping, all channels", lambda m: m["highlight_clipping_fraction"]["all_channels"], 5),
     ("Clipping within light regions", lambda m: m["highlight_clipping_fraction"]["within_light_regions"], 4),
     ("Gradient banding score", lambda m: m["banding_score"], 4),
-    ("Halo fraction around bright edges", lambda m: m["halo"]["fraction"], 4),
+    ("Halo fraction around bright edges (outside the 2x2 source range)", lambda m: m["halo"]["fraction"], 4),
     ("Halo mean excursion (8-bit codes)", lambda m: m["halo"]["mean_excursion_codes"], 3),
     ("Shadow chroma noise (8-bit codes)", lambda m: m["shadow_chroma_noise_codes"], 3),
     ("Black crush fraction", lambda m: m["black_crush_fraction"], 4),
