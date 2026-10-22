@@ -76,6 +76,11 @@ _PANEL_LABELS = {
     "balanced_sr": "Lanczos as bal. SR",
     FINAL: "final night",
 }
+# Crops whose panel adds a display-gain row (stops of linear gain): near-black tones are unreadable at 100%.
+DISPLAY_GAIN_EV = {"shadow": 3.0}
+_GUTTER = 8
+_DIFF_GAIN = 8
+_PANEL_BACKGROUND = 24
 
 
 @dataclass
@@ -389,9 +394,12 @@ def run_night(
                 "information": result.information,
             }
             record.notes = [f"{len(result.fallbacks)} failure-rule fallback blocks ({result.fallback_fraction:.3%})"]
-            fallback_path = figures_dir / "fallback_map.png"
-            exporters.write_review_image(
-                fallback_path, night.fallback_map(result, *size, max_edge=experiment.review_max_edge)
+            fallback_path = fallback_figure(
+                night.fallback_map(result, *size, max_edge=experiment.review_max_edge),
+                source.linear,
+                result.fallbacks,
+                result.fallback_fraction,
+                figures_dir / "fallback_map.png",
             )
             manifest["figures"]["fallbacks"] = str(fallback_path)
             del result, upscaled  # the upscale was processed in place; image is the only full-size buffer
@@ -480,11 +488,14 @@ def run_night(
                     source_encoded16[crop.y : crop.y + crop.height, crop.x : crop.x + crop.width]
                 )
                 labelled = {_label(k): tiles[crop.name][k] for k in slot_order if k in tiles[crop.name]}
+                gain = DISPLAY_GAIN_EV.get(crop.name)
                 path = exporters.write_review_image(
                     figures_dir / f"crop_{crop.name}.png",
-                    comparison.crop_panel(source_tile, labelled, difference=(_label(input_key), _label(FINAL))),
+                    crop_panel(source_tile, labelled, (_label(input_key), _label(FINAL)), display_gain_ev=gain),
                 )
                 panels.append({"crop": crop.name, "path": str(path), "box": list(boxes[crop.name])})
+                if gain:
+                    panels[-1]["display_gain_ev"] = gain
             manifest["crop_panels"] = panels
             if "gradient" in boxes:
                 manifest["figures"]["banding"] = str(
@@ -596,6 +607,138 @@ class _ProfileLines:
             c, d = max(0, x0 - m), min(self.size[0], x1 + m)
             flat, ramp = night.banding_map(np.ascontiguousarray(image[a:b, c:d]), self.scale)
             self.banding[key] = (flat[y0 - a : y1 - a, x0 - c : x1 - c], ramp[y0 - a : y1 - a, x0 - c : x1 - c])
+
+
+def crop_panel(
+    source_tile: np.ndarray,
+    tiles: dict[str, np.ndarray],
+    diff: tuple[str, str],
+    *,
+    display_gain_ev: float | None = None,
+) -> np.ndarray:
+    """uint8 crop panel: source (nearest), each image, and the amplified difference of the ``diff`` pair.
+
+    Column labels scale with the tile width, so they stay legible at 100% zoom on wide panels. With
+    ``display_gain_ev`` a second row repeats every image column brightened by that many stops in linear
+    light, under a banner marking it display only: masters, metrics and the difference column never see it.
+    """
+    names = list(tiles)
+    height, width = tiles[names[0]].shape[:2]
+    images = [("source (nearest)", cv2.resize(source_tile, (width, height), interpolation=cv2.INTER_NEAREST))]
+    images += [(name, tiles[name]) for name in names]
+    a, b = diff
+    delta = np.abs(tiles[a].astype(np.int16) - tiles[b].astype(np.int16)).max(axis=2)
+    heat = cv2.applyColorMap(np.clip(delta * _DIFF_GAIN, 0, 255).astype(np.uint8), cv2.COLORMAP_INFERNO)
+    columns = [*images, (f"|{a} - {b}| x{_DIFF_GAIN}", cv2.cvtColor(heat, cv2.COLOR_BGR2RGB))]
+    total = len(columns) * width + (len(columns) - 1) * _GUTTER
+    font = _panel_font(width)
+    bands = [
+        _text_band([label for label, _ in columns], width, total, font, (235, 235, 235)),
+        _image_row([tile for _, tile in columns], total),
+    ]
+    if display_gain_ev:
+        banner = (
+            f"Row below: the image columns above at +{display_gain_ev:g} EV display gain "
+            f"(x{2**display_gain_ev:g} in linear light) to show shadow structure. Display only, "
+            "never written to masters or used by any metric."
+        )
+        bands.append(_text_band([banner], total, total, font, (255, 200, 60)))
+        bands.append(_image_row([_display_gain(tile, display_gain_ev) for _, tile in images], total))
+    return np.ascontiguousarray(np.concatenate(bands, axis=0))
+
+
+def _panel_font(tile_width: int):
+    from matplotlib import font_manager
+    from PIL import ImageFont
+
+    # About 28 px on the ~630 px tiles of a 50 MP run, never below 13 px on small test tiles.
+    size = int(np.clip(round(tile_width / 22), 13, 28))
+    return ImageFont.truetype(font_manager.findfont("DejaVu Sans"), size)
+
+
+def _text_band(texts: list[str], column_width: int, total: int, font, colour: tuple[int, int, int]) -> np.ndarray:
+    """One header band: each text word-wrapped into its own column, clipped to the column width."""
+    from PIL import Image, ImageDraw
+
+    pad = max(3, round(font.size / 3))
+    line_height = round(font.size * 1.25)
+    wrapped = [_wrap(text, font, column_width - 2 * pad) for text in texts]
+    band_height = max(len(lines) for lines in wrapped) * line_height + 2 * pad
+    band = Image.new("RGB", (total, band_height), (_PANEL_BACKGROUND,) * 3)
+    for index, lines in enumerate(wrapped):
+        cell = Image.new("RGB", (column_width, band_height), (_PANEL_BACKGROUND,) * 3)
+        draw = ImageDraw.Draw(cell)
+        for row, line in enumerate(lines):
+            draw.text((pad, pad + row * line_height), line, font=font, fill=colour)
+        band.paste(cell, (index * (column_width + _GUTTER), 0))
+    return np.asarray(band)
+
+
+def _wrap(text: str, font, width: int) -> list[str]:
+    lines, line = [], ""
+    for word in text.split(" "):
+        trial = f"{line} {word}" if line else word
+        if line and font.getlength(trial) > width:
+            lines.append(line)
+            line = word
+        else:
+            line = trial
+    return [*lines, line]
+
+
+def _image_row(tiles: list[np.ndarray], total: int) -> np.ndarray:
+    height, width = tiles[0].shape[:2]
+    row = np.full((height, total, 3), _PANEL_BACKGROUND, dtype=np.uint8)
+    for index, tile in enumerate(tiles):
+        x = index * (width + _GUTTER)
+        row[:, x : x + width] = tile
+    return row
+
+
+def _display_gain(tile: np.ndarray, ev: float) -> np.ndarray:
+    """An 8-bit sRGB tile brightened by ``ev`` stops in linear light, for display only."""
+    linear = cm.srgb_to_linear(tile.astype(np.float32) / 255) * np.float32(2.0**ev)
+    return np.round(255 * cm.linear_to_srgb(np.clip(linear, 0, 1))).astype(np.uint8)
+
+
+def fallback_figure(
+    canvas: np.ndarray, source_linear: np.ndarray, fallbacks: list[dict], fraction: float, path: Path
+) -> Path:
+    """The PRD 12.6 fallback blocks over the dimmed source luma, with a reason legend and the fallback share."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    height, width = canvas.shape[:2]
+    reduced = cv2.resize(np.clip(source_linear, 0, 1), (width, height), interpolation=cv2.INTER_AREA)
+    luma = cm.linear_to_srgb(reduced) @ quality_metrics.LUMA_WEIGHTS
+    picture = np.repeat((0.08 + 0.4 * luma)[..., None], 3, axis=2)
+    marked = (canvas != night.FALLBACK_BACKGROUND).any(axis=2)
+    picture[marked] = canvas[marked] / 255
+    counts = {reason: 0 for reason in night.FALLBACK_COLORS}
+    for record in fallbacks:
+        counts[record["reasons"][0]] += 1
+
+    fig, ax = plt.subplots(figsize=(10, 10 * height / width + 1.0), dpi=150)
+    ax.imshow(picture, interpolation="nearest")
+    ax.set_title(
+        f"Failure-rule fallback blocks (PRD 12.6): {len(fallbacks)} blocks, {fraction:.2%} of output pixels "
+        "(over the dimmed source)",
+        fontsize=11,
+    )
+    ax.axis("off")
+    handles = [
+        Patch(color=np.array(colour) / 255, label=f"{reason.replace('_', ' ')}: {counts[reason]} blocks")
+        for reason, colour in night.FALLBACK_COLORS.items()
+    ]
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=4, frameon=False, fontsize=9)
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, bbox_inches="tight", pad_inches=0.1)
+    plt.close(fig)
+    return path
 
 
 def region_figure(regions: night.RegionMap, source_linear: np.ndarray, path: Path) -> Path:
@@ -937,10 +1080,12 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
             )
         )
     for panel in manifest.get("crop_panels", []):
+        gain = panel.get("display_gain_ev")
         add(
             f"Crop `{panel['crop']}`: original (nearest), baselines, SR slots and final at 100% output pixels, "
-            f"then the amplified difference between the night input and the final:\n\n"
-            f"![{panel['crop']}](figures/{Path(panel['path']).name})\n"
+            f"then the amplified difference between the night input and the final"
+            + (f"; the second row repeats the images at +{gain:g} EV display gain (display only)" if gain else "")
+            + f":\n\n![{panel['crop']}](figures/{Path(panel['path']).name})\n"
         )
     if (figures / "banding_diagnostics.png").exists():
         add("Gradient and banding diagnostics:\n\n![Banding](figures/banding_diagnostics.png)\n")

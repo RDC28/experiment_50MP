@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from synthetic_raw_lab import baselines, night_pipeline, pipeline
+from synthetic_raw_lab import color_management as cm
 from synthetic_raw_lab import night_processing as night
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -213,3 +214,71 @@ def test_night_input_follows_the_super_resolution_settings():
     assert night_pipeline.night_input(conservative)[0] == "conservative_sr"
     key, upscaler = night_pipeline.night_input(small_config(super_resolution={"enabled": False}))
     assert key == "lanczos" and upscaler.stand_in_for is None
+
+
+def _ink_rows(band: np.ndarray) -> int:
+    """Rows of a header band that carry label text (bright pixels)."""
+    return int((band.max(axis=(1, 2)) > 128).sum())
+
+
+def test_crop_panel_labels_are_legible_on_wide_tiles():
+    from synthetic_raw_lab import comparison
+
+    tile = np.full((628, 628, 3), 40, np.uint8)
+    tiles = {"lanczos": tile, "final night": tile + 2}
+    panel = night_pipeline.crop_panel(tile[:256, :256], tiles, ("lanczos", "final night"))
+    width = 4 * 628 + 3 * 8
+    assert panel.shape[1] == width
+    header = panel[: panel.shape[0] - 628, :628]
+    assert (panel[-628:, :628] == 40).all()  # the source column sits under its label
+    # The shared Phase 1 panel draws ~10 px labels (14 rows with parentheses); the night panel's are 25 rows.
+    assert _ink_rows(header) >= max(20, 1.6 * _ink_rows(comparison.crop_panel(tile[:256, :256], tiles)[:30, :628]))
+    # A label wider than its column wraps instead of spilling into the next column.
+    long = {"a very long method label that cannot fit on one line of a narrow tile": tile[:64, :64]}
+    narrow = night_pipeline.crop_panel(tile[:32, :32], {**long, "b": tile[:64, :64]}, tuple(long) + ("b",))
+    assert narrow.shape[0] - 64 > 2 * 16
+    assert (narrow[: narrow.shape[0] - 64, 64:72] == 24).all()  # the gutter stays clear
+
+
+def test_shadow_crop_panel_adds_a_display_only_gain_row(run):
+    dark = np.full((64, 64, 3), 8, np.uint8)
+    tiles = {"lanczos": dark, "final night": dark}
+    plain = night_pipeline.crop_panel(dark[:32, :32], tiles, ("lanczos", "final night"))
+    gained = night_pipeline.crop_panel(dark[:32, :32], tiles, ("lanczos", "final night"), display_gain_ev=3.0)
+    assert (gained[: plain.shape[0]] == plain).all()  # the 100% row is unchanged
+    lower = gained[-64:]
+    # Code 8 is 0.00243 linear; x8 is 0.0194 linear, i.e. code 38 in sRGB, for every image column.
+    for column in range(3):
+        assert (lower[:, column * 72 : column * 72 + 64] == 38).all()
+    assert (lower[:, 3 * 72 :] == 24).all()  # the difference column is not gained
+    banner = gained[plain.shape[0] : -64]
+    assert banner.shape[0] > 0 and (banner[..., 0] > 128).any()  # an amber banner labels the row
+
+    _, result = run
+    panels = {p["crop"]: p for p in result.manifest["crop_panels"]}
+    assert panels["shadow"]["display_gain_ev"] == 3.0
+    assert all("display_gain_ev" not in p for name, p in panels.items() if name != "shadow")
+    from PIL import Image
+
+    sizes = {name: Image.open(p["path"]).size for name, p in panels.items()}
+    header = sizes["highlight"][1] - (panels["highlight"]["box"][3] - panels["highlight"]["box"][1])
+    shadow_tile = panels["shadow"]["box"][3] - panels["shadow"]["box"][1]
+    assert sizes["shadow"][1] > header + 2 * shadow_tile  # header, 100% row, banner and the gain row
+    assert "+3 EV display gain (display only)" in result.report_path.read_text()
+
+
+def test_fallback_figure_has_a_legend_and_marks_blocks_over_the_source(tmp_path):
+    from PIL import Image
+
+    canvas = np.full((90, 160, 3), night.FALLBACK_BACKGROUND, np.uint8)
+    canvas[10:20, 10:30] = night.FALLBACK_COLORS["banding"]
+    records = [{"reasons": ["banding"], "x": 10, "y": 10, "width": 20, "height": 10}]
+    source = np.full((45, 80, 3), 0.2, np.float32)
+    path = night_pipeline.fallback_figure(canvas, source, records, 0.0139, tmp_path / "fallback_map.png")
+    picture = np.asarray(Image.open(path).convert("RGB")).reshape(-1, 3)
+    colours = {tuple(int(v) for v in c) for c in np.unique(picture, axis=0)}
+    # Every reason has a legend patch, even with no blocks, so the colours are always explained.
+    assert set(night.FALLBACK_COLORS.values()) <= colours
+    # The source shows through, dimmed, outside the blocks instead of a flat background.
+    grey = round(255 * (0.08 + 0.4 * float(cm.linear_to_srgb(np.float32(0.2)))))
+    assert any(abs(c[0] - grey) <= 1 and c[0] == c[1] == c[2] for c in colours)

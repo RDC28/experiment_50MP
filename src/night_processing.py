@@ -1910,19 +1910,23 @@ def night_metrics(
     return metrics.result()
 
 
+# Fallback-map colour per failure-rule reason (a block is coloured by its first reason).
+FALLBACK_COLORS = {
+    "halo": (255, 80, 80),
+    "banding": (80, 200, 255),
+    "black_crush": (160, 80, 255),
+    "excess_texture": (255, 200, 60),
+}
+FALLBACK_BACKGROUND = 24  # grey level of fallback-map pixels outside every fallback block
+
+
 def fallback_map(result: NightResult, width: int, height: int, max_edge: int = 1024) -> np.ndarray:
     """uint8 RGB map of the failure-rule fallback blocks, coloured by reason, for the report."""
     scale = min(1.0, max_edge / max(width, height))
     size = (max(1, round(width * scale)), max(1, round(height * scale)))
-    canvas = np.full((size[1], size[0], 3), 24, dtype=np.uint8)
-    colours = {
-        "halo": (255, 80, 80),
-        "banding": (80, 200, 255),
-        "black_crush": (160, 80, 255),
-        "excess_texture": (255, 200, 60),
-    }
+    canvas = np.full((size[1], size[0], 3), FALLBACK_BACKGROUND, dtype=np.uint8)
     for record in result.fallbacks:
-        colour = colours[record["reasons"][0]]
+        colour = FALLBACK_COLORS[record["reasons"][0]]
         x0, y0 = int(record["x"] * scale), int(record["y"] * scale)
         x1 = max(x0 + 1, int((record["x"] + record["width"]) * scale))
         y1 = max(y0 + 1, int((record["y"] + record["height"]) * scale))
