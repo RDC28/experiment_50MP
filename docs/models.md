@@ -156,3 +156,33 @@ Two gates are reported for every SR mode (provisional, PRD 25.3). Both are in sR
 
 An earlier, ratio-based hard-seam score flagged a chart edge that happened to lie on a boundary and was
 dominated by tiny steps in smooth gradients; the height above replaced it.
+
+## Verification status
+
+**Colab verification is still to do** (the captain runs it; Colab is the test environment). Not verified on
+Colab: CUDA inference and the automatic tile size from free CUDA memory, the real CUDA out-of-memory split and
+CPU fallback (only simulated in tests), float16 for the Real-ESRGAN backend on CUDA (SwinIR runs float32
+because spandrel marks it without half support), installing the `sr` extra next to Colab's preinstalled
+PyTorch, downloading the weights from Colab and caching them on Drive, runtime and memory on T4, L4 or A100,
+and a full 50 MP run with the final seam gates.
+
+### Local Mac reference only
+
+One full 50 MP run on an Apple M1 MacBook Air (8 GB, MPS, float32), 3840 x 2160 synthetic test chart to
+9426 x 5302, standard preset, both baselines plus conservative and balanced SR, commit `8902a89` (before the
+seam measures were replaced by blend error and hard-seam height). Not representative of Colab.
+
+| Quantity | Value |
+|---|---:|
+| Wall time, whole run | 4,229 s (70.5 min) |
+| SR inference, conservative / balanced | 2,014 s / 1,998 s (220 tiles of 256 px each) |
+| Peak MPS device memory, conservative / balanced | 2,255 MB / 2,314 MB |
+| Pipeline peak resident memory | 2,803 MB |
+| macOS peak memory footprint (`/usr/bin/time -l`) | 5,188 MB |
+| Source PSNR, lanczos / sr_conservative / sr_balanced | 30.32 / 36.35 / 32.67 dB |
+| Edge displacement, lanczos / sr_conservative / sr_balanced | 0.097 / 0.050 / 0.085 px |
+| Hard-seam height max, re-measured on the masters, conservative / balanced | 0.10 / 0.07 code values |
+
+Visual inspection of every strip boundary found no seam. The balanced (GAN) master shows faint invented
+blotches and stripes inside flat colour patches of the chart; untiled inference of the same region shows them
+too, so they are the network's hallucination (PRD E02), not tiling.
