@@ -586,9 +586,12 @@ def _run_super_resolution(
         )
         log(f"super-resolution skipped: {record['skipped']}")
         return
-    if not sr_models.available():
-        raise RuntimeError("super-resolution needs PyTorch and spandrel: pip install 'synthetic-raw-50mp-lab[sr]'")
-    weights_dir = Path(config.sr_weights_dir) if config.sr_weights_dir else sr_models.default_weights_dir(project_root)
+    with stage(StageRecord("super_resolution_setup", SETUP, {"backend": config.sr_backend}, "-", "-")):
+        if not sr_models.available():
+            raise RuntimeError("super-resolution needs PyTorch and spandrel: pip install 'synthetic-raw-50mp-lab[sr]'")
+        weights_dir = (
+            Path(config.sr_weights_dir) if config.sr_weights_dir else sr_models.default_weights_dir(project_root)
+        )
     loaded: dict[str, sr_models.TorchModel] = {}
     for index, mode in enumerate(config.sr_modes):
         preset = sr.PRESETS[mode]

@@ -225,7 +225,10 @@ def test_sr_without_torch_reports_how_to_install(source, project, monkeypatch):
     monkeypatch.setattr(sr_models, "available", lambda: False)
     with pytest.raises(pipeline.StageError, match=r"\[sr\]") as failure:
         pipeline.run(source, sr_config(), project, log=lambda _: None)
-    assert_run_labels(json.loads(failure.value.manifest_path.read_text()), sr_masters=False)
+    assert failure.value.stage == "super_resolution_setup"
+    manifest = json.loads(failure.value.manifest_path.read_text())
+    assert manifest["status"] == "failed in stage super_resolution_setup"
+    assert_run_labels(manifest, sr_masters=False)
 
 
 @pytest.mark.parametrize(
