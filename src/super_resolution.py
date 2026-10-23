@@ -134,11 +134,11 @@ def tile_spans(length: int, tile: int, overlap: int, align: int = 1) -> list[tup
     neighbouring tiles the same window grid where they overlap, so they compute the same thing there (the
     measured difference with unaligned tiles was up to 6 code values after low-pass filtering). The last
     tile ends exactly at the border and may be up to ``align - 1`` pixels longer than ``tile``. A length that
-    fits one tile gives one tile.
+    fits one such tile gives one tile, so tiling a span this function produced never splits it again.
     """
     if not 0 <= overlap < tile or align < 1:
         raise ValueError(f"need 0 <= overlap < tile and align >= 1, got {overlap}, {tile}, {align}")
-    if length <= tile:
+    if length < tile + align:
         return [(0, length)]
     count = -(-(length - overlap) // (tile - overlap))
     while True:

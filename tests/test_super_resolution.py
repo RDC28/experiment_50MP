@@ -171,6 +171,20 @@ def test_tiles_follow_the_window_grid_of_attention_models(source):
     assert report.to_dict()["overlap_disagreement"]["p99_abs_max"] > 1
 
 
+def test_aligned_strips_longer_than_the_tile_are_not_split_again(source):
+    """An aligned last strip may be up to align - 1 rows taller than the tile; it is still one tile row."""
+    tile, overlap = 100, 32
+    strips = sr.tile_spans(SRC_H, tile, overlap, WindowModel.alignment)
+    assert strips[-1][1] - strips[-1][0] > tile  # (SRC_H - tile) % 8 != 0
+    model = WindowModel()
+    out, report = run(source, model, tile_size=tile, tile_overlap=overlap)
+    assert np.abs(out - untiled(source, WindowModel())).max() < 1e-5
+    rows, cols = report.grid
+    assert len(model.calls) == report.model_calls == report.tiles == rows * cols
+    x_rows = [tuple(b["source_rows"]) for b in report.boundaries if b["axis"] == "x"]
+    assert x_rows == [span for span in strips for _ in range(cols - 1)]
+
+
 def test_flat_image_stays_flat(source):
     flat = np.full((SRC_H, SRC_W, 3), 0.18, dtype=np.float32)
     out, _ = run(flat, PointModel())

@@ -166,12 +166,19 @@ def test_backend_and_weights_folder_are_configurable(source, project, loads, tmp
 
 
 def test_sr_is_skipped_when_the_target_is_not_an_enlargement(source, project, loads):
-    manifest = pipeline.run(
+    result = pipeline.run(
         source, sr_config(quick_target_megapixels=0.04, pixel_count_tolerance=0.01), project, log=lambda _: None
-    ).manifest
+    )
+    manifest = result.manifest
     assert manifest["status"] == "complete"
     assert "not an enlargement" in manifest["super_resolution"]["skipped"]
     assert not loads and manifest["models"] == []
+    # Only interpolated masters exist, so the run must not claim synthesised detail or seeded inference.
+    assert manifest["notice"] == pipeline.NOTICE
+    assert manifest["phase"] == f"{pipeline.PHASE_01}; Phase 2 (pretrained super-resolution) skipped"
+    assert manifest["random_seeds"]["used_by"] == pipeline.SEEDS_UNUSED
+    report = result.report_path.read_text()
+    assert pipeline.NOTICE in report and pipeline.RUN_NOTICE_SR not in report
 
 
 def test_failure_in_sr_keeps_baselines_and_names_the_stage(source, project, loads, monkeypatch):

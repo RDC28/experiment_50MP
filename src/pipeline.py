@@ -60,6 +60,8 @@ RUN_NOTICE_SR = (
     "(baselines) and by pretrained super-resolution (synthesised detail). None is a camera capture or camera "
     "RAW file and none contains recovered sensor measurements."
 )
+PHASE_01 = "Phase 0 (feasibility) and Phase 1 (baselines)"
+SEEDS_UNUSED = "nothing (Phase 0/1 is deterministic)"
 LOW_MEMORY_HEADROOM_GB = 1.0
 # Provisional Phase 2 gates for major seams, calibrated on the measurements in docs/models.md (PRD 25.3).
 SEAM_SCORE_LIMIT = 1.0  # hard seams: excess step across a boundary line, sRGB 8-bit code values
@@ -151,8 +153,7 @@ def run(
     stages: list[StageRecord] = []
     manifest: dict = {
         "schema": "synthetic_raw_lab.phase01.manifest/1",
-        "phase": "Phase 0 (feasibility) and Phase 1 (baselines)"
-        + (" and Phase 2 (pretrained super-resolution)" if config.enable_super_resolution else ""),
+        "phase": PHASE_01 + (" and Phase 2 (pretrained super-resolution)" if config.enable_super_resolution else ""),
         "notice": RUN_NOTICE_SR if config.enable_super_resolution else NOTICE,
         "started_at": started_at.isoformat(timespec="seconds"),
         "package": {
@@ -166,7 +167,7 @@ def run(
             "random_seed": config.random_seed,
             "used_by": "torch.manual_seed before SR inference (inference itself draws no random numbers)"
             if config.enable_super_resolution
-            else "nothing (Phase 0/1 is deterministic)",
+            else SEEDS_UNUSED,
         },
         "config": config.to_dict(),
         "runtime": runtime,
@@ -586,6 +587,9 @@ def _run_super_resolution(
             f"target scale {target.scale_x:.3f} x {target.scale_y:.3f} is not an enlargement; super-resolution "
             "cannot add anything (use the standard preset for the full target)"
         )
+        manifest["phase"] = f"{PHASE_01}; Phase 2 (pretrained super-resolution) skipped"
+        manifest["notice"] = NOTICE
+        manifest["random_seeds"]["used_by"] = SEEDS_UNUSED
         log(f"super-resolution skipped: {record['skipped']}")
         return
     if not sr_models.available():

@@ -9,6 +9,7 @@ without PyTorch and spandrel. The smoke test runs the real SwinIR networks on a 
 import dataclasses
 import hashlib
 import os
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -37,8 +38,11 @@ def test_registry_records_provenance_for_every_backend_network():
 
 
 def test_weights_are_ignored_by_git():
-    ignored = (ROOT / ".gitignore").read_text().splitlines()
-    assert "weights/" in ignored and "*.pth" in ignored
+    def ignored(path):
+        return subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT, check=False).returncode == 0
+
+    assert ignored("weights/model.bin") and ignored("notebooks/model.pth")
+    assert not ignored("src/sr_models.py")
     assert sr_models.default_weights_dir(ROOT) == ROOT / "weights"
 
 
