@@ -309,7 +309,8 @@ class ExperimentConfig:
         42,
         "Seed for every random process in the run.",
         "any integer",
-        "Recorded for reproducibility; Phase 0 and 1 processing is deterministic.",
+        "Recorded for reproducibility; Phase 0 and 1 processing is deterministic. Super-resolution passes it to "
+        "torch.manual_seed before inference.",
     )
     output_root: str = _param(
         "",

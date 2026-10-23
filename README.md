@@ -137,7 +137,7 @@ SR job on its own: it holds about 1 to 2 GB of device memory plus the 600 MB out
    Each file is re-read and checked: dimensions, sample type, colour metadata, provenance and a pixel hash.
 7. **Measure** (Measurement). Reduces each TIFF master to source size by area averaging and reports PSNR,
    SSIM, MS-SSIM, symmetric Canny edge displacement, CIEDE2000 and the L* distribution shift. LPIPS needs
-   pretrained weights and is not computed in Phase 0/1.
-8. **Compare and report.** Saves identical crops from every baseline (centre plus the most detailed
+   pretrained weights and is not computed yet.
+8. **Compare and report.** Saves identical crops from every baseline and SR mode (centre plus the most detailed
    regions) next to the source and an amplified difference, previews, delta E maps, and writes
    `reports/<run>/report.md` plus `manifest.json` with the provenance record of PRD 6.2.
