@@ -61,7 +61,9 @@ RUN_NOTICE_SR = (
     "RAW file and none contains recovered sensor measurements."
 )
 PHASE_01 = "Phase 0 (feasibility) and Phase 1 (baselines)"
+PHASE_SR = f"{PHASE_01} and Phase 2 (pretrained super-resolution)"
 SEEDS_UNUSED = "nothing (Phase 0/1 is deterministic)"
+SEEDS_SR = "torch.manual_seed before SR inference (inference itself draws no random numbers)"
 LOW_MEMORY_HEADROOM_GB = 1.0
 # Provisional Phase 2 gates for major seams, calibrated on the measurements in docs/models.md (PRD 25.3).
 SEAM_SCORE_LIMIT = 1.0  # hard seams: excess step across a boundary line, sRGB 8-bit code values
@@ -153,8 +155,8 @@ def run(
     stages: list[StageRecord] = []
     manifest: dict = {
         "schema": "synthetic_raw_lab.phase01.manifest/1",
-        "phase": PHASE_01 + (" and Phase 2 (pretrained super-resolution)" if config.enable_super_resolution else ""),
-        "notice": RUN_NOTICE_SR if config.enable_super_resolution else NOTICE,
+        "phase": PHASE_01,
+        "notice": NOTICE,
         "started_at": started_at.isoformat(timespec="seconds"),
         "package": {
             "name": "synthetic_raw_lab",
@@ -163,12 +165,7 @@ def run(
         },
         "notebook_version": notebook_version,
         "models": [],
-        "random_seeds": {
-            "random_seed": config.random_seed,
-            "used_by": "torch.manual_seed before SR inference (inference itself draws no random numbers)"
-            if config.enable_super_resolution
-            else SEEDS_UNUSED,
-        },
+        "random_seeds": {"random_seed": config.random_seed, "used_by": SEEDS_UNUSED},
         "config": config.to_dict(),
         "runtime": runtime,
         "stages": [],
@@ -587,9 +584,6 @@ def _run_super_resolution(
             f"target scale {target.scale_x:.3f} x {target.scale_y:.3f} is not an enlargement; super-resolution "
             "cannot add anything (use the standard preset for the full target)"
         )
-        manifest["phase"] = f"{PHASE_01}; Phase 2 (pretrained super-resolution) skipped"
-        manifest["notice"] = NOTICE
-        manifest["random_seeds"]["used_by"] = SEEDS_UNUSED
         log(f"super-resolution skipped: {record['skipped']}")
         return
     if not sr_models.available():
@@ -709,22 +703,27 @@ def _run_super_resolution(
 
         buffer = [output]
         del output
-        _export_and_measure(
-            name,
-            buffer,
-            summary,
-            _sr_provenance(run_id, source, target, summary),
-            _exr_attributes(run_id, source, f"{name} pretrained super-resolution", notice=SR_NOTICE),
-            source,
-            target,
-            config,
-            masters_dir,
-            figures_dir,
-            crops,
-            crop_tiles,
-            crop_stats,
-            stage,
-        )
+        try:
+            _export_and_measure(
+                name,
+                buffer,
+                summary,
+                _sr_provenance(run_id, source, target, summary),
+                _exr_attributes(run_id, source, f"{name} pretrained super-resolution", notice=SR_NOTICE),
+                source,
+                target,
+                config,
+                masters_dir,
+                figures_dir,
+                crops,
+                crop_tiles,
+                crop_stats,
+                stage,
+            )
+        finally:
+            if summary["exports"]:
+                manifest["phase"], manifest["notice"] = PHASE_SR, RUN_NOTICE_SR
+                manifest["random_seeds"]["used_by"] = SEEDS_SR
         remaining = {networks[sr.PRESETS[m].network] for m in config.sr_modes[index + 1 :]}
         for unused in set(loaded) - remaining:
             loaded.pop(unused).release_cache()

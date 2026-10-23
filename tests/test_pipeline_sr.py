@@ -96,13 +96,22 @@ def sr_config(**overrides) -> ExperimentConfig:
     return ExperimentConfig(**values)
 
 
+def assert_run_labels(manifest, *, sr_masters):
+    """Run-level provenance follows the masters actually written, not the SR setting."""
+    if sr_masters:
+        expected = (pipeline.PHASE_SR, pipeline.RUN_NOTICE_SR, pipeline.SEEDS_SR)
+    else:
+        expected = (pipeline.PHASE_01, pipeline.NOTICE, pipeline.SEEDS_UNUSED)
+    assert (manifest["phase"], manifest["notice"], manifest["random_seeds"]["used_by"]) == expected
+
+
 def test_sr_modes_are_exported_measured_and_reported(source, project, loads):
     config = sr_config(sr_modes=("conservative", "balanced", "aggressive"))
     result = pipeline.run(source, config, project, log=lambda _: None)
     manifest = result.manifest
 
     assert manifest["status"] == "complete"
-    assert "Phase 2" in manifest["phase"] and "pretrained super-resolution" in manifest["notice"]
+    assert_run_labels(manifest, sr_masters=True)
     modes = manifest["super_resolution"]["modes"]
     assert list(modes) == ["conservative", "balanced", "aggressive"]
     # Preset wiring: the fidelity network for Mode A, the perceptual one for B and C, loaded once each.
@@ -173,10 +182,7 @@ def test_sr_is_skipped_when_the_target_is_not_an_enlargement(source, project, lo
     assert manifest["status"] == "complete"
     assert "not an enlargement" in manifest["super_resolution"]["skipped"]
     assert not loads and manifest["models"] == []
-    # Only interpolated masters exist, so the run must not claim synthesised detail or seeded inference.
-    assert manifest["notice"] == pipeline.NOTICE
-    assert manifest["phase"] == f"{pipeline.PHASE_01}; Phase 2 (pretrained super-resolution) skipped"
-    assert manifest["random_seeds"]["used_by"] == pipeline.SEEDS_UNUSED
+    assert_run_labels(manifest, sr_masters=False)
     report = result.report_path.read_text()
     assert pipeline.NOTICE in report and pipeline.RUN_NOTICE_SR not in report
 
@@ -191,13 +197,35 @@ def test_failure_in_sr_keeps_baselines_and_names_the_stage(source, project, load
     assert failure.value.stage == "super_resolution_conservative"
     manifest = json.loads(failure.value.manifest_path.read_text())
     assert manifest["baselines"]["lanczos"]["exports"]["tiff16"]["valid"]
-    assert "super_resolution_conservative" in (failure.value.manifest_path.parent / "report.md").read_text()
+    assert_run_labels(manifest, sr_masters=False)
+    report = (failure.value.manifest_path.parent / "report.md").read_text()
+    assert "super_resolution_conservative" in report and pipeline.RUN_NOTICE_SR not in report
+
+
+def test_failure_after_an_sr_master_keeps_the_sr_labels(source, project, loads, monkeypatch):
+    calls = []
+    real = sr.super_resolve
+
+    def second_fails(*args, **kwargs):
+        calls.append(1)
+        if len(calls) > 1:
+            raise sr_models.DeviceOutOfMemory("cuda: simulated, no fallback device")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sr, "super_resolve", second_fails)
+    with pytest.raises(pipeline.StageError) as failure:
+        pipeline.run(source, sr_config(sr_modes=("conservative", "balanced")), project, log=lambda _: None)
+    assert failure.value.stage == "super_resolution_balanced"
+    manifest = json.loads(failure.value.manifest_path.read_text())
+    assert manifest["super_resolution"]["modes"]["conservative"]["exports"]["tiff16"]["valid"]
+    assert_run_labels(manifest, sr_masters=True)
 
 
 def test_sr_without_torch_reports_how_to_install(source, project, monkeypatch):
     monkeypatch.setattr(sr_models, "available", lambda: False)
-    with pytest.raises(pipeline.StageError, match=r"\[sr\]"):
+    with pytest.raises(pipeline.StageError, match=r"\[sr\]") as failure:
         pipeline.run(source, sr_config(), project, log=lambda _: None)
+    assert_run_labels(json.loads(failure.value.manifest_path.read_text()), sr_masters=False)
 
 
 @pytest.mark.parametrize(
