@@ -51,7 +51,7 @@ src/                           the shared package, imported as synthetic_raw_lab
   report_builder.py            Markdown report and figures (PRD 27)
   pipeline.py                  the Phase 0 to 2 run with per-stage logging (PRD 5.2, 22.3)
   test_images.py               deterministic synthetic test image
-tests/                         pytest suite, including a notebook execution test
+tests/                         pytest suite; notebook execution and real-network tests are opt-in
 inputs/{human,night}/          read-only copies of ingested sources (not in Git)
 outputs/{human,night,universal}/  full-resolution masters per run (not in Git)
 weights/                       downloaded model weights (not in Git)
@@ -83,7 +83,8 @@ OpenCV; each run records the versions and the Git commit it actually used.
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -e .     # includes PyTorch and spandrel for super-resolution
 
-python -m pytest                          # unit tests plus a run of the notebook on a small synthetic input
+python -m pytest                          # unit tests, light enough for a laptop
+SYNTHETIC_RAW_LAB_HEAVY_TESTS=1 python -m pytest   # also executes the notebook and, with cached weights, the SR networks
 ruff check . && ruff format --check .
 ```
 
@@ -102,8 +103,9 @@ in every run. Presets (PRD 21.6): `quick` builds a 2 MP output, `standard` the f
 adds a repeat of every baseline (bit-identical check) and the memory benchmark.
 
 Super-resolution runs with `config.load_config("configs/super_resolution_default.yaml")`. It uses CUDA, then
-Apple MPS, then the CPU. The SR tests that need the real networks run only when the weights are already cached
-in `weights/` or in `$SYNTHETIC_RAW_LAB_WEIGHTS`; they never download. On a shared machine, run a full 50 MP
+Apple MPS, then the CPU. The heavy tests also need the weights already cached in `weights/` or in
+`$SYNTHETIC_RAW_LAB_WEIGHTS` for the SR cases; they never download. Colab is the verification environment for
+full-resolution SR. On a shared machine, run a full 50 MP
 SR job on its own: it holds about 1 to 2 GB of device memory plus the 600 MB output.
 
 ## What a run does

@@ -1,4 +1,8 @@
-"""Execute notebook 00 end to end on a small synthetic input (outside Colab)."""
+"""Execute notebook 00 end to end on a small synthetic input (outside Colab).
+
+Opt-in: these run only with SYNTHETIC_RAW_LAB_HEAVY_TESTS=1, because executing the notebook (and, with cached
+weights, the real networks) is too heavy for a small laptop. Colab is the place to run them.
+"""
 
 import os
 from pathlib import Path
@@ -7,6 +11,10 @@ import pytest
 
 from synthetic_raw_lab import sr_models
 
+pytestmark = pytest.mark.skipif(
+    os.environ.get("SYNTHETIC_RAW_LAB_HEAVY_TESTS") != "1",
+    reason="notebook execution is opt-in: set SYNTHETIC_RAW_LAB_HEAVY_TESTS=1",
+)
 nbformat = pytest.importorskip("nbformat")
 nbclient = pytest.importorskip("nbclient")
 

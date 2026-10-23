@@ -1,9 +1,9 @@
 """Weights registry, checksum-verified downloads, the PyTorch wrapper and a real-weights smoke test.
 
 The download tests use local file:// URLs. The wrapper tests build a tiny random network and skip
-without PyTorch and spandrel. The smoke test runs the real SwinIR networks on a tiny image when their
-weights are cached in ``<repository>/weights`` or in ``$SYNTHETIC_RAW_LAB_WEIGHTS``, and skips otherwise
-(it never downloads).
+without PyTorch and spandrel. The smoke test runs the real SwinIR networks on a small image; it is opt-in
+(SYNTHETIC_RAW_LAB_HEAVY_TESTS=1) and also needs the weights cached in ``<repository>/weights`` or in
+``$SYNTHETIC_RAW_LAB_WEIGHTS`` (it never downloads).
 """
 
 import dataclasses
@@ -165,6 +165,8 @@ def test_auto_tile_size_respects_bounds():
 
 @pytest.mark.parametrize("name", ["swinir_m_x4_classical", "swinir_m_x4_realsr_gan"])
 def test_real_network_smoke(name):
+    if os.environ.get("SYNTHETIC_RAW_LAB_HEAVY_TESTS") != "1":
+        pytest.skip("real-network inference is opt-in: set SYNTHETIC_RAW_LAB_HEAVY_TESTS=1")
     if not sr_models.available():
         pytest.skip("PyTorch and spandrel are not installed (pip install .[sr])")
     if not sr_models.cached(name, WEIGHTS_DIR):
