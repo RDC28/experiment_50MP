@@ -71,8 +71,9 @@ reports/                       per-run report, manifest and figures (not in Git)
 ```
 
 Notebooks `01_Human_Crowd_50MP`, `02_Night_Scenery_50MP` and `03_Universal_50MP` arrive with Phases 3 and 4.
-Every notebook ends the same way: one final 50 MP image chosen by `final_output.select`, saved by
-`final_output.write_final` and delivered by `final_output.deliver`.
+The reconstruction notebooks (00 now, 01 to 03 when they arrive) end the same way: one final 50 MP image chosen
+by `final_output.select`, saved by `final_output.write_final` and delivered by `final_output.deliver`. Notebook
+05 (synthetic sensor research) does not produce a final image.
 
 ## Running in Google Colab
 
