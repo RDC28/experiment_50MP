@@ -468,7 +468,7 @@ def q7_night_shadows(ev: Evidence) -> dict:
         if b.get("black_crush_fraction") is not None and a.get("black_crush_fraction") is not None
     ]
     if crush:
-        parts.append(f"changes the black-crush fraction by at most {max(crush):+.4f} of the frame")
+        parts.append(f"changes the black-crush fraction by at most {max(crush):+.4f} of near-black pixels")
     answer = (
         "The night processing " + ", ".join(parts) + " (before and after below)."
         if parts

@@ -153,7 +153,7 @@ def write_ablation_report(manifest: dict, path: Path) -> Path:
         lines += ["## 5. SR settings sweep (PRD 28.3)", ""]
         header = [
             "setting",
-            "seconds",
+            "SR s (no model load)",
             "inference s",
             "tile",
             "overlap",

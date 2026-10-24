@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import astuple
 from pathlib import Path
 
@@ -188,6 +189,21 @@ def test_precision_sweep_only_runs_precisions_the_backend_supports(tmp_path, mon
     assert [r["setting"] for r in rows] == ["default", "precision=float32", "precision=float16"]
     assert [r.get("skipped") for r in rows[1:]] == expected
     assert swept == [p for p, reason in zip(("float32", "float16"), expected, strict=True) if reason is None]
+
+
+def test_performance_sweep_times_sr_without_the_model_load(tmp_path, monkeypatch):
+    def loading(mode, linear, width, height):
+        time.sleep(0.2)
+        image, summary = fake_sr(mode, linear, width, height)
+        return image, {**summary, "model_load_seconds": 0.15}
+
+    monkeypatch.setattr(ablation, "phase2_sr_runner", lambda *args, **kwargs: loading)
+    scene, config = make_scene(tmp_path, ablation={"performance_sweep": [{"tile_size": 256}]})
+    engine = ablation.Engine(scene, config, sr_runner=loading)
+    rows = ablation.performance_sweep(scene, engine, config, ROOT, tmp_path, None, print)
+    assert [r["setting"] for r in rows] == ["default", "tile_size=256"]
+    for row in rows:
+        assert row["model_load_seconds"] == 0.15 and 0.05 <= row["seconds"] < 0.2
 
 
 def test_reference_metrics_score_truth_perfectly_and_interpolation_near_one():

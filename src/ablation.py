@@ -774,7 +774,8 @@ def performance_sweep(
     log,
 ) -> list[dict]:
     """Conservative SR under each ``ablation.performance_sweep`` setting (tile size, overlap, precision,
-    device): runtime, peak device memory, seam gate and how far the output moves from the default settings.
+    device): runtime without model loading (recorded apart, since only the first load downloads the weights), peak
+    device memory, seam gate and how far the output moves from the default settings.
 
     A precision the network or device cannot run (SwinIR is float32 only) or one that only repeats the default
     run is recorded as skipped with the reason instead of being run."""
@@ -786,10 +787,12 @@ def performance_sweep(
         return [{"setting": "default", "error": f"{type(error).__name__}: {error}"}]
     tiling = default.summary.get("tiling") or {}
     model = default.summary.get("model") or {}
+    load = default.summary.get("model_load_seconds", 0.0)
     rows = [
         {
             "setting": "default",
-            "seconds": default.seconds,
+            "seconds": default.seconds - load,
+            "model_load_seconds": load,
             "inference_seconds": tiling.get("inference_seconds"),
             "tile_size": tiling.get("tile_size"),
             "tile_overlap": tiling.get("tile_overlap"),
@@ -840,8 +843,10 @@ def performance_sweep(
             image, summary = runner("conservative", scene.source, *scene.size)
             tiling = summary.get("tiling") or {}
             difference = np.abs(encoded_luma(image) - reference)
+            load = summary.get("model_load_seconds", 0.0)
             row.update(
-                seconds=time.perf_counter() - started,
+                seconds=time.perf_counter() - started - load,
+                model_load_seconds=load,
                 inference_seconds=tiling.get("inference_seconds"),
                 tile_size=tiling.get("tile_size"),
                 tile_overlap=tiling.get("tile_overlap"),
