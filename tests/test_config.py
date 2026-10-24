@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from synthetic_raw_lab.config import ExperimentConfig, load_config, parameter_table
+from synthetic_raw_lab.config import ExperimentConfig, load_config, load_profile, parameter_table
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,3 +76,15 @@ def test_super_resolution_profile():
     assert config.sr_backend == "swinir" and config.sr_modes == ("conservative", "balanced")
     assert (config.sr_tile_size, config.sr_tile_overlap, config.sr_strength) == (0, 64, 1.0)
     assert config.replace(enable_super_resolution=False, profile="baselines") == ExperimentConfig()
+
+
+def test_load_profile_splits_sections_and_applies_precedence(tmp_path):
+    path = tmp_path / "p.yaml"
+    path.write_text("profile: file\nlayer:\n  a: 1\n  b: 2\nexport:\n  tiff16: false\n")
+    config, layers = load_profile(
+        path, ("layer", "other"), {"profile": "default", "crop_count": 2}, crop_count=3, layer={"b": 5}
+    )
+    assert (config.profile, config.crop_count, config.export_tiff16) == ("file", 3, False)
+    assert layers == {"layer": {"a": 1, "b": 5}, "other": {}}
+    with pytest.raises(ValueError):
+        load_profile(path)

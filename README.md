@@ -16,7 +16,8 @@ inferred, simulated and encoded information apart.
 | Phase 1: classical baselines | Implemented |
 | Phase 2: pretrained super-resolution | Implemented |
 | Phase 3: human and crowd (notebook 01) | Implemented: Phase 2 SR presets (conservative and balanced), YuNet or manual face observations, per-tier identity metrics, local failure recovery, comparisons and master exports; Colab verification pending |
-| Phase 3 night notebook, Phases 4 and 6: universal notebook, evaluation | Not started |
+| Phase 3: night scenery (notebook 02) | Implemented: Phase 2 SR presets (conservative and balanced), luminance-region masks, Layer 5B night processing with the PRD 12.6 failure rule, before/after night metrics, comparisons and master exports; Colab verification pending |
+| Phases 4 and 6: universal notebook, evaluation | Not started |
 | Phase 5: synthetic sensor research | Implemented |
 
 Phase 0 exit criterion: a valid 50 MP master created and exported from a 4K input by classical
@@ -36,12 +37,14 @@ requirements.txt               exact versions the tests were run with
 pyproject.toml                 package metadata (minimum versions) and tool settings
 configs/baseline_default.yaml  Phase 0/1 parameters, every key documented in src/config.py
 configs/super_resolution_default.yaml  Phase 2 profile: the baselines plus pretrained SR
+configs/night_default.yaml     Phase 3 night profile (PRD 19.1), Layer 5B keys documented in src/night_processing.py
 configs/sensor_research.yaml   Phase 5 parameters, every key documented in src/sensor_config.py
 configs/human_default.yaml     human profile, documented in src/human_config.py
 docs/models.md                 SR model evaluation, weights, checksums, licences, commercial-use terms
 MODELS.md                      notebook 01 detector artifacts and pointer to SR weight terms
 notebooks/00_Feasibility_Baselines.ipynb  Phases 0 to 2
 notebooks/01_Human_Crowd_50MP.ipynb  Phase 3 human and crowd
+notebooks/02_Night_Scenery_50MP.ipynb  Phase 3 Nighttime Scenery
 notebooks/05_Synthetic_Sensor_Research.ipynb  Phase 5
 src/                           the shared package, imported as synthetic_raw_lab
   config.py                    parameters with defaults, accepted values, effects and warnings (PRD 6, 22.2)
@@ -58,6 +61,9 @@ src/                           the shared package, imported as synthetic_raw_lab
   environment.py               runtime inspection, memory benchmark, storage estimate (PRD 21, 28.1)
   report_builder.py            Markdown report and figures (PRD 27)
   pipeline.py                  the Phase 0 to 2 run with per-stage logging (PRD 5.2, 22.3)
+  night_processing.py          Layer 5B night parameters, region segmentation, processing, failure rule and
+                               night metrics (PRD 8.3, 12, 12.6, 19, 23.5)
+  night_pipeline.py            the Phase 3 night run, figures and report (PRD 19.3, 27)
   sensor_simulation.py         synthetic sensor model, CFA sampling, noise, quantisation, demosaic (PRD 14)
   synthetic_dng.py             research DNG and mosaic TIFF writers with structural and LibRaw validation (PRD 14.6)
   bit_depth_study.py           bit-depth representations and the E01 information test (PRD 14.5, 24)
@@ -80,7 +86,7 @@ weights/                       downloaded model weights (not in Git)
 reports/                       per-run report, manifest and figures (not in Git)
 ```
 
-Notebooks `02_Night_Scenery_50MP` and `03_Universal_50MP` remain planned for Phases 3 and 4.
+Notebook `03_Universal_50MP` remains planned for Phase 4.
 
 ## Running in Google Colab
 
@@ -204,6 +210,17 @@ SR job on its own: it holds about 1 to 2 GB of device memory plus the 600 MB out
 8. **Compare and report.** Saves identical crops from every baseline and SR mode (centre plus the most detailed
    regions) next to the source and an amplified difference, previews, delta E maps, and writes
    `reports/<run>/report.md` plus `manifest.json` with the provenance record of PRD 6.2.
+
+## Phase 3: nighttime scenery
+
+`notebooks/02_Night_Scenery_50MP.ipynb` runs `night_pipeline.run_night` with the profile
+`configs/night_default.yaml` (load it with `night_processing.load_night_config`). It segments the PRD 8.3
+luminance regions (manual overrides allowed), builds the PRD 19.3 comparisons one at a time (bicubic, Lanczos
+and the conservative and balanced Phase 2 SR modes), applies the region-aware Layer 5B night processing to the
+configured SR mode (Lanczos without SR) with the PRD 12.6 failure rule falling back block by block, exports the
+master to `outputs/night/<run>/`, and reports the PRD 23.5 night metrics before and after. The highlight
+shoulder rolls clipped lights off but never recovers clipped radiance. The module docstring of
+`src/night_pipeline.py` lists the stages.
 
 ## Phase 5: synthetic sensor research
 
