@@ -80,15 +80,23 @@ def select_crops(encoded: np.ndarray, size: int, count: int, manual=()) -> list[
 
 
 def crop_panel(
-    source_tile: np.ndarray, tiles: dict[str, np.ndarray], *, source_label: str = "source (nearest)"
+    source_tile: np.ndarray,
+    tiles: dict[str, np.ndarray],
+    difference: tuple[str, str] | None = None,
+    *,
+    source_label: str = "source (nearest)",
 ) -> np.ndarray:
-    """Side-by-side uint8 panel: source (nearest-neighbour), each method, and the first two methods' difference."""
+    """Side-by-side uint8 panel: source (nearest-neighbour), each method, and the difference of two methods.
+
+    ``difference`` names the pair to compare; by default the first two methods. ``source_label`` titles the
+    first column.
+    """
     names = list(tiles)
     tile_h, tile_w = tiles[names[0]].shape[:2]
     columns = [(source_label, cv2.resize(source_tile, (tile_w, tile_h), interpolation=cv2.INTER_NEAREST))]
     columns += [(name, tiles[name]) for name in names]
-    if len(names) >= 2:
-        a, b = names[0], names[1]
+    if difference or len(names) >= 2:
+        a, b = difference or (names[0], names[1])
         diff = np.abs(tiles[a].astype(np.int16) - tiles[b].astype(np.int16)).max(axis=2)
         heat = cv2.applyColorMap(np.clip(diff * _DIFF_GAIN, 0, 255).astype(np.uint8), cv2.COLORMAP_INFERNO)
         columns.append((f"|{a} - {b}| x{_DIFF_GAIN}", cv2.cvtColor(heat, cv2.COLOR_BGR2RGB)))

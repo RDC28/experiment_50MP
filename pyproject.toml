@@ -25,6 +25,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Phase 2 pretrained super-resolution (inference only). Colab preinstalls PyTorch.
+sr = ["torch>=2.1", "spandrel>=0.4.1"]
 dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.9", "nbclient>=0.10", "ipykernel>=6.29"]
 
 [tool.setuptools]

@@ -1,9 +1,18 @@
-"""Execute the Phase 5 notebook end to end on a small synthetic input (outside Colab)."""
+"""Execute the Phase 5 notebook end to end on a small synthetic input (outside Colab).
 
+Opt-in, like the notebook 00 test: it runs only with SYNTHETIC_RAW_LAB_HEAVY_TESTS=1, because executing a
+notebook is too heavy for a small laptop. Colab is the place to run it.
+"""
+
+import os
 from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    os.environ.get("SYNTHETIC_RAW_LAB_HEAVY_TESTS") != "1",
+    reason="notebook execution is opt-in: set SYNTHETIC_RAW_LAB_HEAVY_TESTS=1",
+)
 nbformat = pytest.importorskip("nbformat")
 nbclient = pytest.importorskip("nbclient")
 

@@ -47,6 +47,8 @@ _PACKAGES = (
     "matplotlib",
     "rawpy",
     "torch",
+    "torchvision",
+    "spandrel",
 )
 
 
