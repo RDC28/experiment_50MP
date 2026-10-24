@@ -17,7 +17,8 @@ inferred, simulated and encoded information apart.
 | Phase 2: pretrained super-resolution | Implemented |
 | Phase 3: human and crowd (notebook 01) | Implemented: Phase 2 SR presets (conservative and balanced), YuNet or manual face observations, per-tier identity metrics, local failure recovery, comparisons and master exports; Colab verification pending |
 | Phase 3: night scenery (notebook 02) | Implemented: Phase 2 SR presets (conservative and balanced), luminance-region masks, Layer 5B night processing with the PRD 12.6 failure rule, before/after night metrics, comparisons and master exports; Colab verification pending |
-| Phases 4 and 6: universal notebook, evaluation | Not started |
+| Phase 4: universal notebook (notebook 03) | Implemented: scene statistics and optional face detection classify each input, human and night scenes go to the notebook 01 and 02 pipelines and other scenes to a common pipeline (gated SR ladder, combined masks, universal tone and colour, face protection); every run ends with one verified final image; Colab verification pending |
+| Phase 6: evaluation and optimisation | Not started |
 | Phase 5: synthetic sensor research | Implemented |
 
 Phase 0 exit criterion: a valid 50 MP master created and exported from a 4K input by classical
@@ -40,11 +41,13 @@ configs/super_resolution_default.yaml  Phase 2 profile: the baselines plus pretr
 configs/night_default.yaml     Phase 3 night profile (PRD 19.1), Layer 5B keys documented in src/night_processing.py
 configs/sensor_research.yaml   Phase 5 parameters, every key documented in src/sensor_config.py
 configs/human_default.yaml     human profile, documented in src/human_config.py
+configs/universal_default.yaml Phase 4 universal profile (PRD 20.1), documented in src/universal_config.py
 docs/models.md                 SR model evaluation, weights, checksums, licences, commercial-use terms
 MODELS.md                      notebook 01 detector artifacts and pointer to SR weight terms
 notebooks/00_Feasibility_Baselines.ipynb  Phases 0 to 2
 notebooks/01_Human_Crowd_50MP.ipynb  Phase 3 human and crowd
 notebooks/02_Night_Scenery_50MP.ipynb  Phase 3 Nighttime Scenery
+notebooks/03_Universal_50MP.ipynb  Phase 4 Universal Reconstruction
 notebooks/05_Synthetic_Sensor_Research.ipynb  Phase 5
 src/                           the shared package, imported as synthetic_raw_lab
   config.py                    parameters with defaults, accepted values, effects and warnings (PRD 6, 22.2)
@@ -81,20 +84,23 @@ src/                           the shared package, imported as synthetic_raw_lab
   region_masks.py              feathered classical region estimates, manual overrides and mask overlays
   crowd_processing.py          bounded simulated microcontrast, protective region blending, and classical crowd consistency warnings
   test_images.py               deterministic synthetic test image
+  scene_analysis.py            scene statistics, face observations and content classification (PRD 20.2)
+  universal_config.py          the universal profile and the human and night presets it derives (PRD 20.1)
+  universal_pipeline.py        the Phase 4 run: routing, SR ladder gates, common pipeline, evaluation, final image
+  universal_report.py          Phase 4 Markdown report
 tests/                         pytest suite; notebook execution and real-network tests are opt-in
-inputs/{human,night}/          read-only copies of ingested sources (not in Git)
+inputs/{human,night,universal}/  read-only copies of ingested sources (not in Git)
 outputs/{human,night,universal}/  full-resolution masters per run (not in Git)
 weights/                       downloaded model weights (not in Git)
 reports/                       per-run report, manifest and figures (not in Git)
 ```
 
-Notebook `03_Universal_50MP` remains planned for Phase 4.
 The reconstruction notebooks end the same way: one final 50 MP image, saved again under `final/` in the run's
 masters folder by `final_output.publish` and delivered by `final_output.deliver` (a browser download of the
 final TIFF in Colab, or of the EXR when no TIFF was exported, and a copy to `FINAL_DRIVE_DIR` when Drive is
 mounted). Notebook 00 chooses it among its outputs with `final_output.select`; notebooks 01 and 02 make one
-master each, which is their final image; `03_Universal_50MP` will use the same step. Notebook 05 (synthetic
-sensor research) does not produce a final image.
+master each, which is their final image; notebook 03 publishes the master of the route it chose the same way.
+Notebook 05 (synthetic sensor research) does not produce a final image.
 
 ## Running in Google Colab
 
@@ -248,6 +254,33 @@ configured SR mode (Lanczos without SR) with the PRD 12.6 failure rule falling b
 master to `outputs/night/<run>/`, and reports the PRD 23.5 night metrics before and after. The highlight
 shoulder rolls clipped lights off but never recovers clipped radiance. The module docstring of
 `src/night_pipeline.py` lists the stages.
+
+## Phase 4: universal notebook
+
+`notebooks/03_Universal_50MP.ipynb` runs `universal_pipeline.run_universal` with the profile
+`configs/universal_default.yaml` (load it with `universal_config.load_universal_config`). Default policy: the
+most conservative settings that produce measurable improvement.
+
+1. **Analyse and classify** (`src/scene_analysis.py`). Scene statistics (luma distribution, dark share, PRD 8.3
+   luminance regions, colourfulness) and faces (manual boxes, then YuNet or Haar) give one of four categories,
+   with every cue, threshold and margin recorded: `human` (largest face at least 96 source px, or a crowd, by
+   day or night), `night` (low median luma and a large dark share), `night_with_faces` (a night scene whose
+   faces do not dominate it), or `general`. A decision within 15% of
+   its threshold is low confidence and uses the conservative general settings; `analysis.manual_override`
+   confirms or corrects it.
+2. **Route.** `human` scenes run the notebook 01 pipeline and `night` scenes the notebook 02 pipeline with the
+   first SR rung as their input; their own reports are linked. If that SR input fails its seam gate, the scene
+   is re-processed without SR. `general` and `night_with_faces` scenes run the common pipeline: the Lanczos
+   baseline, then the SR ladder (`super_resolution.modes`, conservative only by default), where a rung is kept
+   only if it passes the seam gate and the measurable-improvement gates (`improvement`: more high-frequency
+   energy than Lanczos without losing source consistency or adding clipping); then the combined region and face
+   masks and the Layer 5B engine with the universal policy (no lift or colour change, a low highlight shoulder,
+   debanding, low region-aware sharpening, the PRD 12.6 failure rule), or the night policy outside the face
+   masks. Faces get the same tone and colour without sharpening or denoising, and per-face consistency metrics.
+3. **Evaluate.** Every route's final 16-bit TIFF is measured against the Lanczos baseline the same way.
+4. **Final image.** The route's TIFF and EXR masters are saved again under `outputs/universal/<run>/final/` by
+   the shared `final_output.publish` (hard links where possible, verified by SHA-256) and delivered by
+   `final_output.deliver`: copied to Drive when it is mounted and downloaded in Colab.
 
 ## Phase 5: synthetic sensor research
 

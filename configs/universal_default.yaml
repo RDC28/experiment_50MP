@@ -1,0 +1,75 @@
+# Notebook 03 universal profile (PRD 4.3, 20 and Phase 4).
+# Default policy: the most conservative settings that produce measurable improvement.
+# Thresholds marked provisional are to be calibrated experimentally (PRD 25.3).
+profile: universal
+input_category: universal
+runtime_preset: standard         # quick (reduced output) | standard (full target) | research
+quick_target_megapixels: 2.0     # general and night scenes; human scenes enlarge the source 1.5x in quick runs
+target_megapixels: 50.0
+random_seed: 42
+analysis:
+  automatic_scene_classification: true  # false: set manual_override, otherwise conservative general settings
+  manual_override: auto          # auto | human | night | night_with_faces | general
+  face_detection: true           # automatic face observation; manual_face_boxes always count
+  face_detector: yunet           # yunet (checksum-verified ONNX, about 230 KB) | haar (bundled with OpenCV)
+  manual_face_boxes: []          # source [x, y, width, height, optional confidence]
+  nighttime_detection: true
+  thresholds:                    # provisional; luma is sRGB-encoded in [0, 1]
+    night_max_median_luma: 0.3   # night needs a median luma at or below this ...
+    night_min_dark_fraction: 0.5  # ... and at least this share of pixels darker than dark_luma
+    dark_luma: 0.25
+    human_min_face_px: 96        # human-dominant, by day or night: largest face (shortest side, source px) ...
+    crowd_min_faces: 4           # ... or at least this many faces of crowd_min_face_px or more
+    crowd_min_face_px: 32
+    min_face_confidence: 0.6     # observations below this do not count
+    low_confidence_margin: 0.15  # a decision closer than this (relative) to its threshold is low confidence
+    max_edge: 1536               # statistics are measured on an area-reduced copy at most this wide
+super_resolution:                # Phase 2 pretrained-SR backend (PRD 10; weights and licences in docs/models.md)
+  enabled: true                  # false: Lanczos interpolation only, no SR claimed
+  modes: [conservative]          # ladder, most conservative first; a rung is used only if it passes the seam gate
+                                 # and the improvement gates below. Add balanced to let it be tried after it.
+  backend: swinir                # swinir | realesrgan
+  tile_size: auto                # auto (memory-aware) | 64 to 2048 source pixels
+  tile_overlap: 64
+  strength: 1.0
+  preserve_source_structure: true
+  device: auto                   # auto | cuda | mps | cpu
+  precision: auto                # auto | float32 | float16
+  weights_dir: ""                # empty: <project>/weights; point at Drive to reuse downloads
+improvement:                     # measurable improvement over Lanczos (provisional)
+  min_detail_gain: 0.03          # at least 3% more high-frequency energy (Laplacian variance of sRGB luma)
+  max_delta_e_increase: 0.5      # source consistency: CIEDE2000 mean at most this much above Lanczos
+  max_ssim_drop: 0.01            # source consistency: SSIM at most this much below Lanczos
+  max_clipping_increase: 0.002   # share of clipped 16-bit samples at most this much above Lanczos
+processing:                      # universal tone, colour and detail of the common pipeline (Layer 5B engine)
+  shadows:
+    lift_strength: none
+    banding_reduction: true
+  highlights:
+    rolloff_strength: low        # clipping protection; never recovers clipped radiance
+    halo_suppression: true
+  color:
+    preserve_source_mood: true
+    saturation_adjustment: none
+    gamut_mapping: preserve_hue
+  texture:
+    architecture_detail_strength: low  # region-aware: lights, sky and smooth gradients are not sharpened
+    sharpening_strength: 0.25
+  noise:
+    denoise_source: "off"
+    synthetic_grain: "off"
+  failure_rule:
+    enabled: true                # PRD 12.6: halos, banding, black crush or excess texture fall back locally
+face_protection:                 # common pipeline: no sharpening or denoising inside the face masks
+  margin: 0.25                   # each face box grows by this share of its size on every side
+  feather: 0.15                  # blend ramp, as a share of the face size
+human:                           # human scenes: the notebook 01 profile, plus single-key overrides
+  profile: configs/human_default.yaml
+  overrides: {}
+night:                           # night scenes: the notebook 02 profile with the first SR rung, plus overrides
+  profile: configs/night_default.yaml
+  overrides: {}
+export:
+  tiff16: true                   # 16-bit sRGB TIFF master
+  exr_half: true                 # half-float linear EXR master (false writes float32)
+  synthetic_dng: false           # not implemented
