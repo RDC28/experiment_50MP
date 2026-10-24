@@ -105,8 +105,8 @@ OpenCV; each run records the versions and the Git commit it actually used.
 Open `notebooks/01_Human_Crowd_50MP.ipynb` and run all cells. The same Colab setup applies.
 The default `standard` preset builds the full 50 MP target from an uploaded image; `research` uses the same
 target and currently supplies the same detailed comparisons and metrics, without extra ablations. `quick`
-enlarges the source to 1.5x its pixel count (about 12 MP for a 4K source), at most the target, so it always
-upscales the source on both axes while running faster. `INPUT_MODE="synthetic"` uses a 384 x 256 crowd fixture
+enlarges the source to 1.5x its pixel count (about 12 MP for a 4K source), at most the target, so it upscales
+any source smaller than the target on both axes while running faster. `INPUT_MODE="synthetic"` uses a 384 x 256 crowd fixture
 with manual ground-truth boxes across all three face tiers. YuNet detection runs by default
 (`FACE_DETECTOR="yunet"`); inspect its observations and add `MANUAL_FACE_BOXES` in source pixels as needed.
 Manual boxes win overlaps. Use `FACE_DETECTOR="none"` for manual-only observations and select

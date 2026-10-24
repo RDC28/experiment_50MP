@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from . import baselines, environment, exporters, ingestion, quality_metrics, report_builder
+from . import baselines, environment, exporters, ingestion, quality_metrics, report_builder, sr_models
 from . import color_management as cm
 from .face_preservation import haar_model_metadata
 from .human_comparisons import write_human_comparisons
@@ -91,7 +91,8 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
                 if target.width < source.width or target.height < source.height:
                     raise ValueError(
                         f"target {target.width} x {target.height} does not enlarge the "
-                        f"{source.width} x {source.height} source on both axes"
+                        f"{source.width} x {source.height} source on both axes; "
+                        "raise target_megapixels above the source pixel count"
                     )
                 manifest["runtime"] = environment.inspect_runtime(outputs)
             with stage("human_reconstruction", "Simulation"):
@@ -230,7 +231,7 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
 def _retry_advice(error: StageError) -> str:
     """Retry guidance for the failing stage and cause, never a generic size reduction."""
     cause = error.__cause__
-    if isinstance(cause, MemoryError) or type(cause).__name__ == "OutOfMemoryError":
+    if isinstance(cause, sr_models.DeviceOutOfMemory) or sr_models._is_out_of_memory(cause):
         return (
             "Out of memory: use runtime_preset=quick (1.5x the source pixel count) "
             "or a smaller sr_tile_size, and check the per-stage peak memory."
@@ -240,8 +241,6 @@ def _retry_advice(error: StageError) -> str:
             "Learned SR failed: install the [sr] extra, check the verified weights in sr_weights_dir and the "
             "device, or set sr_backend: lanczos_stand_in for explicit interpolation."
         )
-    if error.stage == "target_planning":
-        return "Set target_megapixels so the target enlarges the source on both axes; quick always does."
     return f"Fix the cause reported for stage {error.stage}; completed stage records are in this manifest."
 
 

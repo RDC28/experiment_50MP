@@ -309,8 +309,8 @@ def test_non_enlarging_target_fails_in_planning_with_matching_advice(tmp_path):
         )
     assert caught.value.stage == "target_planning"
     error = json.loads(caught.value.manifest_path.read_text())["error"]
-    assert "does not enlarge" in error["message"]
-    assert "target_megapixels" in error["retry"] and "quick" in error["retry"]
+    assert "does not enlarge" in error["message"] and "raise target_megapixels" in error["message"]
+    assert "quick" not in error["retry"] and "target_planning" in error["retry"]
 
 
 @pytest.mark.parametrize("failure,advice", [(RuntimeError, "region_detail"), (MemoryError, "Out of memory")])
@@ -346,3 +346,19 @@ def test_learned_sr_failure_names_the_upscale_stage_and_stand_in(tmp_path, monke
     assert caught.value.stage == "human_upscale_conservative"
     error = json.loads(caught.value.manifest_path.read_text())["error"]
     assert "lanczos_stand_in" in error["message"] and "lanczos_stand_in" in error["retry"]
+
+
+def test_device_out_of_memory_in_learned_sr_advises_memory_reduction(tmp_path, monkeypatch):
+    from synthetic_raw_lab import human_pipeline, sr_models
+
+    def exhausted(*args, **kwargs):
+        raise sr_models.DeviceOutOfMemory("tile 256 px on cuda; no fallback device left")
+
+    monkeypatch.setattr(human_pipeline.Phase2Upscaler, "__call__", exhausted)
+    with pytest.raises(StageError) as caught:
+        run_human_crowd(
+            source_file(tmp_path), configuration().replace(sr_backend="swinir"), tmp_path, log=lambda _: None
+        )
+    assert caught.value.stage == "human_upscale_conservative"
+    retry = json.loads(caught.value.manifest_path.read_text())["error"]["retry"]
+    assert retry.startswith("Out of memory") and "sr_tile_size" in retry
