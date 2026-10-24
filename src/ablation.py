@@ -439,7 +439,8 @@ def phase2_sr_runner(
 ) -> SRRunner:
     """Phase 2's per-mode SR path (:func:`pipeline.run_sr_mode`) bound to one scene; one network loaded at a time.
 
-    ``record`` receives ``super_resolution`` (per-mode summaries) and ``models`` like a notebook manifest.
+    ``record`` receives ``super_resolution`` (per-mode summaries) and ``models`` like a notebook manifest; each
+    mode summary adds ``model_load_seconds`` (loading the network, including a first-use weight download).
     Raises with Phase 2's install hint when PyTorch or spandrel is missing.
     """
     experiment = experiment or config.experiment
@@ -451,12 +452,23 @@ def phase2_sr_runner(
     def run(mode: str, linear: np.ndarray, width: int, height: int) -> tuple[np.ndarray, dict]:
         if (width, height) != (target.width, target.height):
             raise ValueError(f"SR renders the scene target {target.width}x{target.height}, not {width}x{height}")
+        loads: list[StageRecord] = []
+
+        def timed_stage(stage_record: StageRecord):
+            if stage_record.name.startswith("load_model_"):
+                loads.append(stage_record)
+            return stage(stage_record)
+
         try:
-            image = run_sr_mode(mode, linear, target, experiment, weights_dir, loaded, record, figures_dir, stage, log)
+            image = run_sr_mode(
+                mode, linear, target, experiment, weights_dir, loaded, record, figures_dir, timed_stage, log
+            )
         finally:
             release_sr_models(loaded, experiment, ())
             gc.collect()
-        return image, record["super_resolution"]["modes"][mode]
+        summary = record["super_resolution"]["modes"][mode]
+        summary["model_load_seconds"] = sum(s.seconds for s in loads)
+        return image, summary
 
     return run
 
@@ -600,7 +612,12 @@ def run_configurations(
             record.update(detail)
             # The upscale runs once and is shared; it is counted in every configuration's standalone runtime.
             total = sum(s["seconds"] for s in detail["applied"])
-            record["seconds"] = {"upscale": upscale.seconds, "processing": total - upscale.seconds, "total": total}
+            record["seconds"] = {
+                "upscale": upscale.seconds,
+                "model_load": upscale.summary.get("model_load_seconds", 0.0),
+                "processing": total - upscale.seconds,
+                "total": total,
+            }
             peak_device = (upscale.summary.get("model") or {}).get("peak_device_memory_mb")
             record["peak_device_mb"] = peak_device
             if upscale.summary.get("seams"):
@@ -757,11 +774,18 @@ def performance_sweep(
     log,
 ) -> list[dict]:
     """Conservative SR under each ``ablation.performance_sweep`` setting (tile size, overlap, precision,
-    device): runtime, peak device memory, seam gate and how far the output moves from the default settings."""
+    device): runtime, peak device memory, seam gate and how far the output moves from the default settings.
+
+    A precision the network or device cannot run (SwinIR is float32 only) or one that only repeats the default
+    run is recorded as skipped with the reason instead of being run."""
     if engine.sr_runner is None:
         return [{"skipped": engine.sr_unavailable or "super-resolution is unavailable"}]
-    default = engine.upscale("sr_conservative")
+    try:
+        default = engine.upscale("sr_conservative")
+    except Exception as error:
+        return [{"setting": "default", "error": f"{type(error).__name__}: {error}"}]
     tiling = default.summary.get("tiling") or {}
+    model = default.summary.get("model") or {}
     rows = [
         {
             "setting": "default",
@@ -769,13 +793,14 @@ def performance_sweep(
             "inference_seconds": tiling.get("inference_seconds"),
             "tile_size": tiling.get("tile_size"),
             "tile_overlap": tiling.get("tile_overlap"),
-            "precision": (default.summary.get("model") or {}).get("precision"),
-            "peak_device_mb": (default.summary.get("model") or {}).get("peak_device_memory_mb"),
+            "precision": model.get("precision"),
+            "peak_device_mb": model.get("peak_device_memory_mb"),
             "seam_gate_passed": (default.summary.get("seams") or {}).get("passed"),
         }
     ]
     reference = encoded_luma(default.image)
     base = config.experiment
+    device = (model.get("device") or {}).get("device")
     for entry in config.ablation.performance_sweep:
         changes = {
             "sr_tile_size": entry.get("tile_size", base.sr_tile_size),
@@ -784,6 +809,19 @@ def performance_sweep(
             "sr_device": entry.get("device", base.sr_device),
         }
         setting = ", ".join(f"{k}={v}" for k, v in entry.items())
+        precision = entry.get("precision")
+        if precision == "float16" and (not model.get("supports_half") or entry.get("device", device) == "cpu"):
+            architecture = model.get("architecture", "this network")
+            rows.append(
+                {
+                    "setting": setting,
+                    "skipped": f"float16 unsupported ({architecture} on {entry.get('device', device)})",
+                }
+            )
+            continue
+        if set(entry) == {"precision"} and precision == rows[0]["precision"]:
+            rows.append({"setting": setting, "skipped": f"{precision} is the default run's precision"})
+            continue
         row: dict = {"setting": setting}
         try:
             record: dict = {}

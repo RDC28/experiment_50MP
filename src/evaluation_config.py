@@ -69,7 +69,12 @@ class AblationParams:
     sensor: dict = field(
         default_factory=lambda: {"shot_noise_enabled": True, "read_noise_enabled": True, "demosaic": "malvar"}
     )
-    performance_sweep: tuple = ({"precision": "float16"}, {"tile_size": 256}, {"tile_overlap": 32})
+    performance_sweep: tuple = (
+        {"precision": "float32"},
+        {"precision": "float16"},
+        {"tile_size": 256},
+        {"tile_overlap": 32},
+    )
     bit_depth_study: bool = True
     review_crop_count: int = 3
     review_crop_px: int = 256

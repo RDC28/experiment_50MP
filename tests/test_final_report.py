@@ -111,7 +111,7 @@ def test_best_configuration_is_the_cheapest_within_tolerance():
         "crop": {"box": [0, 0, 100, 100], "full_target": {"source_width": 200, "source_height": 100}},
         "runtime": {"gpu": {"name": "NVIDIA L4"}},
         "configurations": [
-            {"name": "sr_conservative", "seconds": {"total": 10.0}},
+            {"name": "sr_conservative", "seconds": {"total": 10.0, "model_load": 4.0}},
             {"name": "specialized", "seconds": {"total": 12.0}},
         ],
     }
@@ -121,7 +121,76 @@ def test_best_configuration_is_the_cheapest_within_tolerance():
     )
     best = final_report.best_configuration(final_report.Evidence([run, ablation_run]), tolerant)
     assert best["choice"] == "sr_conservative" and set(best["eligible"]) == {"sr_conservative", "specialized"}
-    assert best["runtime"]["sr_conservative"]["estimated_full_seconds"] == pytest.approx(20.0)
+    # Twice the crop's pixels: the per-pixel seconds double, the model loads once.
+    assert best["runtime"]["sr_conservative"]["estimated_full_seconds"] == pytest.approx(16.0)
+    assert best["runtime"]["specialized"]["estimated_full_seconds"] == pytest.approx(24.0)
+
+
+def ablation_run(**manifest) -> rc.Run:
+    return rc.normalise(
+        {"schema": ablation.SCHEMA, "run_id": "20261101T000000Z_x_ablation", "status": "complete", **manifest},
+        Path("."),
+        CONFIG.aggregation,
+    )
+
+
+def answer(runs, number: int) -> dict:
+    return final_report.build(runs, CONFIG)["answers"][number - 1]
+
+
+def test_harm_lists_stages_that_lower_source_consistency_not_those_that_raise_it():
+    contributions = [
+        {"stage": "grain", "without": "full_no_grain", "source_psnr_db": -2.0},
+        {"stage": "optical simulation", "without": "full_no_optics", "source_psnr_db": 1.0},
+    ]
+    run = ablation_run(contributions=contributions)
+    harm = answer([run], 14)
+    assert harm["evidence"] == [f"{run.label} ablation: grain changes source PSNR by -2.00 dB"]
+    assert harm["answer"].startswith("Measured harm (below): grain.")
+
+
+def bit_depth_study(eight_levels: float, sixteen_levels: float) -> dict:
+    def row(name, levels, drift):
+        return {"name": name, "edit_shadow_levels": levels, "cycle_drift_rmse_linear": drift}
+
+    return {
+        "reference_edit_shadow_levels": 4000.0,
+        "representations": [
+            row("rgb8_srgb", eight_levels, 2e-3),
+            row("rgb16_srgb", sixteen_levels, 1e-5),
+            row("rgb16_float_linear", 3000.0, 1e-4),
+            row("rgb32_float_linear", 4000.0, 0.0),
+        ],
+    }
+
+
+@pytest.mark.parametrize(("sixteen", "verdict"), [(2400.0, "Yes for edits"), (90.0, "Not in every study")])
+def test_sixteen_bit_answer_reads_the_study_representations(sixteen, verdict):
+    run = ablation_run(bit_depth={"image": "lanczos", "study": bit_depth_study(60.0, sixteen)})
+    q9 = answer([run], 9)
+    assert q9["status"] == "answered" and q9["answer"].startswith(verdict)
+    assert "rgb8_srgb keeps 60.0 shadow levels and rgb16_srgb" in q9["evidence"][0]
+
+
+@pytest.mark.parametrize(
+    ("full", "without", "verdict"),
+    [
+        ((0.2, 0.9), (0.5, 0.9), "No: "),
+        ((0.5, 0.9), (0.2, 0.9), "Yes, measurably"),
+        ((0.3, 0.9), (0.3, 0.9), "No measurable"),
+    ],
+)
+def test_bayer_verdict_follows_the_measured_accuracy_change(full, without, verdict):
+    q11 = answer([reference_run({"full": full, "full_no_sensor": without})], 11)
+    assert q11["status"] == "answered" and q11["answer"].startswith(verdict)
+
+
+@pytest.mark.parametrize(("nmse", "phrase"), [(0.98, "Detail finer than the limit is not"), (0.6, "already recovers")])
+def test_constrained_detail_verdict_follows_lanczos_above_limit_error(nmse, phrase):
+    run = reference_run({})
+    run.manifest["cases"][0]["configurations"][0]["reference"]["hf_nmse"] = nmse
+    q2 = answer([rc.normalise(run.manifest, Path("."), CONFIG.aggregation)], 2)
+    assert q2["status"] == "answered" and phrase in q2["answer"]
 
 
 def test_write_produces_markdown_and_json(tmp_path, evidence):

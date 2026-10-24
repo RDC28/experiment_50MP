@@ -20,7 +20,9 @@ ablation:                        # PRD 31 matrix and E09 full-pipeline ablation 
     shot_noise_enabled: true
     read_noise_enabled: true
     demosaic: malvar             # malvar | bilinear
-  performance_sweep:             # PRD 28.3: conservative SR again under each setting
+  performance_sweep:             # PRD 28.3: conservative SR again under each setting; a precision the backend
+                                 # cannot run (SwinIR is float32 only) or the default run already used is skipped
+    - {precision: float32}
     - {precision: float16}
     - {tile_size: 256}
     - {tile_overlap: 32}

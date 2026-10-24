@@ -360,6 +360,7 @@ class TorchModel:
             "tile_alignment": self.alignment,
             "device": device_info(self.device),
             "precision": self.precision,
+            "supports_half": bool(self.descriptor.supports_half),
             "peak_device_memory_mb": round(self.peak_device_bytes / 1e6, 1) if self.peak_device_bytes else None,
         }
 

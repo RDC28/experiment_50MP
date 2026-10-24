@@ -72,8 +72,16 @@ NEXT_STEPS = {
     "C": "Retain conventional interpolation, professional colour management and high-bit-depth export; reconsider the "
     "value of the additional stages.",
 }
-COMPOSITION_MIN_SSIM = 0.98  # provisional (PRD 25.3)
+# Provisional thresholds behind the verdict sentences (PRD 25.3); every answer states the ones it uses.
+COMPOSITION_MIN_SSIM = 0.98
 COMPOSITION_MAX_EDGE_PX = 0.5
+LOWBAND_MIN_DB = 30.0  # the band the source can hold counts as reproduced at this PSNR against ground truth
+HF_NEUTRAL = 0.05  # an above-limit error within this of 1.0 counts as adding nothing
+PSNR_EFFECT_DB = 0.05  # accuracy changes smaller than this count as no measurable effect
+SOURCE_HARM_DB = 0.5  # a stage lowering source PSNR by more than this in the ablation measurably harms
+UNDERSHOOT_LINEAR = -0.05  # linear values below this are dark halos the TIFF clips
+SHADOW_LEVELS_MIN_RATIO = 2.0  # 16 bits reduce edit banding when they keep this many times 8 bits' shadow levels
+UNIVERSAL_MAX_GAP_DB = 0.5  # notebook 03 approaches a specialised run within this source PSNR
 DELEGATED = ", delegated to the specialised pipeline"
 REVIEW_CRITERIA = ("naturalness", "structural_fidelity", "perceived_detail", "artefact_severity", "overall_preference")
 
@@ -126,10 +134,24 @@ def _sentence(text: str) -> str:
     return f"{text[:1].upper()}{text[1:]}."
 
 
+def _span(values: list[float], spec: str) -> str:
+    low, high = format(min(values), spec), format(max(values), spec)
+    return low if low == high else f"{low} to {high}"
+
+
+def _hf_verdict(nmse: float) -> str:
+    if nmse < 1 - HF_NEUTRAL:
+        return "more right than wrong"
+    if nmse > 1 + HF_NEUTRAL:
+        return "more wrong than right"
+    return f"within {HF_NEUTRAL:g} of adding nothing"
+
+
 # --------------------------------------------------------------------------- the questions
 
 
-def q1_composition(ev: Evidence) -> dict:
+def _composition(ev: Evidence) -> tuple[list, float | None, float | None]:
+    """The measured outputs, their lowest source SSIM and largest mean edge displacement."""
     finals = [(r, o) for r, o in ev.finals() if o.consistency.get("ssim") is not None]
     # Runs from before the final-image step (notebook 00 v1.1) name no final: every output they measured counts.
     with_final = {r.run_id for r, _ in finals}
@@ -141,10 +163,20 @@ def q1_composition(ev: Evidence) -> dict:
         if o.consistency.get("ssim") is not None
     ]
     if not finals:
-        return _q("not measured", "No reconstruction run has been collected yet; run notebook 00, 01, 02 or 03.")
-    worst = min(finals, key=lambda x: x[1].consistency["ssim"])[1].consistency["ssim"]
+        return [], None, None
+    worst = min(o.consistency["ssim"] for _, o in finals)
     edges = [o.consistency.get("edge_mean_px") for _, o in finals if o.consistency.get("edge_mean_px") is not None]
-    largest = max(edges) if edges else None
+    return finals, worst, max(edges) if edges else None
+
+
+def _composition_passes(worst: float, largest: float | None) -> bool:
+    return worst >= COMPOSITION_MIN_SSIM and (largest is None or largest <= COMPOSITION_MAX_EDGE_PX)
+
+
+def q1_composition(ev: Evidence) -> dict:
+    finals, worst, largest = _composition(ev)
+    if not finals:
+        return _q("not measured", "No reconstruction run has been collected yet; run notebook 00, 01, 02 or 03.")
     evidence = [
         f"{r.label}, notebook {r.notebook} `{o.name}`: source SSIM {o.consistency['ssim']:.5f}, edge displacement "
         f"{fmt(o.consistency.get('edge_mean_px'), 3)} px, PSNR {fmt(o.consistency.get('psnr_db'))} dB"
@@ -157,10 +189,11 @@ def q1_composition(ev: Evidence) -> dict:
             f"{min(lowband):.1f} to {max(lowband):.1f} dB across every configuration."
         )
     measured = f"lowest SSIM {worst:.4f}, largest mean edge displacement {fmt(largest, 3)} px"
-    if worst >= COMPOSITION_MIN_SSIM and (largest is None or largest <= COMPOSITION_MAX_EDGE_PX):
+    if _composition_passes(worst, largest):
         answer = (
-            f"Yes: every master reduced back to the source size matches the source ({measured}), so composition, "
-            "geometry and tone are preserved."
+            f"Yes: every master reduced back to the source size matches the source ({measured}; gates SSIM at least "
+            f"{COMPOSITION_MIN_SSIM:g}, mean edge displacement at most {COMPOSITION_MAX_EDGE_PX:g} px), so "
+            "composition, geometry and tone are preserved."
         )
     else:
         answer = (
@@ -182,21 +215,41 @@ def q2_constrained(ev: Evidence) -> dict:
             f"{fmt(r['hf_correlation'], 3)}, above-limit error {fmt(r['hf_nmse'], 3)}"
             for r in lanczos
         ]
-        return _q(
-            "answered",
-            "Detail coarser than the source sampling limit (about two output pixels at x1.71) is constrained: every "
-            "method reproduces that band of the ground truth closely. Detail finer than the limit is not: "
-            "interpolation leaves it empty (its above-limit error stays near 1.0, the score of adding nothing), so "
-            "anything there comes from a model, not from the source pixels.",
-            evidence,
-        )
+        low = min(r["lowband_psnr_db"] for config_rows in rows.values() for r in config_rows)
+        if low >= LOWBAND_MIN_DB:
+            answer = (
+                "Detail coarser than the source sampling limit is constrained: every configuration reproduces that "
+                f"band of the ground truth at {low:.1f} dB or better (threshold {LOWBAND_MIN_DB:g} dB). "
+            )
+        else:
+            answer = (
+                "Even detail coarser than the source sampling limit is not reproduced reliably: the lowest low-band "
+                f"agreement with ground truth is {low:.1f} dB, below the {LOWBAND_MIN_DB:g} dB threshold. "
+            )
+        nmse = _mean(r["hf_nmse"] for r in lanczos)
+        if nmse is None:
+            answer += "Lanczos' above-limit error was not measured, so the finer band is not measured."
+        elif abs(nmse - 1) <= HF_NEUTRAL:
+            answer += (
+                f"Detail finer than the limit is not: interpolation leaves it empty (Lanczos' mean above-limit error "
+                f"{nmse:.3f}, within {HF_NEUTRAL:g} of 1.0, the score of adding nothing), so anything there comes "
+                "from a model, not from the source pixels."
+            )
+        else:
+            answer += (
+                f"Lanczos' mean above-limit error is {nmse:.3f}, more than {HF_NEUTRAL:g} from 1.0 (the score of "
+                "adding nothing): interpolation "
+                + ("already recovers part of the band above the limit" if nmse < 1 else "puts wrong structure there")
+                + ", so in this test the limit is not a clean boundary between constrained and invented detail."
+            )
+        return _q("answered", answer, evidence)
     zero = ev.outputs("lanczos")
     if zero:
         return _q(
             "partial",
-            "On the real inputs, structure at and above the source sampling limit is constrained (every output "
-            "reduced to the source size matches it), but without ground truth nothing can say which finer detail is "
-            "real. The controlled reference test (notebook 06, E10) measures it.",
+            "On the real inputs only source consistency can be measured (below): it shows how well the band the "
+            "source can hold is kept, but without ground truth nothing can say which finer detail is real. The "
+            "controlled reference test (notebook 06, E10) measures it.",
             [f"{r.label}: Lanczos source PSNR {fmt(o.consistency.get('psnr_db'))} dB" for r, o in zero],
         )
     return _q("not measured", "Needs the controlled reference test (notebook 06, E10).")
@@ -204,6 +257,7 @@ def q2_constrained(ev: Evidence) -> dict:
 
 def q3_priors(ev: Evidence) -> dict:
     evidence = []
+    energy: dict[str, list[float]] = {}
     for run, output in ev.outputs("sr_conservative") + ev.outputs("sr_balanced"):
         lanczos = next((o for o in run.outputs if o.name == "lanczos"), None)
         crops, base = (
@@ -213,6 +267,7 @@ def q3_priors(ev: Evidence) -> dict:
         diff = output.detail.get("difference_vs_lanczos") or {}
         if crops and base and len(crops) == len(base):
             ratios = [c / b for c, b in zip(crops, base, strict=True) if b > 0]
+            energy.setdefault(output.name, []).extend(ratios)
             evidence.append(
                 f"{run.label} {output.name}: crop detail energy {min(ratios):.1f}x to {max(ratios):.1f}x Lanczos; "
                 f"mean departure from Lanczos {fmt(diff.get('mean'))} 8-bit codes (p99 {fmt(diff.get('p99'))})"
@@ -226,16 +281,26 @@ def q3_priors(ev: Evidence) -> dict:
             )
     if not evidence:
         return _q("not measured", "Needs SR runs (notebook 00) and the reference test (notebook 06).")
-    status = "answered" if any(n in rows for n in ("sr_conservative", "sr_balanced")) else "partial"
+    errors = {name: _mean(r["hf_nmse"] for r in rows.get(name, [])) for name in ("sr_conservative", "sr_balanced")}
+    errors = {name: value for name, value in errors.items() if value is not None}
+    status = "answered" if errors else "partial"
     answer = (
-        "All detail above the source sampling limit in the SR masters is generated from learned priors: texture in "
-        "fabric, foliage, gravel and hair, and sharper edges. The fidelity network adds little of it; the perceptual "
-        "network adds many times Lanczos' detail energy."
+        "Detail above the source sampling limit in the SR masters cannot come from the source pixels, so it is "
+        "generated from learned priors."
     )
-    if status == "answered":
+    if energy:
         answer += (
-            " The reference test measures how much of it is real: correlation with the true above-limit detail and "
-            "the above-limit error (below 1.0 means more right than wrong)."
+            " On the real inputs, "
+            + "; ".join(
+                f"{name} has {_mean(v):.1f}x Lanczos' crop detail energy on average" for name, v in energy.items()
+            )
+            + "."
+        )
+    if errors:
+        answer += (
+            " Against ground truth, the mean above-limit error is "
+            + ", ".join(f"{name} {value:.3f} ({_hf_verdict(value)})" for name, value in errors.items())
+            + f"; below 1.0 means more right than wrong, and within {HF_NEUTRAL:g} of 1.0 counts as adding nothing."
         )
     else:
         answer += " Whether any of it is correct needs the reference test (notebook 06, E10)."
@@ -294,11 +359,38 @@ def q5_face_size(ev: Evidence) -> dict:
             ]
             if values:
                 evidence.append(f"reference portrait at x{scale:g}: conservative SR face PSNR {_mean(values):.2f} dB")
+    tiers: dict[int, dict] = {}
+    for _, output in ev.outputs("human_final"):
+        events = output.detail.get("failure_events") or []
+        for tier in (output.detail.get("identity") or {}).get("per_tier", []):
+            entry = tiers.setdefault(tier["tier"], {"faces": 0, "events": 0, "ssim": []})
+            entry["faces"] += tier.get("face_count") or 0
+            entry["events"] += sum(1 for e in events if e.get("tier") == tier["tier"])
+            entry["ssim"].append(tier.get("mean_ssim"))
+    observed = sorted(t for t, entry in tiers.items() if entry["faces"])
+    if len(observed) < 2:
+        seen = f"only tier {observed[0]} faces were observed" if observed else "no face was observed"
+        return _q(
+            "partial",
+            f"Not measured yet: {seen}, so reliability cannot be compared across face sizes. It needs notebook 01 "
+            "runs with faces in more than one tier (PRD 11.2).",
+            evidence,
+        )
+
+    def summary(tier: int) -> tuple[float, float | None, str]:
+        entry = tiers[tier]
+        rate, ssim = entry["events"] / entry["faces"], _mean(entry["ssim"])
+        return rate, ssim, f"tier {tier}: recovery events on {rate:.0%} of faces, mean SSIM {fmt(ssim, 4)}"
+
+    large_rate, large_ssim, large = summary(observed[0])
+    small_rate, small_ssim, small = summary(observed[-1])
+    falls = small_rate > large_rate or (large_ssim is not None and small_ssim is not None and small_ssim < large_ssim)
     return _q(
         "answered",
-        "Reliability falls with face size: tier 1 faces (96 source px or more) carry enough pixels for consistency "
-        "checks, tier 3 faces (under 32 px) do not, so they only get conservative processing and any detail on them "
-        "is invented. The per-tier numbers are below.",
+        ("Reliability falls with face size" if falls else "No fall in reliability with face size was measured")
+        + f" ({large}; {small}; a fall is a higher recovery-event rate or a lower mean SSIM on the smaller tier). "
+        "Tiers are by source size (tier 1 at least 96 px, tier 3 under 32 px, PRD 11.2); these are consistency "
+        "checks, so they cannot confirm that detail drawn on the smallest faces is right.",
         evidence,
     )
 
@@ -308,21 +400,44 @@ def q6_crowd(ev: Evidence) -> dict:
     if not crowds:
         return _q("not measured", "Needs notebook 01 runs on a crowd scene.")
     evidence = []
+    flags = 0
     for run, crowd in crowds:
         flagged = sum(1 for p in crowd.get("duplicate_pairs", []) if p.get("flagged"))
         texture = sum(1 for p in crowd.get("skin_texture", []) if p.get("flagged"))
         new = crowd.get("new_face_like_detections")
+        flags += flagged + texture + len(new or [])
         evidence.append(
             f"{run.label} `{run.short}`: {flagged} duplicated-looking face pair(s) flagged, {texture} texture flag(s), "
-            f"new face-like detections: {'not checked' if new is None else new}"
+            f"new face-like detections: {'not checked' if new is None else len(new)}"
         )
     return _q(
         "partial",
-        "Classical checks found the flags below. Background faces are never generatively restored (prohibited by "
-        "the profile), which keeps identities from being invented by face restoration, but SR still draws texture "
-        "on small faces; confirming that no new identity appears needs the reviewer pass on the small-face panels.",
+        (
+            f"The classical crowd checks raised {flags} flag(s) across {len(crowds)} run(s) (below)"
+            if flags
+            else f"The classical crowd checks raised no flag across {len(crowds)} run(s)"
+        )
+        + ". Background faces are never generatively restored (prohibited by the profile), so face restoration "
+        "cannot invent identities; whether SR texture on small faces reads as a new identity needs the reviewer "
+        "pass on the small-face panels.",
         evidence,
     )
+
+
+def _night_metrics(ev: Evidence) -> list[tuple[dict, dict]]:
+    """(before, after) Layer 5B night metrics of every notebook 02 run."""
+    return [
+        (o.detail["metrics_before"], o.detail.get("metrics_after") or {})
+        for _, o in ev.outputs("night_final")
+        if o.detail.get("metrics_before")
+    ]
+
+
+def _lowered(pairs: list[tuple[dict, dict]], get) -> tuple[int, int]:
+    """(runs where the metric fell, runs that measured it before and after)."""
+    values = [(get(before), get(after)) for before, after in pairs]
+    values = [(b, a) for b, a in values if b is not None and a is not None]
+    return sum(a < b for b, a in values), len(values)
 
 
 def q7_night_shadows(ev: Evidence) -> dict:
@@ -333,21 +448,41 @@ def q7_night_shadows(ev: Evidence) -> dict:
         if "shadow" in row[3] or "black" in row[3]
     ]
     by = ev.reference_by_config()
+    shadow = []
     for name in ("sr_conservative", "specialized"):
         for r in by.get(name, []):
             if r["reference"] == "night_forest_path" and r.get("shadow_hf_nmse") is not None:
+                shadow.append(r["shadow_hf_nmse"])
                 evidence.append(f"reference {r['case']} {name}: shadow above-limit error {r['shadow_hf_nmse']:.3f}")
     if not evidence:
         return _q("not measured", "Needs notebook 02 runs on the night image and the night reference test.")
-    status = "answered" if any("reference" in e for e in evidence) and rows else "partial"
-    return _q(
-        status,
-        "The night processing lowers shadow chroma noise and banding without crushing blacks (numbers below); its "
-        "shadow sharpening is limited by the invented-texture tolerance and the PRD 12.6 failure rule. Whether shadow "
-        "texture is true can only be measured on the night reference: a shadow above-limit error below 1.0 means "
-        "the added texture is more right than wrong.",
-        evidence,
+    pairs = _night_metrics(ev)
+    parts = []
+    for key, label in (("shadow_chroma_noise_codes", "shadow chroma noise"), ("banding_score", "banding")):
+        fell, measured = _lowered(pairs, lambda m, k=key: m.get(k))
+        if measured:
+            parts.append(f"lowers {label} in {fell} of {measured} run(s)")
+    crush = [
+        a["black_crush_fraction"] - b["black_crush_fraction"]
+        for b, a in pairs
+        if b.get("black_crush_fraction") is not None and a.get("black_crush_fraction") is not None
+    ]
+    if crush:
+        parts.append(f"changes the black-crush fraction by at most {max(crush):+.4f} of the frame")
+    answer = (
+        "The night processing " + ", ".join(parts) + " (before and after below)."
+        if parts
+        else "The night metrics before and after the processing were not measured."
     )
+    if shadow:
+        mean = _mean(shadow)
+        answer += (
+            f" On the night reference the mean shadow above-limit error is {mean:.3f}, {_hf_verdict(mean)} (below 1.0 "
+            f"the added shadow texture is more right than wrong; within {HF_NEUTRAL:g} of 1.0 it adds nothing)."
+        )
+    else:
+        answer += " Whether shadow texture is true needs the night reference test, which has not been collected."
+    return _q("answered" if shadow and pairs else "partial", answer, evidence)
 
 
 def q8_highlights(ev: Evidence) -> dict:
@@ -359,82 +494,124 @@ def q8_highlights(ev: Evidence) -> dict:
     ]
     if not evidence:
         return _q("not measured", "Needs notebook 02 runs on the night image.")
+    pairs = _night_metrics(ev)
+    clip_fell, clip_runs = _lowered(pairs, lambda m: (m.get("highlight_clipping_fraction") or {}).get("any_channel"))
+    halo_fell, halo_runs = _lowered(pairs, lambda m: (m.get("halo") or {}).get("fraction"))
     return _q(
         "partial",
-        "The highlight shoulder lowers the share of clipped samples and the halo clamp keeps rings around lights "
-        "small (below), so lights roll off more smoothly. It reshapes values the render already clipped; no clipped "
-        "radiance is recovered, and every report says so. Whether it looks more convincing needs the visual review.",
+        f"The highlight processing lowers the share of clipped samples in {clip_fell} of {clip_runs} run(s) and the "
+        f"halo ring fraction in {halo_fell} of {halo_runs} (below). It reshapes values the render already clipped; no "
+        "clipped radiance is recovered. Whether it looks more convincing needs the visual review.",
         evidence,
     )
 
 
-def _bit_depth_rows(ev: Evidence) -> list[tuple[str, dict]]:
+def _bit_depth_studies(ev: Evidence) -> list[tuple[str, dict, dict, dict, dict | None]]:
+    """(label, rgb8_srgb row, rgb16_srgb row, study, E01 expansion) of every collected bit-depth study."""
+    records = [(f"{r.label} ablation", r.manifest.get("bit_depth") or {}) for r in ev.ablations]
+    records += [(f"{r.label} notebook 05", r.manifest.get("bit_depth") or {}) for r in ev.of("05")]
     found = []
-    for run in ev.ablations:
-        study = (run.manifest.get("bit_depth") or {}).get("study")
-        if study:
-            found.append((f"{run.label} ablation", study))
-    for run in ev.of("05"):
-        if run.manifest.get("bit_depth"):
-            found.append((f"{run.label} notebook 05", run.manifest["bit_depth"]))
+    for label, record in records:
+        study = record.get("study", record)
+        rows = {row["name"]: row for row in study.get("representations", [])}
+        if "rgb8_srgb" in rows and "rgb16_srgb" in rows:
+            found.append((label, rows["rgb8_srgb"], rows["rgb16_srgb"], study, record.get("expansion")))
     return found
 
 
+def _shadow_level_ratios(studies) -> list[float]:
+    """Per study, how many times 8 bits' distinct shadow levels 16 bits keep after the identical push."""
+    return [
+        sixteen["edit_shadow_levels"] / eight["edit_shadow_levels"]
+        for _, eight, sixteen, _, _ in studies
+        if eight.get("edit_shadow_levels") and sixteen.get("edit_shadow_levels") is not None
+    ]
+
+
 def q9_sixteen_bit(ev: Evidence) -> dict:
-    studies = _bit_depth_rows(ev)
+    studies = _bit_depth_studies(ev)
     if not studies:
         return _q("not measured", "Needs the notebook 06 ablation (bit-depth study) or a notebook 05 run.")
-    evidence = []
-    for label, study in studies:
-        rows = {r["name"]: r for r in study["representations"]}
-        names = list(rows)
-        eight = next((rows[n] for n in names if "8" in n and "int" in n), rows[names[0]])
-        sixteen = next((rows[n] for n in names if "16" in n and "int" in n), None)
-        if sixteen:
-            evidence.append(
-                f"{label}: after an identical +3 stop shadow push, {eight['name']} keeps "
-                f"{fmt(eight['edit_shadow_levels'], 1)} "
-                f"shadow levels and {sixteen['name']} {fmt(sixteen['edit_shadow_levels'], 1)} (float32 reference "
-                f"{fmt(study.get('reference_edit_shadow_levels'), 1)})"
-            )
-    return _q(
-        "answered",
-        "Yes for edits: a 16-bit master keeps far more distinct shadow levels through a strong push and drifts less "
-        "through repeated transforms than 8 bits, so later grading bands less. It adds precision, not information: "
-        "the source's 8-bit codes expand to 16 bits without a single new value (E01).",
-        evidence,
-    )
+    evidence = [
+        f"{label}: after an identical +3 stop shadow push, {eight['name']} keeps "
+        f"{fmt(eight['edit_shadow_levels'], 1)} shadow levels and {sixteen['name']} "
+        f"{fmt(sixteen['edit_shadow_levels'], 1)} (float32 reference "
+        f"{fmt(study.get('reference_edit_shadow_levels'), 1)}); repeated-transform drift RMSE "
+        f"{eight['cycle_drift_rmse_linear']:.2e} vs {sixteen['cycle_drift_rmse_linear']:.2e}"
+        for label, eight, sixteen, study, _ in studies
+    ]
+    ratios = _shadow_level_ratios(studies)
+    if not ratios:
+        answer = "The shadow levels after the edit were not measured."
+    elif min(ratios) >= SHADOW_LEVELS_MIN_RATIO:
+        answer = (
+            f"Yes for edits: after an identical strong shadow push the 16-bit master keeps at least {min(ratios):.1f}x "
+            f"the distinct shadow levels of 8 bits in every study (threshold {SHADOW_LEVELS_MIN_RATIO:g}x), so later "
+            "grading bands less."
+        )
+    else:
+        answer = (
+            f"Not in every study: after an identical strong shadow push the 16-bit master keeps as little as "
+            f"{min(ratios):.1f}x the distinct shadow levels of 8 bits, below the {SHADOW_LEVELS_MIN_RATIO:g}x "
+            "threshold."
+        )
+    less_drift = sum(s["cycle_drift_rmse_linear"] < e["cycle_drift_rmse_linear"] for _, e, s, _, _ in studies)
+    answer += f" Repeated transforms drift less in 16 bits than in 8 in {less_drift} of {len(studies)} study(ies)."
+    expansions = [x for *_, x in studies if x]
+    if expansions:
+        added = any(x.get("information_added") for x in expansions)
+        answer += " E01: expanding the source codes to more bits adds " + (
+            "distinct values or entropy in at least one study."
+            if added
+            else "no distinct value or entropy, so it adds precision, not information."
+        )
+    else:
+        answer += " Whether expansion adds information (E01) was not measured in these runs."
+    return _q("answered" if ratios else "partial", answer, evidence)
 
 
 def q10_exr(ev: Evidence) -> dict:
     evidence = []
+    outside_fractions, smaller = [], 0
     for run in ev.of("00"):
         for name, record in (run.manifest.get("baselines") or {}).items():
             stats, exports = record.get("statistics") or {}, record.get("exports") or {}
             if stats and exports.get("exr") and exports.get("tiff16"):
                 outside = (stats.get("below_zero_fraction") or 0) + (stats.get("above_one_fraction") or 0)
+                exr, tiff = exports["exr"]["size_bytes"], exports["tiff16"]["size_bytes"]
+                outside_fractions.append(outside)
+                smaller += exr < tiff
                 evidence.append(
                     f"{run.label} {name}: {outside:.3%} of samples outside [0, 1] are kept by the half EXR and "
-                    f"clipped by the TIFF; EXR {exports['exr']['size_bytes'] / 1e6:.0f} MB vs TIFF "
-                    f"{exports['tiff16']['size_bytes'] / 1e6:.0f} MB"
+                    f"clipped by the TIFF; EXR {exr / 1e6:.0f} MB vs TIFF {tiff / 1e6:.0f} MB"
                 )
     if not evidence:
         return _q("not measured", "Needs notebook 00 runs (they export both formats of every baseline).")
+    kept = max(outside_fractions)
+    answer = (
+        f"The linear half-float EXR keeps up to {kept:.3%} of samples outside [0, 1] (interpolation overshoot and "
+        "headroom) that the 16-bit TIFF clips"
+        if kept > 0
+        else "No sample falls outside [0, 1] in these runs, so the EXR keeps nothing the 16-bit TIFF clips"
+    )
     return _q(
         "answered",
-        "Modestly: the linear half-float EXR keeps interpolation overshoot and highlight headroom that the 16-bit TIFF "
-        "clips, is linear for compositing and grading, and is smaller here. It is display-referred linear light, not "
-        "scene-referred radiance, so it gives no extra dynamic range.",
+        answer + f", and it is smaller than the TIFF in {smaller} of {len(outside_fractions)} export pair(s). It is "
+        "linear for compositing and grading, but display-referred linear light, not scene-referred radiance, so it "
+        "gives no extra dynamic range.",
         evidence,
     )
 
 
-def _effect(ev: Evidence, full: str, without: str) -> list[str]:
-    out = []
+def _effect(ev: Evidence, full: str, without: str) -> tuple[list[str], list[float], list[float]]:
+    """Evidence lines, and the stage's changes (``full`` minus ``without``) of accuracy against ground truth and of
+    source PSNR, in dB."""
+    out, accuracy, source = [], [], []
     by = ev.reference_by_config()
     for f in by.get(full, []):
         w = next((r for r in by.get(without, []) if r["case"] == f["case"]), None)
         if w:
+            accuracy.append(f["psnr_db"] - w["psnr_db"])
             out.append(
                 f"reference {f['case']}: {full} {f['psnr_db']:.2f} dB vs {without} {w['psnr_db']:.2f} dB "
                 f"({f['psnr_db'] - w['psnr_db']:+.2f} dB), above-limit error {fmt(f['hf_nmse'], 3)} vs "
@@ -447,47 +624,75 @@ def _effect(ev: Evidence, full: str, without: str) -> list[str]:
             )
             if full_rec:
                 a, b = full_rec["measurements"], rec["measurements"]
+                change = a["source_consistency"]["psnr_db"] - b["source_consistency"]["psnr_db"]
+                source.append(change)
                 out.append(
                     f"{run.label} ablation: detail {a['detail_energy'] / b['detail_energy'] - 1:+.1%}, source PSNR "
-                    f"{a['source_consistency']['psnr_db'] - b['source_consistency']['psnr_db']:+.2f} dB with the stage"
+                    f"{change:+.2f} dB with the stage"
                 )
-    return out
+    return out, accuracy, source
+
+
+def _roundtrips(ev: Evidence) -> list[tuple[Run, str, float | None]]:
+    """Notebook 05 E08 round trips: (run, demosaic method, PSNR of the developed mosaic against its RGB input)."""
+    return [
+        (run, method, (summary.get("full_frame") or {}).get("psnr_encoded_db"))
+        for run in ev.of("05")
+        for method, summary in (run.manifest.get("roundtrip") or {}).items()
+    ]
 
 
 def q11_bayer(ev: Evidence) -> dict:
-    evidence = _effect(ev, "full", "full_no_sensor")
-    for run in ev.of("05"):
-        for method, summary in (run.manifest.get("roundtrip") or {}).items():
-            psnr = (summary.get("full_frame") or {}).get("psnr_encoded_db")
-            evidence.append(f"{run.label} notebook 05 E08 {method} round trip: {fmt(psnr)} dB against its input")
+    evidence, accuracy, source = _effect(ev, "full", "full_no_sensor")
+    for run, method, psnr in _roundtrips(ev):
+        evidence.append(f"{run.label} notebook 05 E08 {method} round trip: {fmt(psnr)} dB against its input")
     if not evidence:
         return _q(
             "not measured", "Needs the notebook 06 ablation or reference test (full vs full_no_sensor), or notebook 05."
         )
-    accurate = [e for e in evidence if e.startswith("reference")]
-    return _q(
-        "answered" if accurate else "partial",
-        "No. Sampling the finished image through a synthetic colour filter array, adding noise and demosaicing it "
-        "again can only lose detail and add noise: the round trip moves the output away from both the source and "
-        "the ground truth (numbers below). Any 'camera look' it adds is simulated noise and demosaic softness.",
-        evidence,
-    )
+    if accuracy:
+        change = _mean(accuracy)
+        if change < -PSNR_EFFECT_DB:
+            answer = f"No: with the sensor round trip the full pipeline is {-change:.2f} dB further from ground truth"
+        elif change > PSNR_EFFECT_DB:
+            answer = f"Yes, measurably: the round trip brings the full pipeline {change:.2f} dB closer to ground truth"
+        else:
+            answer = f"No measurable effect: with the sensor round trip accuracy changes by {change:+.2f} dB"
+        answer += f" on average (reference test; changes within {PSNR_EFFECT_DB:g} dB count as no effect)."
+    else:
+        answer = (
+            "Accuracy against ground truth is not measured: it needs the reference test with full and full_no_sensor."
+        )
+    if source:
+        answer += f" With the stage, source PSNR changes by {_mean(source):+.2f} dB on average (ablation)."
+    answer += " What the round trip adds is simulated noise and demosaic interpolation, not captured information."
+    return _q("answered" if accuracy else "partial", answer, evidence)
 
 
 def q12_dng(ev: Evidence) -> dict:
     evidence = []
+    valid = 0
     for run in ev.of("05"):
         dng = (run.manifest.get("exports") or {}).get("dng")
         if dng:
+            valid += bool(dng.get("valid"))
             evidence.append(f"{run.label} notebook 05: synthetic DNG valid {dng.get('valid')}, LibRaw read back")
-    status = "answered" if evidence else "reasoned"
-    return _q(
-        status,
-        "Only for compatibility testing. A synthetic DNG wraps a mosaic simulated from processed RGB: it opens in raw "
-        "converters, but it holds no sensor measurements, its noise is simulated, and developing it returns less "
-        "than the RGB master it was made from (E08). As a deliverable it would misrepresent the image as a capture.",
-        evidence,
+    psnrs = [psnr for _, _, psnr in _roundtrips(ev) if psnr is not None]
+    answer = (
+        "Only for compatibility testing. A synthetic DNG wraps a mosaic simulated from processed RGB: it holds no "
+        "sensor measurements and its noise is simulated, so as a deliverable it would misrepresent the image as a "
+        "capture."
     )
+    if evidence:
+        answer += f" {valid} of {len(evidence)} synthetic DNG(s) validated and opened in a raw converter (LibRaw)."
+    if psnrs:
+        answer += (
+            f" Developing the simulated mosaic returns its RGB master at only {_span(psnrs, '.1f')} dB "
+            "(E08): less than the master it was made from."
+        )
+    else:
+        answer += " The E08 round trip that measures what developing it loses has not been collected."
+    return _q("answered" if evidence else "reasoned", answer, evidence)
 
 
 def q13_realism(ev: Evidence) -> dict:
@@ -504,7 +709,7 @@ def q13_realism(ev: Evidence) -> dict:
             "(1 to 5, artefact severity higher is worse).",
             evidence,
         )
-    evidence = [e for e in _effect(ev, "full", "full_no_grain") + _effect(ev, "full", "full_no_optics")]
+    evidence = _effect(ev, "full", "full_no_grain")[0] + _effect(ev, "full", "full_no_optics")[0]
     return _q(
         "not measured",
         "Perceived realism needs the blind review (PRD 26.3): score the anonymised blind sheet of the ablation and "
@@ -514,43 +719,55 @@ def q13_realism(ev: Evidence) -> dict:
 
 
 def q14_harm(ev: Evidence) -> dict:
-    evidence = []
-    for run, output in [(r, o) for r in ev.runs for o in r.outputs if o.seam_passed is False]:
-        evidence.append(f"{run.label} notebook {run.notebook}: {output.name} FAILED its seam gate")
+    evidence, harmful = [], []
+    gated = [(r, o) for r in ev.runs for o in r.outputs if o.seam_passed is not None]
+    for run, output in gated:
+        if output.seam_passed is False:
+            harmful.append(f"{output.name} (seam gate)")
+            evidence.append(f"{run.label} notebook {run.notebook}: {output.name} FAILED its seam gate")
     for run, output in ev.outputs("sr_balanced"):
         stats = output.detail.get("statistics") or {}
         low = stats.get("min") or {}
-        if low and min(low.values()) < -0.05:
+        if low and min(low.values()) < UNDERSHOOT_LINEAR:
+            harmful.append("sr_balanced (undershoot)")
             evidence.append(
                 f"{run.label}: balanced SR undershoots to {min(low.values()):.3f} linear "
                 "(dark halos clipped in the TIFF)"
             )
-    for run in ev.ablations:
-        for c in run.manifest.get("contributions", []):
-            if c["source_psnr_db"] > 0.5 or (c.get("reference_psnr_db") or 0) < -0.05:
-                evidence.append(
-                    f"{run.label} ablation: removing {c['stage']} changes source PSNR by {-c['source_psnr_db']:+.2f} dB"
-                )
+    contributions = [(run, c) for run in ev.ablations for c in run.manifest.get("contributions", [])]
+    for run, c in contributions:
+        accuracy = c.get("reference_psnr_db")
+        if c["source_psnr_db"] < -SOURCE_HARM_DB or (accuracy is not None and accuracy < -PSNR_EFFECT_DB):
+            harmful.append(c["stage"])
+            evidence.append(
+                f"{run.label} ablation: {c['stage']} changes source PSNR by {c['source_psnr_db']:+.2f} dB"
+                + ("" if accuracy is None else f" and accuracy against ground truth by {accuracy:+.2f} dB")
+            )
     by = ev.reference_by_config()
     lanczos = {r["case"]: r for r in by.get("lanczos", [])}
     for name, rows in by.items():
         for r in rows:
             base = lanczos.get(r["case"])
-            if base and name != "lanczos" and r["psnr_db"] < base["psnr_db"] - 0.05:
+            if base and name != "lanczos" and r["psnr_db"] < base["psnr_db"] - PSNR_EFFECT_DB:
+                harmful.append(name)
                 evidence.append(
                     f"reference {r['case']}: {name} is {base['psnr_db'] - r['psnr_db']:.2f} dB less accurate "
                     "than Lanczos"
                 )
-    if not evidence:
+    if not (gated or contributions or lanczos):
         return _q("not measured", "Needs the ablation, the reference test and the specialised runs.")
-    status = "answered" if ev.reference_rows else "partial"
-    return _q(
-        status,
-        "These stages measurably harm the result (below): anything that lowers accuracy against ground truth or fails "
-        "a gate. Grain and the sensor round trip lower accuracy by construction; the perceptual SR mode over-sharpens "
-        "and failed the seam gate on the night image.",
-        evidence,
+    rule = (
+        f"A stage or configuration counts as harmful when it fails a seam gate, undershoots below "
+        f"{UNDERSHOOT_LINEAR:g} linear, lowers source PSNR by more than {SOURCE_HARM_DB:g} dB in the ablation, or "
+        f"is more than {PSNR_EFFECT_DB:g} dB less accurate against ground truth than Lanczos or than the pipeline "
+        "without it."
     )
+    answer = (
+        "Measured harm (below): " + ", ".join(dict.fromkeys(harmful)) + ". " + rule
+        if harmful
+        else "No stage crossed a harm threshold in the collected runs. " + rule
+    )
+    return _q("answered" if ev.reference_rows else "partial", answer, evidence)
 
 
 def best_configuration(ev: Evidence, config: EvaluationConfig) -> dict:
@@ -576,7 +793,8 @@ def best_configuration(ev: Evidence, config: EvaluationConfig) -> dict:
 
 def full_size_runtime(ev: Evidence) -> dict:
     """Per configuration, the ablation's measured seconds scaled from its crop to the whole source (every stage is
-    close to linear in pixels), as an estimate of a full 50 MP run on the same GPU."""
+    close to linear in pixels) plus the SR model loading (and first-use weight download) once, as an estimate of a
+    full 50 MP run on the same GPU."""
     out: dict[str, dict] = {}
     for run in ev.ablations:
         crop = run.manifest.get("crop") or {}
@@ -587,7 +805,9 @@ def full_size_runtime(ev: Evidence) -> dict:
         gpu = (run.manifest.get("runtime", {}).get("gpu") or {}).get("name", "CPU")
         for rec in run.manifest.get("configurations", []):
             if "seconds" in rec:
-                out.setdefault(rec["name"], {"estimated_full_seconds": rec["seconds"]["total"] * factor, "gpu": gpu})
+                fixed = rec["seconds"].get("model_load", 0.0)
+                estimate = (rec["seconds"]["total"] - fixed) * factor + fixed
+                out.setdefault(rec["name"], {"estimated_full_seconds": estimate, "gpu": gpu})
     return out
 
 
@@ -611,8 +831,7 @@ def q15_colab(ev: Evidence, config: EvaluationConfig) -> dict:
         return _q(
             "partial" if evidence else "not measured",
             "Quality against ground truth needs the reference test; until then the measured runtimes below only rank "
-            "cost. On an L4, conservative SR is about 6.5 minutes of a 50 MP run; balanced costs the same and failed "
-            "the seam gate on the night image.",
+            "cost.",
             evidence,
         )
     quality = best["quality"]
@@ -633,6 +852,7 @@ def q15_colab(ev: Evidence, config: EvaluationConfig) -> dict:
 
 def q16_universal(ev: Evidence) -> dict:
     evidence = []
+    shortfalls = []
     for runs in by_source(ev.runs).values():
         universal = [r for r in runs if r.notebook == "03" and r.status == "complete"]
         special = [r for r in runs if r.notebook in ("01", "02") and r.parent is None and r.status == "complete"]
@@ -643,6 +863,9 @@ def q16_universal(ev: Evidence) -> dict:
             for s in special:
                 sf = next((o for o in s.outputs if o.kind == "final"), None)
                 if final and sf:
+                    mine, theirs = final.consistency.get("psnr_db"), sf.consistency.get("psnr_db")
+                    if mine is not None and theirs is not None:
+                        shortfalls.append(theirs - mine)
                     evidence.append(
                         f"{u.label}: notebook 03 ({category}{DELEGATED if delegated else ''}) source PSNR "
                         f"{fmt(final.consistency.get('psnr_db'))} dB in {fmt(u.performance['total_seconds'], 0)} s vs "
@@ -651,23 +874,30 @@ def q16_universal(ev: Evidence) -> dict:
                     )
     if not evidence:
         return _q("not measured", "Needs notebook 03 runs and notebook 01 or 02 runs on the same image.")
+    if not shortfalls:
+        return _q("partial", "Source consistency was not measured on both sides of any comparison (below).", evidence)
+    close = sum(gap <= UNIVERSAL_MAX_GAP_DB for gap in shortfalls)
     return _q(
         "answered",
-        "Yes where it routes: notebook 03 hands human and night scenes to the specialised pipelines, so for those it "
-        "is the specialised quality at the cost of the analysis step. Scenes it keeps (general, night with faces) use "
-        "the conservative common pipeline.",
+        ("Yes on source consistency" if close == len(shortfalls) else "Not everywhere")
+        + f": notebook 03 is within {UNIVERSAL_MAX_GAP_DB:g} dB of the specialised run's source PSNR in {close} of "
+        f"{len(shortfalls)} comparison(s) (largest shortfall {max(shortfalls):+.2f} dB). Where it delegates (marked "
+        "below) it runs the specialised pipeline itself. Source consistency cannot show whether added detail is "
+        "right; the reference test's specialised configuration measures that.",
         evidence,
     )
 
 
 def q17_absent(ev: Evidence) -> dict:
     evidence = []
+    shares = []
     for run in ev.of("00"):
         v = run.manifest.get("validation") or {}
         samples, clip = v.get("samples") or {}, v.get("clipping") or {}
         target = run.manifest.get("target_resolution") or {}
         if target.get("pixels"):
             share = target["source_width"] * target["source_height"] / target["pixels"]
+            shares.append(share)
             evidence.append(
                 f"{run.label}: the source holds {share:.1%} of the 50 MP output's samples per channel "
                 f"(x{target.get('nominal_scale', 0):.4f}); the rest are estimated or synthesised"
@@ -689,15 +919,23 @@ def q17_absent(ev: Evidence) -> dict:
             f"reference: the best reconstruction ({best['configuration']}, {best['case']}) still has above-limit error "
             f"{best['hf_nmse']:.3f} of the truth's above-limit energy"
         )
-    return _q(
-        "answered" if best else "reasoned",
-        "Permanently absent: every detail finer than the render's sampling limit (at x1.71 the source holds "
-        "about a third of the output's samples, and that is all the information there is), sensor photon counts "
+    held = (
+        f"the source holds {_span(shares, '.1%')} of a 50 MP output's samples, and that is all the information there is"
+        if shares
+        else "the source holds only its own samples; the rest of a larger output is estimated"
+    )
+    answer = (
+        f"Permanently absent: every detail finer than the render's sampling limit ({held}), sensor photon counts "
         "and genuine noise, colour-filter samples, radiance above the clipped highlights and below the crushed "
         "shadows, scene-referred dynamic range beyond what 8 bits encode, and any optical information the "
-        "renderer never computed.",
-        evidence,
+        "renderer never computed."
     )
+    if best:
+        answer += (
+            f" Even the best reconstruction in the reference test leaves an above-limit error of {best['hf_nmse']:.3f} "
+            f"({_hf_verdict(best['hf_nmse'])})."
+        )
+    return _q("answered" if best else "reasoned", answer, evidence)
 
 
 def q18_needed(ev: Evidence) -> dict:
@@ -820,20 +1058,35 @@ def can_and_cannot(ev: Evidence, answers: list[dict], decision: dict) -> dict:
     can = [
         "Make an exact 50 MP master (within 0.1% of 50,000,000 pixels at the source aspect ratio) from a 4K-class "
         "render, as validated 16-bit TIFF and linear OpenEXR with provenance.",
-        "Preserve composition, geometry, tone and colour: every master reduces back to its source almost exactly.",
-        "Make edges cleaner and add plausible fine texture with pretrained SR, while keeping faces and lights under "
-        "explicit protection and measuring where detail was synthesised.",
-        "Give later edits more headroom: 16-bit and float masters band less under strong grading than the 8-bit "
-        "render.",
+        "Add fine texture with pretrained SR, while keeping faces and lights under explicit protection and measuring "
+        "where detail was synthesised.",
     ]
     cannot = [
         "Recover detail finer than the source sampling limit: SR invents it from priors, and the reference test "
-        "measures how little of it matches reality.",
+        "measures how much of it matches reality.",
         "Add dynamic range, clipped highlight or crushed shadow information, or genuine sensor noise: 16-bit and EXR "
         "add precision only.",
         "Produce camera RAW: the synthetic CFA and DNG path is a simulation that only loses information.",
         "Guarantee identity on small faces: below about 32 source pixels any facial detail is invented.",
     ]
+    finals, worst, largest = _composition(ev)
+    if finals and _composition_passes(worst, largest):
+        can.insert(
+            1,
+            f"Preserve composition, geometry, tone and colour: every measured master reduces back to its source "
+            f"(lowest SSIM {worst:.4f}).",
+        )
+    elif finals:
+        cannot.append(
+            f"Preserve composition in every run: some masters fall outside the source-consistency gates (lowest SSIM "
+            f"{worst:.4f}, largest mean edge displacement {fmt(largest, 3)} px)."
+        )
+    ratios = _shadow_level_ratios(_bit_depth_studies(ev))
+    if ratios and min(ratios) >= SHADOW_LEVELS_MIN_RATIO:
+        can.append(
+            f"Give later edits more headroom: a 16-bit master keeps at least {min(ratios):.1f}x the shadow levels of "
+            "8 bits through a strong push, so it bands less under grading."
+        )
     if decision.get("outcome"):
         cannot.append(
             f"On this cycle's evidence the approach is Outcome {decision['outcome']} ({decision['title']}): "

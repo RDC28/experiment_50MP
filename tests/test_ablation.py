@@ -129,6 +129,67 @@ def test_one_failing_configuration_keeps_the_others(tmp_path):
     assert "failed earlier in this run" in records[1]["error"]
 
 
+def test_model_load_seconds_are_kept_apart_from_the_per_pixel_runtime(tmp_path):
+    def loading(mode, linear, width, height):
+        image, summary = fake_sr(mode, linear, width, height)
+        return image, {**summary, "model_load_seconds": 2.5}
+
+    scene, config = make_scene(tmp_path)
+    engine = ablation.Engine(scene, config, sr_runner=loading)
+    records, _ = ablation.run_configurations(engine, ["lanczos", "sr_conservative"], [], log=print)
+    assert records[0]["seconds"]["model_load"] == 0.0 and records[1]["seconds"]["model_load"] == 2.5
+
+
+def test_performance_sweep_reports_a_failed_default_upscale_instead_of_raising(tmp_path):
+    def broken(mode, linear, width, height):
+        raise RuntimeError("CUDA out of memory")
+
+    scene, config = make_scene(tmp_path)
+    engine = ablation.Engine(scene, config, sr_runner=broken)
+    ablation.run_configurations(engine, ["sr_conservative"], [], log=print)
+    rows = ablation.performance_sweep(scene, engine, config, ROOT, tmp_path, None, print)
+    assert rows == [
+        {
+            "setting": "default",
+            "error": "RuntimeError: sr_conservative failed earlier in this run: RuntimeError: CUDA out of memory",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        (
+            {"precision": "float32", "architecture": "SwinIR", "supports_half": False, "device": {"device": "cuda"}},
+            ["float32 is the default run's precision", "float16 unsupported (SwinIR on cuda)"],
+        ),
+        (
+            {"precision": "float16", "architecture": "ESRGAN", "supports_half": True, "device": {"device": "cuda"}},
+            [None, "float16 is the default run's precision"],
+        ),
+    ],
+)
+def test_precision_sweep_only_runs_precisions_the_backend_supports(tmp_path, monkeypatch, model, expected):
+    def backend(mode, linear, width, height):
+        image, summary = fake_sr(mode, linear, width, height)
+        return image, {**summary, "model": model}
+
+    swept = []
+
+    def runner(config, target, project_root, record, figures_dir, stage, log, *, experiment):
+        swept.append(experiment.sr_precision)
+        return backend
+
+    monkeypatch.setattr(ablation, "phase2_sr_runner", runner)
+    sweep = [{"precision": "float32"}, {"precision": "float16"}]
+    scene, config = make_scene(tmp_path, ablation={"performance_sweep": sweep})
+    engine = ablation.Engine(scene, config, sr_runner=backend)
+    rows = ablation.performance_sweep(scene, engine, config, ROOT, tmp_path, None, print)
+    assert [r["setting"] for r in rows] == ["default", "precision=float32", "precision=float16"]
+    assert [r.get("skipped") for r in rows[1:]] == expected
+    assert swept == [p for p, reason in zip(("float32", "float16"), expected, strict=True) if reason is None]
+
+
 def test_reference_metrics_score_truth_perfectly_and_interpolation_near_one():
     rng = np.random.default_rng(1)
     truth = np.clip(baselines.resample(night_linear(96, 64), 288, 192, "lanczos"), 0, 1)
