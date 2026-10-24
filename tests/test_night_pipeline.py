@@ -232,6 +232,18 @@ def test_night_metrics_are_reported_before_and_after(run):
     assert all(len(row) == len(header) and "-" not in row[1:] for row in rows if "Halo" not in row[0])
 
 
+def test_paired_table_shows_a_dash_for_regions_without_pixels():
+    record = {
+        "comparison": {
+            "protected_color_difference_ciede2000": {"mean": None, "p95": None, "chromatic_mean": None},
+            "shadow_chroma_mean_shift_codes": None,
+        }
+    }
+    header, rows = night_pipeline.paired_table(record)
+    assert header == ["Quantity", "Value"]
+    assert len(rows) == 4 and all(value == "-" for _, value in rows)
+
+
 SHOULDER_CLAIM = "The lower clipping fraction comes from the highlight shoulder"
 
 

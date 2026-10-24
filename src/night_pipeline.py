@@ -1044,6 +1044,18 @@ def metrics_table(manifest: dict) -> tuple[list[str], list[tuple]]:
     return ["Metric", *(name for name, _ in columns)], rows
 
 
+def paired_table(record: dict) -> tuple[list[str], list[tuple]]:
+    """Header and rows of the night input vs final paired comparison; "-" where a region has no pixels."""
+    paired = record["comparison"]
+    protected = paired["protected_color_difference_ciede2000"]
+    return ["Quantity", "Value"], [
+        ("Protected-region delta E 2000 mean (lights, reflections)", _num(protected["mean"], 3)),
+        ("Protected-region delta E 2000 p95", _num(protected["p95"], 3)),
+        ("Protected-region hue and chroma difference mean", _num(protected["chromatic_mean"], 3)),
+        ("Shadow chroma mean shift (8-bit codes)", _num(paired["shadow_chroma_mean_shift_codes"], 3)),
+    ]
+
+
 def render_night_report(manifest: dict, report_dir: Path) -> str:
     out: list[str] = []
     add = out.append
@@ -1255,19 +1267,8 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
         add(_table(header, rows))
     if record:
         paired = record["comparison"]
-        protected = paired["protected_color_difference_ciede2000"]
         add("Paired comparisons, night input vs final:\n")
-        add(
-            _table(
-                ["Quantity", "Value"],
-                [
-                    ("Protected-region delta E 2000 mean (lights, reflections)", _num(protected["mean"], 3)),
-                    ("Protected-region delta E 2000 p95", _num(protected["p95"], 3)),
-                    ("Protected-region hue and chroma difference mean", _num(protected["chromatic_mean"], 3)),
-                    ("Shadow chroma mean shift (8-bit codes)", _num(paired["shadow_chroma_mean_shift_codes"], 3)),
-                ],
-            )
-        )
+        add(_table(*paired_table(record)))
         before, after = (
             record["metrics_before"]["local_contrast_codes"],
             record["metrics_after"]["local_contrast_codes"],
