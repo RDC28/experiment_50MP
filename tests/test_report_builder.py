@@ -91,3 +91,25 @@ def test_ranking_needs_two_measured_outputs():
     manifest["baselines"] = {"lanczos": manifest["baselines"]["lanczos"]}
     manifest["super_resolution"] = {}
     assert not any("best first" in line for line in report_builder.conclusions(manifest))
+
+
+def sr_halo_line(strength, consistency, final_min):
+    manifest = colab_manifest()
+    mode = manifest["super_resolution"]["modes"]["balanced"]
+    mode.update(strength=strength, consistency_strength=consistency, statistics=statistics(final_min, 0, 0))
+    mode["tiling"] = {
+        "resample_range": {"min_linear_before": -0.17, "below_zero_fraction_before": 0.004, "min_linear_after": 0.0}
+    }
+    return next(line for line in report_builder.conclusions(manifest) if line.startswith("sr_balanced: Lanczos"))
+
+
+def test_no_dark_halos_are_claimed_only_for_a_non_negative_master():
+    clean = sr_halo_line(1.0, 1.0, 0.0)
+    assert clean.endswith("the master's minimum is 0.0000, so no dark halos are clipped into the TIFF.")
+    line = sr_halo_line(0.7, 0.0, -0.012)
+    assert "no dark halos" not in line
+    assert line.endswith(
+        "the master's minimum is -0.0120; the negative samples left by the unclamped Lanczos share of the source "
+        "(sr_strength 0.7) with no low-frequency source correction are clipped in the TIFF (the EXR keeps them) "
+        "and can show as dark halos."
+    )

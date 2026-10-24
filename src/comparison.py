@@ -2,12 +2,14 @@
 
 Crops are defined once in source pixels and mapped to every output with the
 same per-axis scale, so each method is judged on exactly the same scene region.
-Automatic selection always starts with the main subject (``subjects.analyse``):
-the primary face (eyes, then nose and mouth when the face is larger than a
-crop), else the centre of interest, else the centre. The remaining crops are
-the most detailed windows (highest mean gradient magnitude), spread apart where
-the image allows, and at least one is kept whenever more than one crop is
-requested. Manual crops replace the automatic selection.
+Automatic selection with ``subject_first`` starts with the main subject
+(``subjects.analyse``): the primary face (eyes, then nose and mouth when the
+face is larger than a crop), else the centre of interest, else the centre. The
+remaining crops are the most detailed windows (highest mean gradient magnitude),
+spread apart where the image allows, and at least one is kept whenever more than
+one crop is requested. Without ``subject_first`` it takes the centre plus the
+most detailed non-overlapping windows. Manual crops replace the automatic
+selection.
 """
 
 from __future__ import annotations
@@ -46,22 +48,21 @@ class Crop:
         )
 
     def to_dict(self) -> dict:
-        return {
-            "name": self.name,
-            "label": self.label,
-            "x": self.x,
-            "y": self.y,
-            "width": self.width,
-            "height": self.height,
-        }
+        label = {"label": self.label} if self.label else {}
+        return {"name": self.name, **label, "x": self.x, "y": self.y, "width": self.width, "height": self.height}
 
 
 def select_crops(
-    encoded: np.ndarray, size: int, count: int, manual=(), subjects: SubjectAnalysis | None = None
+    encoded: np.ndarray,
+    size: int,
+    count: int,
+    manual=(),
+    subject_first: bool = True,
+    subjects: SubjectAnalysis | None = None,
 ) -> list[Crop]:
     """Choose evaluation crops on a source image (sRGB-encoded float, (H, W, 3)).
 
-    ``subjects`` is the analysis of the same image; it is computed here when not given.
+    ``subjects`` is the analysis of the same image for ``subject_first``; it is computed here when not given.
     """
     height, width = encoded.shape[:2]
     if manual:
@@ -73,8 +74,13 @@ def select_crops(
         return crops
 
     size = min(size, width, height)
-    subjects = subjects or analyse(encoded)
-    crops = _subject_crops(subjects, size, width, height, limit=1 if count == 1 else count - 1)
+    if subject_first:
+        limit = 1 if count == 1 else count - 1
+        crops = _subject_crops(subjects or analyse(encoded), size, width, height, limit)
+        gaps = (size // 2, 0)
+    else:
+        crops = [_center_crop(size, width, height)]
+        gaps = (0,)
     if len(crops) >= count:
         return crops
 
@@ -90,9 +96,9 @@ def select_crops(
             energy = integral[y + size, x + size] - integral[y, x + size] - integral[y + size, x] + integral[y, x]
             candidates.append((-energy, y, x))
     candidates.sort()
-    # First pass keeps half a crop of space around every crop so detail crops show different parts of the
-    # scene; the second pass only requires them not to overlap.
-    for gap in (size // 2, 0):
+    # With subject_first, a first pass keeps half a crop of space around every crop so detail crops show
+    # different parts of the scene; the last pass only requires them not to overlap.
+    for gap in gaps:
         for _, y, x in candidates:
             if len(crops) >= count:
                 return crops
@@ -118,7 +124,11 @@ def _subject_crops(subjects: SubjectAnalysis, size: int, width: int, height: int
     if subjects.center_of_interest is not None:
         x, y = subjects.center_of_interest
         return [_centred("subject", "centre of interest (saliency)", x, y, size, width, height)]
-    return [Crop("center", (width - size) // 2, (height - size) // 2, size, size, "image centre")]
+    return [_center_crop(size, width, height)]
+
+
+def _center_crop(size: int, width: int, height: int) -> Crop:
+    return Crop("center", (width - size) // 2, (height - size) // 2, size, size, "image centre")
 
 
 def _centred(name: str, label: str, cx: float, cy: float, size: int, width: int, height: int) -> Crop:

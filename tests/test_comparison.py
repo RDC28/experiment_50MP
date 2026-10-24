@@ -86,6 +86,20 @@ def test_the_centre_of_interest_frames_the_subject_crop(encoded):
     assert crops[0] == comparison.Crop("subject", 52, 32, 96, 96, "centre of interest (saliency)")
 
 
+def test_without_subject_first_the_centre_leads_plain_non_overlapping_details(encoded, monkeypatch):
+    monkeypatch.setattr(comparison, "analyse", lambda _: pytest.fail("subject analysis must not run"))
+    crops = comparison.select_crops(encoded, 96, 5, subject_first=False)
+    assert [c.name for c in crops] == ["center", "detail_1", "detail_2", "detail_3", "detail_4"]
+    assert crops[0].x == (640 - 96) // 2 and crops[0].y == (360 - 96) // 2
+    assert_disjoint_and_in_bounds(crops, 640, 360)
+    spaced = comparison.select_crops(encoded, 96, 5, subjects=no_subject(640, 360))
+    assert crops[1:] != spaced[1:]
+
+
+def test_an_unlabelled_crop_records_no_label():
+    assert comparison.Crop("c", 1, 2, 3, 4).to_dict() == {"name": "c", "x": 1, "y": 2, "width": 3, "height": 4}
+
+
 def test_crop_size_is_limited_by_the_image(encoded):
     crops = comparison.select_crops(encoded[:50, :80], 256, 1)
     assert (crops[0].width, crops[0].height) == (50, 50)

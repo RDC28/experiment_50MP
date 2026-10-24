@@ -746,12 +746,28 @@ def _sr_conclusions(manifest: dict) -> list[str]:
         resample = s.get("tiling", {}).get("resample_range") or {}
         if resample.get("min_linear_before") is not None and resample["min_linear_before"] < 0:
             final_min = min(s["statistics"]["min"].values()) if "statistics" in s else None
-            lines.append(
+            line = (
                 f"sr_{mode}: Lanczos resampling of the network output rang down to {resample['min_linear_before']:.4f} "
                 f"linear ({resample['below_zero_fraction_before']:.4%} of samples below 0); the anti-ringing clamp "
                 f"raised the minimum to {resample['min_linear_after']:.4f} and the master's minimum is "
-                f"{_num(final_min, 4)}, so no dark halos are clipped into the TIFF."
+                f"{_num(final_min, 4)}"
             )
+            if final_min is None:
+                line += "."
+            elif final_min >= 0:
+                line += ", so no dark halos are clipped into the TIFF."
+            else:
+                causes = []
+                if s.get("strength", 1) < 1:
+                    causes.append(f"the unclamped Lanczos share of the source (sr_strength {s['strength']:g})")
+                if not s.get("consistency_strength"):
+                    causes.append("no low-frequency source correction")
+                left_by = f" left by {' with '.join(causes)}" if causes else ""
+                line += (
+                    f"; the negative samples{left_by} are clipped in the TIFF (the EXR keeps them) and can show "
+                    "as dark halos."
+                )
+            lines.append(line)
     measured = {f"sr_{m}": s["source_consistency"] for m, s in modes.items() if "source_consistency" in s}
     base = {m: s["source_consistency"] for m, s in manifest.get("baselines", {}).items() if "source_consistency" in s}
     if measured and base:

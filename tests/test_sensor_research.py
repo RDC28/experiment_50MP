@@ -142,7 +142,7 @@ def test_crops_start_on_the_cfa_phase_for_an_odd_crop_size_at_the_edge(project):
         crop_size=33, export_synthetic_dng=False, bit_depth_study=False, demosaic_methods=["bilinear"]
     )
     crops = sr.run(image, config, project, log=lambda _: None).manifest["crops"]
-    detail = next(c for c in crops if c["name"].startswith("detail_"))
+    detail = next(c for c in crops if c["name"] != "center")
     assert detail["x"] + detail["width"] == width and detail["y"] + detail["height"] == height
     for crop in crops:
         assert crop["x"] % 2 == crop["y"] % 2 == crop["width"] % 2 == 0, crop
