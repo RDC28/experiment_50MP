@@ -126,3 +126,85 @@ def write_test_image(
     options = {"icc_profile": srgb_icc_profile()} if embed_srgb_profile else {}
     Image.fromarray(make_test_image(width, height, seed)).save(path, **options)
     return path
+
+
+def make_crowd_test_image(width: int = 384, height: int = 256, seed: int = 42, *, tier_config=None):
+    """Return drawn uint8 sRGB people and ground-truth source-pixel face boxes.
+
+    This Simulation fixture contains no photographs or real identities. At the
+    default size its 128, 64 and 16 pixel faces span all default source tiers.
+    Sizes are absolute source pixels derived from tier_config (default thresholds),
+    independent of canvas size. Canvases at least 1024x768 contain 14 people.
+    Boxes describe the complete face drawing, including hair; the first is the
+    primary subject. Manual annotations have confidence 1, not an identity score.
+    A smooth background provides bokeh-like low-variance regions; clothing has
+    deterministic woven texture. It is a processing fixture, not a detector
+    accuracy benchmark or anatomical ground truth.
+    """
+    from .face_preservation import FaceBox, FaceTierConfig
+
+    if any(not isinstance(v, int) or isinstance(v, bool) or v < 256 for v in (width, height)):
+        raise ValueError("crowd image dimensions must be integers >= 256")
+    if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+        raise ValueError("seed must be a non-negative integer")
+    rng = np.random.default_rng(seed)
+    # Broadcast the smooth background without full-canvas float coordinate grids.
+    canvas = np.empty((height, width, 3), dtype=np.uint8)
+    u = np.arange(width, dtype=np.float32) / (width - 1)
+    v = np.arange(height, dtype=np.float32) / (height - 1)
+    canvas[..., 0] = np.round((0.18 + 0.08 * u) * 255).astype(np.uint8)[None, :]
+    canvas[..., 1] = np.round((0.26 + 0.08 * v) * 255).astype(np.uint8)[:, None]
+    canvas[..., 2] = np.round((0.32 + 0.06 * u) * 255).astype(np.uint8)[None, :]
+    tiers = tier_config or FaceTierConfig()
+    primary = (tiers.tier1_min_pixels * 4 + 2) // 3
+    medium = (tiers.tier1_min_pixels + tiers.tier2_min_pixels) // 2
+    small = max(1, tiers.tier2_min_pixels // 2)
+    layout = [(0.06, 0.18, primary), (0.58, 0.25, medium), (0.87, 0.32, small)]
+    if width >= 1024 and height >= 768:
+        layout.extend([(0.35, 0.25, medium), (0.72, 0.25, medium)])
+        layout.extend((0.1 + column * 0.09, 0.60, small) for column in range(9))
+    faces = tuple(FaceBox(int(width * px), int(height * py), size, size) for px, py, size in layout)
+    skins = ((208, 155, 119), (150, 98, 69), (234, 185, 146))
+    for index, face in enumerate(faces):
+        skin = skins[index % len(skins)]
+        face.validate_bounds(width, height)
+        fx, fy, size = face.x, face.y, face.width
+        cx = fx + size // 2
+        # Clothing stays below the annotated face and has reproducible texture.
+        top, bottom = fy + size, min(height, fy + size * 2)
+        left, right = max(0, fx - size // 6), min(width, fx + size + size // 6)
+        yy, xx = np.mgrid[top:bottom, left:right]
+        color = rng.integers(55, 155, size=3)
+        weave = 5 * np.sin(xx * 1.3) * np.cos(yy * 1.1)
+        canvas[top:bottom, left:right] = np.clip(color + weave[..., None], 0, 255).astype(np.uint8)
+        # Draw into an isolated patch so antialiasing stays within its box.
+        patch = canvas[fy : fy + size, fx : fx + size].copy()
+        center = (size // 2, size // 2)
+        cv2.ellipse(patch, center, (size * 2 // 5, size // 2 - 1), 0, 0, 360, skin, -1, cv2.LINE_AA)
+        cv2.ellipse(
+            patch, (size // 2, size // 4), (size * 2 // 5, size // 4), 0, 180, 360, (42, 30, 25), -1, cv2.LINE_AA
+        )
+        for eye_x in (size * 3 // 8, size * 5 // 8):
+            cv2.circle(patch, (eye_x, size * 7 // 16), max(1, size // 40), (28, 24, 23), -1)
+        cv2.line(
+            patch,
+            (size // 2, size // 2),
+            (size // 2 - max(1, size // 30), size * 5 // 8),
+            (125, 79, 58),
+            max(1, size // 60),
+        )
+        cv2.ellipse(
+            patch,
+            (size // 2, size * 11 // 16),
+            (max(1, size // 8), max(1, size // 16)),
+            0,
+            0,
+            180,
+            (99, 49, 43),
+            max(1, size // 60),
+            cv2.LINE_AA,
+        )
+        canvas[fy : fy + size, fx : fx + size] = patch
+        # Small visible hands are illustrative only, not hand annotations.
+        cv2.circle(canvas, (cx, min(height - 1, bottom - max(2, size // 8))), max(2, size // 12), skin, -1, cv2.LINE_AA)
+    return canvas, faces
