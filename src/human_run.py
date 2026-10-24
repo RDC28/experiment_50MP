@@ -31,8 +31,9 @@ from .resolution import compute_target_resolution
 def run_human_crowd(source_path, config, project_root, *, notebook_version=None, run_id=None, log=print):
     """Run source face observations through masters and comparisons, preserving partial files.
 
-    Quick uses the configured reduced target. Detection and source consistency
-    are never identity proof. Failed runs retain a manifest and a review report.
+    Quick enlarges the source 1.5x in pixel count, at most the configured target.
+    Detection and source consistency are never identity proof. Failed runs retain
+    a manifest, every completed stage record and a review report.
     """
     learned = config.sr_backend != "lanczos_stand_in"
     sr_notice = SR_NOTICE if learned else STAND_IN_DESCRIPTION
@@ -79,7 +80,7 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
                 target = compute_target_resolution(
                     source.width,
                     source.height,
-                    config.effective_target_megapixels,
+                    config.planned_megapixels(source.width, source.height),
                     mode=config.resolution_mode,
                     pixel_count_tolerance=config.pixel_count_tolerance,
                     dimension_multiple=config.dimension_multiple,
@@ -87,6 +88,11 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
                     max_aspect_ratio_error=config.max_aspect_ratio_error,
                 )
                 manifest["target_resolution"] = target.to_dict()
+                if target.width < source.width or target.height < source.height:
+                    raise ValueError(
+                        f"target {target.width} x {target.height} does not enlarge the "
+                        f"{source.width} x {source.height} source on both axes"
+                    )
                 manifest["runtime"] = environment.inspect_runtime(outputs)
             with stage("human_reconstruction", "Simulation"):
                 if config.face_detector == "haar":
@@ -94,9 +100,14 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
                 elif config.face_detector == "yunet":
                     manifest["models"] = [yunet_model_metadata()]
                 result = reconstruct_human_crowd(
-                    source.linear, target.width, target.height, config, log=log, project_root=project_root
+                    source.linear,
+                    target.width,
+                    target.height,
+                    config,
+                    log=log,
+                    project_root=project_root,
+                    stages=stages,
                 )
-                stages.extend(result.stages)
                 modes = {
                     record.parameters["mode"]: record.parameters
                     for record in result.stages
@@ -191,7 +202,7 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
             manifest["error"] = {
                 "stage": caught.stage,
                 "message": str(caught),
-                "retry": "Use runtime_preset=quick with a reduced target.",
+                "retry": _retry_advice(caught),
             }
         except Exception as caught:
             last = stages[-1].name if stages else "start"
@@ -214,6 +225,24 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
         error.manifest_path = manifest_path
         raise error
     return RunResult(run_id, manifest, manifest_path, report_path, masters, report_dir)
+
+
+def _retry_advice(error: StageError) -> str:
+    """Retry guidance for the failing stage and cause, never a generic size reduction."""
+    cause = error.__cause__
+    if isinstance(cause, MemoryError) or type(cause).__name__ == "OutOfMemoryError":
+        return (
+            "Out of memory: use runtime_preset=quick (1.5x the source pixel count) "
+            "or a smaller sr_tile_size, and check the per-stage peak memory."
+        )
+    if error.stage.startswith("human_upscale_"):
+        return (
+            "Learned SR failed: install the [sr] extra, check the verified weights in sr_weights_dir and the "
+            "device, or set sr_backend: lanczos_stand_in for explicit interpolation."
+        )
+    if error.stage == "target_planning":
+        return "Set target_megapixels so the target enlarges the source on both axes; quick always does."
+    return f"Fix the cause reported for stage {error.stage}; completed stage records are in this manifest."
 
 
 def _report_numbers(value):
@@ -385,7 +414,9 @@ def render_human_report(manifest):
         "Full configuration, metrics, checksums and stage records: [manifest.json](manifest.json).",
     ]
     if "error" in manifest:
-        sections.append(f"## Failure\n\n{manifest['error']['stage']}: {manifest['error']['message']}")
+        error = manifest["error"]
+        retry = f"\n\nRetry: {error['retry']}" if "retry" in error else ""
+        sections.append(f"## Failure\n\n{error['stage']}: {error['message']}{retry}")
     return "\n\n".join(sections) + "\n"
 
 

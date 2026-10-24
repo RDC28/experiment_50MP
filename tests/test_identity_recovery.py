@@ -150,3 +150,51 @@ def test_landmark_gate_accepts_boundary_and_preserves_missing_reason():
 def test_invalid_landmark_threshold_rejected(value):
     with pytest.raises(ValueError):
         IdentityThresholds(max_landmark_displacement_normalized=value)
+
+
+@pytest.mark.parametrize("width,height,exact", [(80, 60, True), (120, 90, True), (97, 71, False), (41, 33, False)])
+def test_face_metrics_follow_a_whole_candidate_area_reduction(width, height, exact):
+    from synthetic_raw_lab import baselines, quality_metrics
+    from synthetic_raw_lab.face_preservation import evaluate_face_identity
+
+    rows, columns = np.mgrid[0:30, 0:40]
+    source = np.stack(
+        [0.2 + 0.6 * columns / 40, 0.2 + 0.5 * rows / 30, 0.5 + 0.3 * np.sin(columns / 5) * np.cos(rows / 7)], -1
+    ).astype(np.float32)
+    detections = ManualFaceDetector((FaceBox(0, 0, 12, 10), FaceBox(17, 9, 15, 13), FaceBox(25, 18, 15, 12)))(source)
+    candidate = baselines.resample(source, width, height, "lanczos")
+    reduced = baselines.downsample_area(candidate, 40, 30)
+    measured = evaluate_face_identity(source, candidate, detections)["faces"]
+    for row, face in zip(measured, detections.faces, strict=True):
+        region = np.s_[face.y : face.y + face.height, face.x : face.x + face.width]
+        expected, _ = quality_metrics.source_consistency(source[region], reduced[region])
+        tolerance = 0 if exact else 1e-3
+        assert row["ssim"] == pytest.approx(expected["ssim"], abs=tolerance)
+        assert row["color_difference_ciede2000"]["mean"] == pytest.approx(
+            expected["color_difference_ciede2000"]["mean"], abs=50 * tolerance
+        )
+
+
+def test_recovery_remeasures_only_the_flagged_face():
+    source = np.full((48, 96, 3), 0.2, np.float32)
+    boxes = (FaceBox(8, 8, 24, 24), FaceBox(40, 8, 24, 24), FaceBox(70, 20, 20, 20))
+    detections = ManualFaceDetector(boxes, 0)(source)
+    candidate = source.copy()
+    candidate[8:32, 8:32, 0] += 0.3
+    calls = []
+
+    def landmarks(crop):
+        calls.append(crop.shape)
+        return np.zeros((5, 2))
+
+    result = preserve_face_identity(
+        source,
+        candidate,
+        detections,
+        thresholds=IdentityThresholds(max_color_difference=0.1),
+        landmark_estimator=landmarks,
+    )
+    assert [event["face_index"] for event in result.events] == [0]
+    remeasured = len(result.events[0]["steps"]) - 1
+    assert len(calls) == 2 * len(boxes) + 2 * remeasured + 2 * len(boxes)
+    np.testing.assert_array_equal(result.linear[:, 40:], candidate[:, 40:])

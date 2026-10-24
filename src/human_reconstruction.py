@@ -12,7 +12,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from . import baselines, crowd_processing, environment, face_preservation, quality_metrics, region_masks
+from . import baselines, crowd_processing, environment, face_preservation, quality_metrics, region_masks, sr_models
 from .human_config import HumanConfig
 from .human_pipeline import (
     STAND_IN_DESCRIPTION,
@@ -50,20 +50,25 @@ def reconstruct_human_crowd(
     *,
     log: Callable[[str], None] = print,
     project_root: str | Path = ".",
+    stages: list[StageRecord] | None = None,
 ) -> HumanReconstruction:
     """Connect configured protection stages, retaining source-scale annotations.
 
     Target dimensions must be at least source size, as required by identity and
     crowd measurements. The memory sampler always stops, including on failure;
-    stage failures use the shared StageError convention.
+    stage failures use the shared StageError convention. Stage records append to
+    ``stages`` as each stage ends, so a caller's list keeps them on failure too.
+    Downloaded weights use ``sr_weights_dir`` or ``<project_root>/weights``.
     """
     _validate_image(source)
     if any(not isinstance(v, int) or isinstance(v, bool) for v in (width, height)):
         raise ValueError("target dimensions must be integers")
     if width < source.shape[1] or height < source.shape[0]:
         raise ValueError("target must be at least source size on both axes")
-    stages = []
+    stages = [] if stages is None else stages
     learned = config.sr_backend != "lanczos_stand_in"
+    weights_dir = Path(config.sr_weights_dir) if config.sr_weights_dir else sr_models.default_weights_dir(project_root)
+    yunet = face_preservation.YuNetNetwork(weights_dir) if config.face_detector == "yunet" else None
     sr_notice = SR_NOTICE if learned else STAND_IN_DESCRIPTION
     with environment.MemoryMonitor() as monitor:
 
@@ -73,7 +78,7 @@ def reconstruct_human_crowd(
         with stage(StageRecord("face_observations", "Preservation")) as record:
             detector = {
                 "haar": face_preservation.HaarFaceDetector,
-                "yunet": face_preservation.YuNetFaceDetector,
+                "yunet": lambda: face_preservation.YuNetFaceDetector(yunet),
                 "none": lambda: None,
             }[config.face_detector]()
             detections = face_preservation.observe_faces(
@@ -271,9 +276,7 @@ def reconstruct_human_crowd(
                 thresholds=config.identity,
                 tier_config=config.face_tiers,
                 skin_mask=masks.skin_samples,
-                landmark_estimator=(
-                    face_preservation.YuNetLandmarkEstimator() if config.face_detector == "yunet" else None
-                ),
+                landmark_estimator=None if yunet is None else face_preservation.YuNetLandmarkEstimator(yunet),
             )
             record.__dict__.update(recovery.stage.__dict__)
             del grained

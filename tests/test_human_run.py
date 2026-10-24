@@ -5,6 +5,7 @@ import threading
 from dataclasses import astuple
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -19,8 +20,7 @@ def configuration():
     return HumanConfig(
         sr_backend="lanczos_stand_in",
         face_detector="none",
-        runtime_preset="quick",
-        quick_target_megapixels=0.1536,
+        target_megapixels=0.1536,
         manual_face_boxes=tuple(astuple(face) for face in faces),
         primary_subject_index=0,
     )
@@ -150,6 +150,7 @@ def test_automatic_observations_without_manual_boxes_end_to_end(tmp_path, monkey
         )
 
     monkeypatch.setattr(face_preservation.YuNetFaceDetector, "__call__", fake_yunet)
+    monkeypatch.setattr(face_preservation.YuNetNetwork, "detect", lambda self, image: np.empty((0, 15)))
     config = configuration().replace(face_detector="yunet", manual_face_boxes=[], primary_subject_index=None)
     result = run_human_crowd(source_file(tmp_path), config, tmp_path, log=lambda _: None)
     assert result.manifest["primary_subject"]["index"] == 0
@@ -191,7 +192,7 @@ def test_missing_haar_build_completes_manual_run(tmp_path, monkeypatch, data_att
 def test_default_yunet_unavailable_completes_manual_run(tmp_path, monkeypatch):
     from synthetic_raw_lab import human_models
 
-    def unavailable():
+    def unavailable(cache_dir):
         raise RuntimeError("offline test artifact unavailable")
 
     monkeypatch.setattr(human_models, "ensure_yunet_model", unavailable)
@@ -225,8 +226,6 @@ def test_empty_tiers_report_missing_metrics_as_dash_end_to_end(tmp_path):
 
 @pytest.mark.parametrize("backend", ["swinir", "realesrgan", "lanczos_stand_in"])
 def test_backend_provenance_reaches_masters_manifest_and_report(tmp_path, monkeypatch, backend):
-    import numpy as np
-
     from synthetic_raw_lab import sr_models
     from synthetic_raw_lab.pipeline import SR_NOTICE
 
@@ -257,7 +256,7 @@ def test_backend_provenance_reaches_masters_manifest_and_report(tmp_path, monkey
         sr_backend=backend,
         manual_face_boxes=[],
         primary_subject_index=None,
-        quick_target_megapixels=0.012288,
+        target_megapixels=0.012288,
         sr_tile_size=128,
     )
     result = run_human_crowd(path, config, tmp_path, log=lambda _: None)
@@ -291,3 +290,59 @@ def test_backend_provenance_reaches_masters_manifest_and_report(tmp_path, monkey
     for item in manifest["exports"].values():
         sidecar = json.loads(Path(item["path"]).with_suffix(Path(item["path"]).suffix + ".json").read_text())
         assert sidecar["provenance"] == provenance
+
+
+def test_quick_preset_enlarges_an_arbitrary_source(tmp_path):
+    result = run_human_crowd(
+        source_file(tmp_path), configuration().replace(runtime_preset="quick"), tmp_path, log=lambda _: None
+    )
+    target = result.manifest["target_resolution"]
+    source = result.manifest["source"]
+    assert result.manifest["status"] == "complete"
+    assert target["width"] > source["width"] and target["height"] > source["height"]
+
+
+def test_non_enlarging_target_fails_in_planning_with_matching_advice(tmp_path):
+    with pytest.raises(StageError) as caught:
+        run_human_crowd(
+            source_file(tmp_path), configuration().replace(target_megapixels=0.0864), tmp_path, log=lambda _: None
+        )
+    assert caught.value.stage == "target_planning"
+    error = json.loads(caught.value.manifest_path.read_text())["error"]
+    assert "does not enlarge" in error["message"]
+    assert "target_megapixels" in error["retry"] and "quick" in error["retry"]
+
+
+@pytest.mark.parametrize("failure,advice", [(RuntimeError, "region_detail"), (MemoryError, "Out of memory")])
+def test_inner_stage_failure_keeps_stage_records_and_cause_advice(tmp_path, monkeypatch, failure, advice):
+    from synthetic_raw_lab import crowd_processing
+
+    def fail(*args, **kwargs):
+        raise failure("test region failure")
+
+    monkeypatch.setattr(crowd_processing, "enhance_regions", fail)
+    with pytest.raises(StageError) as caught:
+        run_human_crowd(source_file(tmp_path), configuration(), tmp_path, log=lambda _: None)
+    assert caught.value.stage == "region_detail"
+    manifest = json.loads(caught.value.manifest_path.read_text())
+    assert manifest["status"] == "failed in stage region_detail"
+    assert advice in manifest["error"]["retry"]
+    records = {stage["name"]: stage for stage in manifest["stages"]}
+    for name in ("face_observations", "lanczos_baseline", "human_upscale_conservative", "human_upscale_balanced"):
+        assert records[name]["error"] is None and records[name]["seconds"] >= 0
+    assert "test region failure" in records["region_detail"]["error"]
+    assert "region_detail" in records["human_reconstruction"]["error"]
+    assert manifest["error"]["retry"] in caught.value.manifest_path.with_name("report.md").read_text()
+
+
+def test_learned_sr_failure_names_the_upscale_stage_and_stand_in(tmp_path, monkeypatch):
+    from synthetic_raw_lab import sr_models
+
+    monkeypatch.setattr(sr_models, "available", lambda: False)
+    with pytest.raises(StageError) as caught:
+        run_human_crowd(
+            source_file(tmp_path), configuration().replace(sr_backend="swinir"), tmp_path, log=lambda _: None
+        )
+    assert caught.value.stage == "human_upscale_conservative"
+    error = json.loads(caught.value.manifest_path.read_text())["error"]
+    assert "lanczos_stand_in" in error["message"] and "lanczos_stand_in" in error["retry"]

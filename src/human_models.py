@@ -33,14 +33,14 @@ def yunet_model_metadata() -> dict:
     }
 
 
-def ensure_yunet_model(cache_dir: Path | None = None) -> Path:
-    """Return verified weights or raise with the precise acquisition failure.
+def ensure_yunet_model(cache_dir: str | Path) -> Path:
+    """Return verified weights from the run's weights folder or raise with the precise failure.
 
     Callers must record failure and continue with manual observations. Existing
     corrupt caches are rejected, never silently trusted or replaced. Downloads
     are verified before atomic publication; concurrent readers see whole files.
     """
-    cache_dir = Path(cache_dir) if cache_dir is not None else Path(__file__).resolve().parents[1] / "weights"
+    cache_dir = Path(cache_dir)
     path = cache_dir / YUNET_FILENAME
 
     def verify(data: bytes) -> None:

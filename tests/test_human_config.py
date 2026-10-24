@@ -19,12 +19,10 @@ def test_yaml_defaults_and_round_trip():
 def test_overrides_preserve_human_type_and_nested_settings():
     config = load_config(
         runtime_preset="quick",
-        quick_target_megapixels=0.02,
         manual_face_boxes=[[0, 1, 20, 30, 0.9]],
         primary_subject_index=0,
         regions={"hair": 0.1},
     )
-    assert config.effective_target_megapixels == 0.02
     assert config.regions.hair == 0.1
     assert config.regions.primary_face == 0
     assert config.replace(random_seed=7).manual_face_boxes == config.manual_face_boxes
@@ -55,6 +53,9 @@ def test_overrides_preserve_human_type_and_nested_settings():
         {"target_megapixels": 0},
         {"identity": []},
         {"manual_face_boxes": None},
+        {"quick_target_megapixels": 0.1536},
+        {"sr_modes": ["conservative"]},
+        {"sr_modes": ["conservative", "aggressive"]},
     ],
 )
 def test_invalid_settings(values):
@@ -134,3 +135,17 @@ def test_sr_backend_round_trip_and_shared_controls(backend):
 def test_all_backends_retain_phase2_validation(backend, invalid):
     with pytest.raises(ValueError):
         from_dict({"sr_backend": backend, **invalid})
+
+
+@pytest.mark.parametrize(
+    "preset,size,expected",
+    [
+        ("quick", (3840, 2160), 1.5 * 3840 * 2160 / 1e6),
+        ("quick", (384, 256), 1.5 * 384 * 256 / 1e6),
+        ("quick", (8000, 6000), 50.0),
+        ("standard", (384, 256), 50.0),
+        ("research", (3840, 2160), 50.0),
+    ],
+)
+def test_quick_target_is_derived_from_the_source(preset, size, expected):
+    assert HumanConfig(runtime_preset=preset).planned_megapixels(*size) == pytest.approx(expected)

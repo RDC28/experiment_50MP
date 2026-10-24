@@ -344,10 +344,10 @@ def test_yunet_landmarks_use_verified_model_and_crop_coordinates(monkeypatch, tm
     import cv2
 
     from synthetic_raw_lab import human_models
-    from synthetic_raw_lab.face_preservation import YuNetLandmarkEstimator
+    from synthetic_raw_lab.face_preservation import YuNetLandmarkEstimator, YuNetNetwork
 
     model = tmp_path / "verified.onnx"
-    monkeypatch.setattr(human_models, "ensure_yunet_model", lambda: model)
+    monkeypatch.setattr(human_models, "ensure_yunet_model", lambda cache_dir: model)
     rows = np.zeros((2, 15), np.float32)
     rows[:, 2:4] = [[4, 4], [12, 10]]
     rows[1, 4:14] = np.arange(10)
@@ -364,7 +364,7 @@ def test_yunet_landmarks_use_verified_model_and_crop_coordinates(monkeypatch, tm
         return Detector()
 
     monkeypatch.setattr(cv2.FaceDetectorYN, "create", create)
-    result = YuNetLandmarkEstimator()(np.full((20, 24, 3), 0.2, np.float32))
+    result = YuNetLandmarkEstimator(YuNetNetwork(tmp_path))(np.full((20, 24, 3), 0.2, np.float32))
     assert calls == [(str(model), "", (24, 20), 0.9, 0.3, 5000)]
     if empty:
         assert result is None
@@ -372,13 +372,13 @@ def test_yunet_landmarks_use_verified_model_and_crop_coordinates(monkeypatch, tm
         np.testing.assert_array_equal(result, np.arange(10).reshape(5, 2))
 
 
-def test_yunet_landmark_weights_failure_is_explicit(monkeypatch):
+def test_yunet_landmark_weights_failure_is_explicit(monkeypatch, tmp_path):
     from synthetic_raw_lab import human_models
-    from synthetic_raw_lab.face_preservation import YuNetLandmarkEstimator
+    from synthetic_raw_lab.face_preservation import YuNetLandmarkEstimator, YuNetNetwork
 
-    def unavailable():
+    def unavailable(cache_dir):
         raise RuntimeError("runtime weights unavailable: offline")
 
     monkeypatch.setattr(human_models, "ensure_yunet_model", unavailable)
     with pytest.raises(RuntimeError, match="YuNet landmarks unavailable: runtime weights unavailable: offline"):
-        YuNetLandmarkEstimator()(np.full((20, 24, 3), 0.2, np.float32))
+        YuNetLandmarkEstimator(YuNetNetwork(tmp_path))(np.full((20, 24, 3), 0.2, np.float32))

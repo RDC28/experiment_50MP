@@ -23,6 +23,7 @@ from .crowd_processing import RegionDetailConfig
 from .face_preservation import FaceBox, FaceTierConfig, IdentityThresholds, ManualFaceDetector
 
 _NESTED = {"face_tiers": FaceTierConfig, "identity": IdentityThresholds, "regions": RegionDetailConfig}
+QUICK_PIXEL_SCALE = 1.5
 _BASE_NAMES = {f.name for f in dataclasses.fields(ExperimentConfig)}
 
 
@@ -37,6 +38,28 @@ class HumanConfig(ExperimentConfig):
 
     profile: str = _param("human_crowd", "Human profile name.", "human_crowd", "Labels provenance.")
     input_category: str = _param("human", "Human input store.", "human", "Selects human folders.")
+    runtime_preset: str = _param(
+        "standard",
+        "PRD 21.6 runtime preset.",
+        "quick | standard | research",
+        "quick: 1.5x the source pixel count, at most target_megapixels, so it always enlarges a smaller source; "
+        "standard: full target; research: full target with the same detailed comparisons and metrics.",
+        warning="standard and research hold several 50 MP arrays; check measured peak memory.",
+    )
+    quick_target_megapixels: float = _param(
+        2.0,
+        "Not used by the human profile.",
+        "2.0 (inherited default only)",
+        "The human quick preset derives its target from the source size instead.",
+        warning="Any other value is rejected so a fixed quick size cannot shrink the source.",
+    )
+    sr_modes: tuple = _param(
+        ("conservative", "balanced"),
+        "PRD 18.1 human SR modes.",
+        "conservative and balanced",
+        "conservative: fidelity network feeding the final output; balanced: perceptual network for comparison only.",
+        warning="Both are required by the face comparisons; aggressive is prohibited for identity-critical regions.",
+    )
     sr_backend: str = _param(
         "swinir",
         "Explicit upscaler backend.",
@@ -140,6 +163,10 @@ class HumanConfig(ExperimentConfig):
         ExperimentConfig(**shared)
         if self.profile != "human_crowd" or self.input_category != "human":
             raise ValueError("human profile requires profile=human_crowd and input_category=human")
+        if self.quick_target_megapixels != ExperimentConfig.quick_target_megapixels:
+            raise ValueError("human quick_target_megapixels is not used: quick enlarges the source 1.5x in pixel count")
+        if sorted(self.sr_modes) != ["balanced", "conservative"]:
+            raise ValueError("human sr_modes must be conservative (final) and balanced (comparison)")
         for name in ("general_sr_strength", "edge_sharpening", "grain", "skin_texture_smoothing"):
             value = getattr(self, name)
             if (
@@ -176,6 +203,12 @@ class HumanConfig(ExperimentConfig):
         ManualFaceDetector(tuple(faces), self.primary_subject_index)
         if not self.export_tiff16 or not self.export_exr or not self.export_review or self.exr_precision != "half":
             raise ValueError("human profile requires TIFF16, half EXR and review exports")
+
+    def planned_megapixels(self, source_width: int, source_height: int) -> float:
+        """Output size for this source: quick enlarges it 1.5x in pixel count, at most target_megapixels."""
+        if self.runtime_preset != "quick":
+            return self.target_megapixels
+        return min(QUICK_PIXEL_SCALE * source_width * source_height / 1e6, self.target_megapixels)
 
     def to_dict(self) -> dict:
         data = dataclasses.asdict(self)

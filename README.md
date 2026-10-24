@@ -103,13 +103,15 @@ OpenCV; each run records the versions and the Git commit it actually used.
 ## Notebook 01
 
 Open `notebooks/01_Human_Crowd_50MP.ipynb` and run all cells. The same Colab setup applies.
-Start with `INPUT_MODE="synthetic"` and the default `quick` preset: a 384 x 256 crowd fixture supplies
-manual ground-truth boxes across all three face tiers, with a reduced 0.1536 MP target. For real inputs,
-choose upload or path. YuNet detection runs by default (`FACE_DETECTOR="yunet"`); inspect its
-observations and add `MANUAL_FACE_BOXES` in source pixels as needed. Manual boxes win overlaps.
-Use `FACE_DETECTOR="none"` for manual-only observations. Select `PRIMARY_SUBJECT_INDEX` if needed,
-then increase the quick target so it upscales the source on both axes. Standard and research use 50 MP;
-research currently supplies the same detailed comparisons and metrics as standard, without extra ablations.
+The default `standard` preset builds the full 50 MP target from an uploaded image; `research` uses the same
+target and currently supplies the same detailed comparisons and metrics, without extra ablations. `quick`
+enlarges the source to 1.5x its pixel count (about 12 MP for a 4K source), at most the target, so it always
+upscales the source on both axes while running faster. `INPUT_MODE="synthetic"` uses a 384 x 256 crowd fixture
+with manual ground-truth boxes across all three face tiers. YuNet detection runs by default
+(`FACE_DETECTOR="yunet"`); inspect its observations and add `MANUAL_FACE_BOXES` in source pixels as needed.
+Manual boxes win overlaps. Use `FACE_DETECTOR="none"` for manual-only observations and select
+`PRIMARY_SUBJECT_INDEX` if needed. YuNet and SR weights are cached in `WEIGHTS_DIR` (default `<project>/weights`);
+point it at Drive to keep them. A failed run's manifest names the failing stage and gives retry advice for its cause.
 
 Detector versions, bundled XML hash, confidence semantics and commercial-use terms are documented in
 [MODELS.md](MODELS.md) and recorded at runtime in the manifest. Detection is never identity proof.
@@ -136,7 +138,7 @@ boxes use the stricter cap. High strengths erase natural texture. This independe
 Simulation stage precedes sharpening and identity recovery; it recovers no texture.
 Grain is off by default, bounded achromatic random texture with face suppression; its Simulation
 stage reports linear-luma high-frequency energy before and after injection, never recovered detail. Human processing retains
-multiple target-sized arrays, so start small and inspect measured peak memory before a full run.
+multiple target-sized arrays; use `quick` for a smaller first check and inspect measured peak memory.
 
 ## Running locally
 

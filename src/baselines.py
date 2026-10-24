@@ -45,18 +45,30 @@ def resample(linear: np.ndarray, width: int, height: int, method: str) -> np.nda
     return _resize(linear, width, height, METHODS[method].filter)
 
 
-def downsample_area(linear: np.ndarray, width: int, height: int) -> np.ndarray:
-    """Area-average reduction used to compare outputs with the source at source resolution."""
-    return _resize(linear, width, height, Image.Resampling.BOX)
+def downsample_area(
+    linear: np.ndarray, width: int, height: int, box: tuple[float, float, float, float] | None = None
+) -> np.ndarray:
+    """Area-average reduction used to compare outputs with the source at source resolution.
+
+    ``box`` (left, top, right, bottom in input pixels) reduces only that region at the same scale as a
+    whole-image reduction; input pixels on an exact sampling tie may be assigned differently.
+    """
+    return _resize(linear, width, height, Image.Resampling.BOX, box)
 
 
-def _resize(image: np.ndarray, width: int, height: int, resampling: Image.Resampling) -> np.ndarray:
+def _resize(
+    image: np.ndarray,
+    width: int,
+    height: int,
+    resampling: Image.Resampling,
+    box: tuple[float, float, float, float] | None = None,
+) -> np.ndarray:
     if image.ndim != 3 or image.dtype != np.float32:
         raise ValueError(f"expected an (H, W, C) float32 array, got {image.shape} {image.dtype}")
     out = np.empty((height, width, image.shape[2]), dtype=np.float32)
     for channel in range(image.shape[2]):
         plane = Image.fromarray(np.ascontiguousarray(image[..., channel]))
-        resized = plane.resize((width, height), resampling)
+        resized = plane.resize((width, height), resampling, box=box)
         del plane
         out[..., channel] = np.asarray(resized, dtype=np.float32)
         del resized

@@ -53,7 +53,7 @@ def test_crowd_check_reuses_configured_detector_at_source_scale(monkeypatch, kin
         return face_preservation.FaceDetections(faces, None, "fake", "Inference", "Local test detector")
 
     monkeypatch.setattr(
-        face_preservation, "HaarFaceDetector" if kind == "haar" else "YuNetFaceDetector", lambda: detector
+        face_preservation, "HaarFaceDetector" if kind == "haar" else "YuNetFaceDetector", lambda *_: detector
     )
     source = np.full((16, 24, 3), 0.2, np.float32)
     result = reconstruct_human_crowd(
@@ -229,14 +229,14 @@ def test_smoothing_uses_facial_skin_samples_with_complete_box_caps(monkeypatch):
 def test_yunet_reconstruction_reports_landmarks_without_network(monkeypatch):
     from synthetic_raw_lab import face_preservation as fp
 
-    monkeypatch.setattr(fp, "YuNetFaceDetector", lambda: fp.ManualFaceDetector())
+    monkeypatch.setattr(fp, "YuNetFaceDetector", lambda network: fp.ManualFaceDetector())
     crops = []
 
     def landmarks(crop):
         crops.append(crop.shape)
         return np.arange(10).reshape(5, 2)
 
-    monkeypatch.setattr(fp, "YuNetLandmarkEstimator", lambda: landmarks)
+    monkeypatch.setattr(fp, "YuNetLandmarkEstimator", lambda network: landmarks)
     source = np.full((32, 40, 3), 0.2, np.float32)
     config = HumanConfig(sr_backend="lanczos_stand_in", face_detector="yunet", manual_face_boxes=((4, 4, 24, 24, 1.0),))
     result = reconstruct_human_crowd(source, 80, 64, config, log=lambda _: None)
@@ -342,3 +342,28 @@ def test_learned_reconstruction_uses_conservative_and_releases_models(monkeypatc
     assert loads == list(sr_models.BACKENDS["swinir"].values())
     assert sorted(releases) == sorted(loads)
     assert not any(t.name == "memory-monitor" for t in threading.enumerate())
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_yunet_weights_use_the_run_weights_folder_once(monkeypatch, tmp_path, configured):
+    from synthetic_raw_lab import human_models
+
+    folders = []
+
+    def offline(cache_dir):
+        folders.append(cache_dir)
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(human_models, "ensure_yunet_model", offline)
+    drive = tmp_path / "drive"
+    config = HumanConfig(
+        sr_backend="lanczos_stand_in",
+        face_detector="yunet",
+        manual_face_boxes=((2, 2, 8, 8), (12, 4, 8, 8)),
+        sr_weights_dir=str(drive) if configured else "",
+    )
+    result = reconstruct_human_crowd(
+        np.full((16, 24, 3), 0.2, np.float32), 48, 32, config, log=lambda _: None, project_root=tmp_path / "project"
+    )
+    assert folders == [drive if configured else tmp_path / "project" / "weights"]
+    assert all("offline" in face["landmark_note"] for face in result.identity["faces"])

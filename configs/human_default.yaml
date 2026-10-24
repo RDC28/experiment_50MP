@@ -6,15 +6,14 @@ profile: human_crowd
 input_category: human
 target_megapixels: 50.0
 sr_backend: swinir # swinir | realesrgan | lanczos_stand_in (explicit interpolation)
-sr_modes: [conservative, balanced] # conservative final; balanced comparison (PRD 18.1)
+sr_modes: [conservative, balanced] # required: conservative final; balanced comparison (PRD 18.1)
 general_sr_strength: 1.0 # [0, 1]: Lanczos to selected output; high values retain backend artifacts
 edge_sharpening: 0.0 # [0, 1]: bounded unsharp, observed faces excluded; high values risk halos
 skin_texture_smoothing: 0.0 # [0, 1]: bounded bilateral skin smoothing, capped by face strengths
 grain: 0.0 # [0, 1]: seeded achromatic random texture; faces excluded, not recovered detail
 tonal_contrast: 0.0 # [-0.5, 0.5]: log-luminance slope around 0.18; high values risk clipping
 colour_balance: [1.0, 1.0, 1.0] # each [0.5, 1.5]: linear RGB gains; unequal gains shift skin
-runtime_preset: standard
-quick_target_megapixels: 2.0
+runtime_preset: standard # quick: 1.5x the source pixel count, at most target_megapixels
 face_detector: yunet # checksum-verified runtime weights; haar is optional; none disables inference
 manual_face_boxes: [] # source [x, y, width, height, optional confidence]
 primary_subject_index: null # highest source tier, then largest area; manual index overrides

@@ -9,6 +9,7 @@ does not reconstruct faces or implement generative replacement.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 import numpy as np
@@ -406,6 +407,63 @@ def _landmark_measurement(source, candidate, face_size, estimator):
     return pixels, normalized, "Inference: five-point displacement; normalized by source shortest face side"
 
 
+def _reduce_face(candidate: np.ndarray, face: FaceBox, source_height: int, source_width: int) -> np.ndarray:
+    """Area-reduce only the candidate pixels behind one source-pixel face box."""
+    from .baselines import downsample_area
+
+    height, width = candidate.shape[:2]
+    if (height, width) == (source_height, source_width):
+        return candidate[face.y : face.y + face.height, face.x : face.x + face.width]
+    scale_x, scale_y = width / source_width, height / source_height
+    x0 = max(0, int(face.x * scale_x) - 1)
+    y0 = max(0, int(face.y * scale_y) - 1)
+    x1 = min(width, int(np.ceil((face.x + face.width) * scale_x)) + 1)
+    y1 = min(height, int(np.ceil((face.y + face.height) * scale_y)) + 1)
+    box = (
+        face.x * scale_x - x0,
+        face.y * scale_y - y0,
+        (face.x + face.width) * scale_x - x0,
+        (face.y + face.height) * scale_y - y0,
+    )
+    return downsample_area(candidate[y0:y1, x0:x1], face.width, face.height, box)
+
+
+def _face_row(source, candidate, detections, index, tier_config, skin_mask, landmark_estimator) -> dict:
+    from . import quality_metrics
+
+    face = detections.faces[index]
+    region = np.s_[face.y : face.y + face.height, face.x : face.x + face.width]
+    reduced = _reduce_face(candidate, face, *source.shape[:2])
+    metrics, delta_e = quality_metrics.source_consistency(source[region], reduced)
+    weights = None if skin_mask is None else skin_mask[region]
+    skin_shift = None if weights is None or weights.sum() == 0 else float(np.average(delta_e, weights=weights))
+    landmark_px, landmark_normalized, landmark_note = _landmark_measurement(
+        source[region], reduced, face.source_size, landmark_estimator
+    )
+    return {
+        "face_index": index,
+        "tier": face_tier(face, tier_config),
+        "primary": index == detections.primary_index,
+        "box": [face.x, face.y, face.width, face.height],
+        "ssim": metrics["ssim"],
+        "color_difference_ciede2000": metrics["color_difference_ciede2000"],
+        "skin_tone_shift_ciede2000": skin_shift,
+        "skin_tone_note": (
+            "Estimated mask-weighted mean CIEDE2000, not a signed color change"
+            if skin_shift is not None
+            else "not available: no skin mask or no skin samples inside this face"
+        ),
+        "edge_displacement": metrics["edge_displacement"],
+        "landmark_displacement_px": landmark_px,
+        "landmark_displacement_normalized": landmark_normalized,
+        "landmark_note": landmark_note,
+        "embedding_similarity": None,
+        "embedding_note": "disabled by default; no recognition model loaded",
+        "human_reviewer_judgment": None,
+        "identity_claim": "none; source consistency is not proof of identity",
+    }
+
+
 def evaluate_face_identity(
     source: np.ndarray,
     candidate: np.ndarray,
@@ -417,14 +475,15 @@ def evaluate_face_identity(
 ) -> dict:
     """Measure consistency per face and tier, never establish personal identity.
 
-    Reduce the entire candidate with the shared area filter before cropping so
-    every metric is in source coordinates. Color/SSIM/edges use the shared sRGB
+    Each face is area-reduced from only the candidate pixels behind its box, at
+    the scale of a whole-candidate reduction (identical for integer scales; exact
+    sampling ties may differ otherwise), so every metric is in source coordinates
+    without an output-sized reduction. Color/SSIM/edges use the shared sRGB
     evaluation domain. Optional source-scale skin weights select CIEDE2000
     samples; without an annotation, skin-tone shift is explicitly unavailable.
     Linear overshoot is clipped only by the shared display-domain metrics.
     Optional landmarks use identical source-scale crops; embeddings remain disabled.
     """
-    from . import baselines, quality_metrics
     from .human_pipeline import _validate_image
 
     _validate_image(source)
@@ -443,40 +502,10 @@ def evaluate_face_identity(
             raise ValueError("skin_mask must contain finite source-scale weights in [0, 1]")
     for face in detections.faces:
         face.validate_bounds(width, height)
-    reduced = candidate if candidate.shape == source.shape else baselines.downsample_area(candidate, width, height)
-    rows = []
-    for index, face in enumerate(detections.faces):
-        region = np.s_[face.y : face.y + face.height, face.x : face.x + face.width]
-        metrics, delta_e = quality_metrics.source_consistency(source[region], reduced[region])
-        weights = None if skin_mask is None else skin_mask[region]
-        skin_shift = None if weights is None or weights.sum() == 0 else float(np.average(delta_e, weights=weights))
-        landmark_px, landmark_normalized, landmark_note = _landmark_measurement(
-            source[region], reduced[region], face.source_size, landmark_estimator
-        )
-        rows.append(
-            {
-                "face_index": index,
-                "tier": face_tier(face, tier_config),
-                "primary": index == detections.primary_index,
-                "box": [face.x, face.y, face.width, face.height],
-                "ssim": metrics["ssim"],
-                "color_difference_ciede2000": metrics["color_difference_ciede2000"],
-                "skin_tone_shift_ciede2000": skin_shift,
-                "skin_tone_note": (
-                    "Estimated mask-weighted mean CIEDE2000, not a signed color change"
-                    if skin_shift is not None
-                    else "not available: no skin mask or no skin samples inside this face"
-                ),
-                "edge_displacement": metrics["edge_displacement"],
-                "landmark_displacement_px": landmark_px,
-                "landmark_displacement_normalized": landmark_normalized,
-                "landmark_note": landmark_note,
-                "embedding_similarity": None,
-                "embedding_note": "disabled by default; no recognition model loaded",
-                "human_reviewer_judgment": None,
-                "identity_claim": "none; source consistency is not proof of identity",
-            }
-        )
+    rows = [
+        _face_row(source, candidate, detections, index, tier_config, skin_mask, landmark_estimator)
+        for index in range(len(detections.faces))
+    ]
     tiers = []
     for tier in (1, 2, 3):
         selected = [row for row in rows if row["tier"] == tier]
@@ -507,7 +536,7 @@ def evaluate_face_identity(
         )
     return {
         "classification": MEASUREMENT,
-        "domain": "sRGB at source scale; candidate area-averaged before cropping",
+        "domain": "sRGB at source scale; candidate area-averaged behind each face box",
         "faces": rows,
         "per_tier": tiers,
         "notes": [
@@ -643,18 +672,8 @@ def preserve_face_identity(
     from .baselines import resample
 
     thresholds = thresholds or IdentityThresholds()
-
-    def evaluate(image):
-        return evaluate_face_identity(
-            source,
-            image,
-            detections,
-            tier_config=tier_config,
-            skin_mask=skin_mask,
-            landmark_estimator=landmark_estimator,
-        )
-
-    initial = evaluate(candidate)  # validates source, candidate, boxes and skin weights
+    measure = {"tier_config": tier_config, "skin_mask": skin_mask, "landmark_estimator": landmark_estimator}
+    initial = evaluate_face_identity(source, candidate, detections, **measure)  # validates every input
     output = candidate.copy()
     events = []
     baseline = None
@@ -670,14 +689,18 @@ def preserve_face_identity(
         y0 = face.y * height // source.shape[0]
         x1 = int(np.ceil((face.x + face.width) * width / source.shape[1]))
         y1 = int(np.ceil((face.y + face.height) * height / source.shape[0]))
-        outside = np.ones((height, width), dtype=bool)
-        outside[y0:y1, x0:x1] = False
         feather = max(1, min(x1 - x0, y1 - y0) // 8)
+        wx0, wy0 = max(0, x0 - feather), max(0, y0 - feather)
+        wx1, wy1 = min(width, x1 + feather), min(height, y1 + feather)
+        window = np.s_[wy0:wy1, wx0:wx1]
+        outside = np.ones((wy1 - wy0, wx1 - wx0), dtype=bool)
+        outside[y0 - wy0 : y1 - wy0, x0 - wx0 : x1 - wx0] = False
         weight = np.maximum(0, 1 - distance_transform_edt(outside) / feather).astype(np.float32)[..., None]
-        before = output.copy()
-        retry = baseline + thresholds.retry_strength * (before - baseline)
-        output = before + (retry - before) * weight
-        retry_row = evaluate(output)["faces"][row["face_index"]]
+        before = output[window]
+        retry = baseline[window] + thresholds.retry_strength * (before - baseline[window])
+        output[window] = before + (retry - before) * weight
+        index = row["face_index"]
+        retry_row = _face_row(source, output, detections, index, **measure)
         persistent = _identity_failures(retry_row, thresholds)
         steps = [
             {"action": "flag", "metrics": row, "failed_metrics": failures},
@@ -689,9 +712,9 @@ def preserve_face_identity(
             },
         ]
         if persistent:
-            output = output + (baseline - output) * weight
+            output[window] = output[window] + (baseline[window] - output[window]) * weight
             output[y0:y1, x0:x1] = baseline[y0:y1, x0:x1]
-            fallback_row = evaluate(output)["faces"][row["face_index"]]
+            fallback_row = _face_row(source, output, detections, index, **measure)
             steps.append(
                 {
                     "action": "original_derived_lanczos_fallback",
@@ -699,8 +722,8 @@ def preserve_face_identity(
                     "failed_metrics": _identity_failures(fallback_row, thresholds),
                 }
             )
-        events.append({"face_index": row["face_index"], "tier": row["tier"], "steps": steps})
-    final = evaluate(output)
+        events.append({"face_index": index, "tier": row["tier"], "steps": steps})
+    final = evaluate_face_identity(source, output, detections, **measure)
     stage = StageRecord(
         name="identity_failure_recovery",
         classification="Simulation",
@@ -716,11 +739,21 @@ def preserve_face_identity(
     return IdentityRecoveryResult(output, final, events, stage)
 
 
-@dataclass(frozen=True)
-class YuNetFaceDetector:
-    """Verified runtime YuNet inference at source scale; never identity proof."""
+class YuNetNetwork:
+    """Run-scoped verified YuNet inference shared by detection and landmarks.
 
-    def __call__(self, linear: np.ndarray) -> FaceDetections:
+    Weights are acquired, verified and loaded once from ``weights_dir``; an
+    acquisition or load failure is recorded once and reported on every later
+    call instead of retrying the download for each image or crop.
+    """
+
+    def __init__(self, weights_dir: str | Path):
+        self.weights_dir = Path(weights_dir)
+        self._detector = None
+        self._unavailable = None
+
+    def detect(self, linear: np.ndarray) -> np.ndarray:
+        """Return YuNet rows (box, five landmarks, score) for a source-scale image."""
         import cv2
 
         from .color_management import linear_to_srgb
@@ -728,57 +761,74 @@ class YuNetFaceDetector:
         from .human_pipeline import _validate_image
 
         _validate_image(linear)
+        if self._unavailable is not None:
+            raise RuntimeError(self._unavailable)
+        height, width = linear.shape[:2]
+        if self._detector is None:
+            try:
+                model = ensure_yunet_model(self.weights_dir)
+                self._detector = cv2.FaceDetectorYN.create(str(model), "", (width, height), 0.9, 0.3, 5000)
+            except (RuntimeError, OSError, AttributeError, cv2.error) as error:
+                self._unavailable = str(error)
+                raise RuntimeError(self._unavailable) from error
+        else:
+            self._detector.setInputSize((width, height))
+        encoded = np.round(np.clip(linear_to_srgb(linear), 0, 1) * 255).astype(np.uint8)
+        _, rows = self._detector.detect(cv2.cvtColor(encoded, cv2.COLOR_RGB2BGR))
+        return np.empty((0, 15), np.float32) if rows is None else rows
+
+
+class YuNetFaceDetector:
+    """Verified runtime YuNet inference at source scale; never identity proof."""
+
+    def __init__(self, network: YuNetNetwork):
+        self.network = network
+
+    def __call__(self, linear: np.ndarray) -> FaceDetections:
+        import cv2
+
         try:
-            model = ensure_yunet_model()
-            height, width = linear.shape[:2]
-            detector = cv2.FaceDetectorYN.create(str(model), "", (width, height), 0.9, 0.3, 5000)
-            encoded = np.round(np.clip(linear_to_srgb(linear), 0, 1) * 255).astype(np.uint8)
-            _, rows = detector.detect(cv2.cvtColor(encoded, cv2.COLOR_RGB2BGR))
-            faces = []
-            for row in () if rows is None else rows:
-                # Clip inferred rectangles to source bounds before downstream crops.
-                x0, y0 = np.maximum(0, np.floor(row[:2])).astype(int)
-                x1 = min(width, int(np.ceil(row[0] + row[2])))
-                y1 = min(height, int(np.ceil(row[1] + row[3])))
-                if x1 > x0 and y1 > y0:
-                    faces.append(FaceBox(int(x0), int(y0), x1 - int(x0), y1 - int(y0), float(row[14])))
-            return FaceDetections(
-                tuple(faces),
-                None,
-                "yunet",
-                "Inference",
-                f"YuNet inference: {len(faces)} detections; uncalibrated confidence, never identity proof. "
-                "Zero detections does not mean no faces; inspect and add manual boxes.",
-            )
-        except (RuntimeError, OSError, AttributeError, cv2.error) as error:
+            rows = self.network.detect(linear)
+        except (RuntimeError, cv2.error) as error:
             return FaceDetections((), None, "yunet", "Inference", f"YuNet unavailable: {error}; manual boxes only.")
+        height, width = linear.shape[:2]
+        faces = []
+        for row in rows:
+            # Clip inferred rectangles to source bounds before downstream crops.
+            x0, y0 = np.maximum(0, np.floor(row[:2])).astype(int)
+            x1 = min(width, int(np.ceil(row[0] + row[2])))
+            y1 = min(height, int(np.ceil(row[1] + row[3])))
+            if x1 > x0 and y1 > y0:
+                faces.append(FaceBox(int(x0), int(y0), x1 - int(x0), y1 - int(y0), float(row[14])))
+        return FaceDetections(
+            tuple(faces),
+            None,
+            "yunet",
+            "Inference",
+            f"YuNet inference: {len(faces)} detections; uncalibrated confidence, never identity proof. "
+            "Zero detections does not mean no faces; inspect and add manual boxes.",
+        )
 
 
 class YuNetLandmarkEstimator:
     """Infer ordered five-point landmarks in a source-scale face crop.
 
-    Uses the same verified model and inference settings as YuNet face detection.
+    Uses the same verified network and inference settings as YuNet face detection.
     The largest detected face is selected to avoid choosing a smaller neighbour.
     These inferred points measure geometric consistency, never identity proof.
     """
 
+    def __init__(self, network: YuNetNetwork):
+        self.network = network
+
     def __call__(self, linear: np.ndarray) -> np.ndarray | None:
         import cv2
 
-        from .color_management import linear_to_srgb
-        from .human_models import ensure_yunet_model
-        from .human_pipeline import _validate_image
-
-        _validate_image(linear)
         try:
-            model = ensure_yunet_model()
-            height, width = linear.shape[:2]
-            detector = cv2.FaceDetectorYN.create(str(model), "", (width, height), 0.9, 0.3, 5000)
-            encoded = np.round(np.clip(linear_to_srgb(linear), 0, 1) * 255).astype(np.uint8)
-            _, rows = detector.detect(cv2.cvtColor(encoded, cv2.COLOR_RGB2BGR))
-            if rows is None or len(rows) == 0:
-                return None
-            row = max(rows, key=lambda face: float(face[2]) * float(face[3]))
-            return np.asarray(row[4:14], dtype=np.float64).reshape(5, 2)
-        except (RuntimeError, OSError, AttributeError, cv2.error) as error:
+            rows = self.network.detect(linear)
+        except (RuntimeError, cv2.error) as error:
             raise RuntimeError(f"YuNet landmarks unavailable: {error}") from error
+        if len(rows) == 0:
+            return None
+        row = max(rows, key=lambda face: float(face[2]) * float(face[3]))
+        return np.asarray(row[4:14], dtype=np.float64).reshape(5, 2)
