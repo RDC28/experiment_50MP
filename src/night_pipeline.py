@@ -1408,10 +1408,15 @@ def night_conclusions(manifest: dict) -> list[str]:
             lines.append("Lower after night processing: " + ", ".join(improved) + ".")
         if worse:
             lines.append("Higher after night processing (review the crops): " + ", ".join(worse) + ".")
-        lines.append(
-            "The lower clipping fraction comes from the highlight shoulder rolling off clipped values; no clipped "
-            "radiance was recovered."
-        )
+        clip_before, clip_after = (m["highlight_clipping_fraction"]["any_channel"] for m in (before, after))
+        rolloff = any(stage["name"] == "highlight_rolloff" and stage["enabled"] for stage in record["stages"])
+        if rolloff and clip_after < clip_before:
+            lines.append(
+                "The lower clipping fraction comes from the highlight shoulder rolling off clipped values; no clipped "
+                "radiance was recovered."
+            )
+        else:
+            lines.append("No clipped radiance was recovered.")
         reasons = sorted({r for f in record["fallbacks"] for r in f["reasons"]})
         if reasons:
             lines.append(

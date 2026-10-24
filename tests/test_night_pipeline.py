@@ -232,6 +232,26 @@ def test_night_metrics_are_reported_before_and_after(run):
     assert all(len(row) == len(header) and "-" not in row[1:] for row in rows if "Halo" not in row[0])
 
 
+SHOULDER_CLAIM = "The lower clipping fraction comes from the highlight shoulder"
+
+
+def test_conclusions_credit_the_shoulder_only_when_it_lowered_clipping(run, tmp_path):
+    _, result, _ = run
+    record = result.manifest["night"]
+    lowered = (
+        record["metrics_after"]["highlight_clipping_fraction"]["any_channel"]
+        < record["metrics_before"]["highlight_clipping_fraction"]["any_channel"]
+    )
+    conclusions = night_pipeline.night_conclusions(result.manifest)
+    assert any(line.startswith(SHOULDER_CLAIM) for line in conclusions) == lowered
+    config = small_config(super_resolution={"enabled": False}, highlights={"rolloff_strength": "none"})
+    no_shoulder = run_small(tmp_path, config)
+    conclusions = night_pipeline.night_conclusions(no_shoulder.manifest)
+    assert "No clipped radiance was recovered." in conclusions
+    assert not any(SHOULDER_CLAIM in line for line in conclusions)
+    assert SHOULDER_CLAIM not in no_shoulder.report_path.read_text()
+
+
 def test_section_19_3_figures_are_written(run):
     _, result, _ = run
     figures = result.reports_dir / "figures"
