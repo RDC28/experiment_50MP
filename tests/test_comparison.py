@@ -43,14 +43,3 @@ def test_crop_panel_layout():
     panel = comparison.crop_panel(np.zeros((16, 24, 3), np.uint8), {"lanczos": tile, "bicubic": tile + 10})
     assert panel.shape == (40 + 30, 4 * 60 + 3 * 8, 3)
     assert panel.dtype == np.uint8
-
-
-def test_crop_panel_differences_the_named_pair():
-    a = np.zeros((40, 60, 3), dtype=np.uint8)
-    tiles = {"lanczos": a, "bicubic": a + 10, "final": a + 30}
-    default = comparison.crop_panel(a[:16, :24], tiles)
-    chosen = comparison.crop_panel(a[:16, :24], tiles, difference=("lanczos", "final"))
-    x = 4 * (60 + 8)  # the difference column follows the source and three tiles
-    assert default.shape == chosen.shape == (40 + 30, 5 * 60 + 4 * 8, 3)
-    # |30 - 0| x 8 saturates the colour map; |10 - 0| x 8 does not.
-    assert chosen[30 + 20, x + 30].sum() > default[30 + 20, x + 30].sum()

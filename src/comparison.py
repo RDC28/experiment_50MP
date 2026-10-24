@@ -107,8 +107,6 @@ def crop_panel(
         x = index * (tile_w + _GUTTER)
         panel[_HEADER:, x : x + tile_w] = tile
         scale = 0.5 if tile_w >= 200 else 0.35
-        while scale > 0.25 and cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0][0] > tile_w - 8:
-            scale -= 0.05  # shrink long labels to fit their column
         cv2.putText(
             panel, label, (x + 6, _HEADER - 10), cv2.FONT_HERSHEY_SIMPLEX, scale, (235, 235, 235), 1, cv2.LINE_AA
         )
