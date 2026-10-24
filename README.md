@@ -91,10 +91,10 @@ reports/                       per-run report, manifest and figures (not in Git)
 Notebook `03_Universal_50MP` remains planned for Phase 4.
 The reconstruction notebooks end the same way: one final 50 MP image, saved again under `final/` in the run's
 masters folder by `final_output.publish` and delivered by `final_output.deliver` (a browser download of the
-final TIFF in Colab, and a copy to `FINAL_DRIVE_DIR` when Drive is mounted). Notebook 00 chooses it among its
-outputs with `final_output.select`; notebooks 01 and 02 make one master each, which is their final image;
-`03_Universal_50MP` will use the same step. Notebook 05 (synthetic sensor research) does not produce a final
-image.
+final TIFF in Colab, or of the EXR when no TIFF was exported, and a copy to `FINAL_DRIVE_DIR` when Drive is
+mounted). Notebook 00 chooses it among its outputs with `final_output.select`; notebooks 01 and 02 make one
+master each, which is their final image; `03_Universal_50MP` will use the same step. Notebook 05 (synthetic
+sensor research) does not produce a final image.
 
 ## Running in Google Colab
 
