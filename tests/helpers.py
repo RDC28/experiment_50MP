@@ -74,3 +74,41 @@ def d50_colorants(primaries) -> np.ndarray:
     """D50-adapted (Bradford) XYZ colorants for primaries with a D65 white, as an ICC profile stores them."""
     adapt = cm.bradford_adaptation(cm.xy_to_xyz(cm.D65_XY), cm.ICC_D50_XYZ)
     return adapt @ cm.rgb_to_xyz_matrix(primaries, cm.D65_XY)
+
+
+def evaluation_config(project, root, **sections):
+    """A Phase 6 evaluation profile writing under ``project`` with the repository's specialised profiles."""
+    from synthetic_raw_lab import evaluation_config as ec
+
+    universal = {
+        "output_root": str(project / "outputs"),
+        "reports_root": str(project / "reports"),
+        "inputs_root": str(project / "inputs"),
+        "analysis": {"face_detection": False},
+        "human": {"profile": str(root / "configs" / "human_default.yaml"), "overrides": {}},
+        "night": {"profile": str(root / "configs" / "night_default.yaml"), "overrides": {}},
+    }
+    for key, value in sections.pop("universal_overrides", {}).items():
+        universal[key] = {**universal[key], **value} if isinstance(universal.get(key), dict) else value
+    sections.setdefault("ablation", {})
+    sections["ablation"] = {"performance_sweep": [], "review_crop_px": 48, **sections["ablation"]}
+    return ec.load_evaluation_config(
+        root / "configs" / "evaluation_default.yaml", root, universal_overrides=universal, **sections
+    )
+
+
+def fake_sr(mode, linear, width, height):
+    """A stand-in for the Phase 2 SR path: Lanczos plus an unsharp mask (stronger for the perceptual modes)."""
+    import cv2
+
+    from synthetic_raw_lab import baselines
+
+    image = baselines.resample(linear, width, height, "lanczos")
+    blur = cv2.GaussianBlur(image, (0, 0), 1.0)
+    image = (image + (0.5 if mode == "conservative" else 1.5) * (image - blur)).astype(np.float32)
+    summary = {
+        "seams": {"passed": mode == "conservative"},
+        "tiling": {"inference_seconds": 0.01, "tile_size": 64, "tile_overlap": 16},
+        "model": {"peak_device_memory_mb": 1.0, "precision": "float32"},
+    }
+    return image, summary

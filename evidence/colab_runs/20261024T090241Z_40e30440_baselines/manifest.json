@@ -1,0 +1,3322 @@
+{
+  "schema": "synthetic_raw_lab.phase01.manifest/1",
+  "phase": "Phase 0 (feasibility) and Phase 1 (baselines) and Phase 2 (pretrained super-resolution)",
+  "notice": "Synthetic camera-grade masters reconstructed from an AI-generated source by classical interpolation (baselines) and by pretrained super-resolution (synthesised detail). None is a camera capture or camera RAW file and none contains recovered sensor measurements.",
+  "started_at": "2026-10-24T09:02:41+00:00",
+  "package": {
+    "name": "synthetic_raw_lab",
+    "version": "0.1.0",
+    "git": {
+      "commit": "c3c1abbfa0452c24074f9f4f338967e2c2ae6aca",
+      "dirty": false
+    }
+  },
+  "notebook_version": "00_Feasibility_Baselines/1.1",
+  "models": [
+    {
+      "weights": {
+        "name": "swinir_m_x4_classical",
+        "file": "001_classicalSR_DF2K_s64w8_SwinIR-M_x4.pth",
+        "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DF2K_s64w8_SwinIR-M_x4.pth",
+        "sha256": "4e78e33f22c1aa8a773db0cf4a7381bae97c2362c717f155439ebc690cbd9215",
+        "size_bytes": 67869037,
+        "architecture": "SwinIR-M x4, pixel-shuffle upsampler (11.9M parameters)",
+        "role": "fidelity",
+        "license": "Apache-2.0 (SwinIR code and released weights, Liang et al. 2021)",
+        "training_data": "DF2K (DIV2K + Flickr2K), bicubic degradation, L1 loss",
+        "commercial_use": "Licence permits commercial use; DIV2K is published for academic research only, so commercial use of these weights is unresolved.",
+        "description": "Classical SR: reconstructs edges faithfully, keeps source texture, invents the least."
+      },
+      "architecture": "SwinIR",
+      "scale": 4,
+      "tile_alignment": 8,
+      "device": {
+        "device": "cuda",
+        "torch": "2.11.0+cu130",
+        "name": "NVIDIA L4",
+        "memory_total_gb": 23.66,
+        "memory_free_gb": 15.63,
+        "cuda": "13.0"
+      },
+      "precision": "float32",
+      "peak_device_memory_mb": 4400.4
+    },
+    {
+      "weights": {
+        "name": "swinir_m_x4_realsr_gan",
+        "file": "003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.pth",
+        "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.pth",
+        "sha256": "b9afb61e65e04eb7f8aba5095d070bbe9af28df76acd0c9405aeb33b814bcfc6",
+        "size_bytes": 67129861,
+        "architecture": "SwinIR-M x4, nearest+conv upsampler (11.7M parameters)",
+        "role": "perceptual",
+        "license": "Apache-2.0 (SwinIR code and released weights, Liang et al. 2021)",
+        "training_data": "DIV2K + Flickr2K + OST, BSRGAN real-world degradation, L1 + perceptual + adversarial loss",
+        "commercial_use": "Licence permits commercial use; DIV2K is published for academic research only, so commercial use of these weights is unresolved.",
+        "description": "Real-world SR: sharper edges and synthesised texture."
+      },
+      "architecture": "SwinIR",
+      "scale": 4,
+      "tile_alignment": 8,
+      "device": {
+        "device": "cuda",
+        "torch": "2.11.0+cu130",
+        "name": "NVIDIA L4",
+        "memory_total_gb": 23.66,
+        "memory_free_gb": 15.57,
+        "cuda": "13.0"
+      },
+      "precision": "float32",
+      "peak_device_memory_mb": 4399.7
+    }
+  ],
+  "random_seeds": {
+    "random_seed": 42,
+    "used_by": "torch.manual_seed before SR inference (inference itself draws no random numbers)"
+  },
+  "config": {
+    "profile": "baselines",
+    "input_category": "universal",
+    "runtime_preset": "standard",
+    "quick_target_megapixels": 2.0,
+    "target_megapixels": 50.0,
+    "resolution_mode": "tolerance",
+    "pixel_count_tolerance": 0.001,
+    "dimension_multiple": 2,
+    "preserve_aspect_ratio": true,
+    "max_aspect_ratio_error": 0.001,
+    "source_color_space": "auto",
+    "working_color_space": "linear_rec709",
+    "processing_precision": "float32",
+    "baselines": [
+      "lanczos",
+      "bicubic"
+    ],
+    "enable_super_resolution": true,
+    "sr_backend": "swinir",
+    "sr_modes": [
+      "conservative",
+      "balanced"
+    ],
+    "sr_tile_size": 0,
+    "sr_tile_overlap": 64,
+    "sr_strength": 1.0,
+    "preserve_source_structure": true,
+    "sr_device": "auto",
+    "sr_precision": "auto",
+    "sr_weights_dir": "",
+    "export_tiff16": true,
+    "tiff_compression": "zlib",
+    "export_exr": true,
+    "exr_precision": "half",
+    "exr_compression": "zip",
+    "export_review": true,
+    "review_max_edge": 2048,
+    "save_intermediates": true,
+    "crop_size": 256,
+    "crop_count": 4,
+    "crops": [],
+    "random_seed": 42,
+    "output_root": "",
+    "reports_root": "",
+    "inputs_root": ""
+  },
+  "runtime": {
+    "python": "3.13.16",
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "cpu_count": 12,
+    "in_colab": true,
+    "ram_total_gb": 56.86,
+    "ram_available_gb": 54.99,
+    "disk_free_gb": 207.37,
+    "gpu": {
+      "name": "NVIDIA L4",
+      "count": 1,
+      "memory_total_gb": 22.49,
+      "memory_free_gb": 22.04,
+      "driver_version": "580.82.07",
+      "driver_cuda_version": "13.0"
+    },
+    "packages": {
+      "numpy": "2.1.3",
+      "scipy": "1.16.3",
+      "pillow": "11.3.0",
+      "opencv-python": "5.0.0.93",
+      "opencv-python-headless": "5.0.0.93",
+      "scikit-image": "0.25.2",
+      "tifffile": "2026.10.15",
+      "OpenEXR": "3.5.2",
+      "PyYAML": "6.0.3",
+      "psutil": "5.9.5",
+      "matplotlib": "3.10.0",
+      "torch": "2.11.0+cu130",
+      "torchvision": "0.26.0+cu130",
+      "spandrel": "0.4.2"
+    }
+  },
+  "stages": [
+    {
+      "name": "ingest_and_validate",
+      "classification": "Preservation",
+      "enabled": true,
+      "parameters": {
+        "source_color_space": "auto",
+        "working_color_space": "linear_rec709"
+      },
+      "input_precision": "uint8 (8-bit)",
+      "output_precision": "float32 linear working space",
+      "seconds": 2.478,
+      "rss_peak_mb": 1101.8,
+      "memory_warnings": [],
+      "error": null,
+      "notes": [
+        "no embedded ICC profile; assumed sRGB (override with source_color_space)",
+        "possible shadow clipping in G: 1.71% at minimum",
+        "possible shadow clipping in B: 1.29% at minimum"
+      ]
+    },
+    {
+      "name": "memory_benchmark",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "width": 10852,
+        "height": 4604
+      },
+      "input_precision": "-",
+      "output_precision": "-",
+      "seconds": 1.597,
+      "rss_peak_mb": 605.4,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "save_working_source",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "format": "OpenEXR float32"
+      },
+      "input_precision": "float32",
+      "output_precision": "float32",
+      "seconds": 5.843,
+      "rss_peak_mb": 812.6,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "baseline_lanczos",
+      "classification": "Interpolation",
+      "enabled": true,
+      "parameters": {
+        "method": "Lanczos-3 windowed sinc (a = 3, 6x6 taps when upscaling), Pillow float32",
+        "width": 10852,
+        "height": 4604,
+        "scale_x": 1.712753,
+        "scale_y": 1.712798,
+        "space": "linear_rec709"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "float32 linear",
+      "seconds": 10.705,
+      "rss_peak_mb": 1754.5,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "export_exr_lanczos",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "precision": "half",
+        "compression": "zip"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "half linear",
+      "seconds": 9.848,
+      "rss_peak_mb": 1537.0,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "encode_srgb16_lanczos",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "transfer": "sRGB",
+        "clip": "[0, 1]"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "uint16 sRGB",
+      "seconds": 2.291,
+      "rss_peak_mb": 1598.8,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "export_tiff16_lanczos",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "compression": "zlib"
+      },
+      "input_precision": "uint16 sRGB",
+      "output_precision": "uint16 sRGB TIFF",
+      "seconds": 6.48,
+      "rss_peak_mb": 1633.9,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "source_consistency_lanczos",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "reduction": "area average (box filter over each output pixel footprint), Pillow float32",
+        "compared": "16-bit sRGB master vs source"
+      },
+      "input_precision": "uint16 sRGB",
+      "output_precision": "metrics",
+      "seconds": 36.047,
+      "rss_peak_mb": 3546.1,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "baseline_bicubic",
+      "classification": "Interpolation",
+      "enabled": true,
+      "parameters": {
+        "method": "Keys cubic convolution (a = -0.5, 4x4 taps when upscaling), Pillow float32",
+        "width": 10852,
+        "height": 4604,
+        "scale_x": 1.712753,
+        "scale_y": 1.712798,
+        "space": "linear_rec709"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "float32 linear",
+      "seconds": 10.173,
+      "rss_peak_mb": 1792.0,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "export_exr_bicubic",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "precision": "half",
+        "compression": "zip"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "half linear",
+      "seconds": 9.721,
+      "rss_peak_mb": 1575.0,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "encode_srgb16_bicubic",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "transfer": "sRGB",
+        "clip": "[0, 1]"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "uint16 sRGB",
+      "seconds": 2.31,
+      "rss_peak_mb": 1651.4,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "export_tiff16_bicubic",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "compression": "zlib"
+      },
+      "input_precision": "uint16 sRGB",
+      "output_precision": "uint16 sRGB TIFF",
+      "seconds": 6.299,
+      "rss_peak_mb": 1633.7,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "source_consistency_bicubic",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "reduction": "area average (box filter over each output pixel footprint), Pillow float32",
+        "compared": "16-bit sRGB master vs source"
+      },
+      "input_precision": "uint16 sRGB",
+      "output_precision": "metrics",
+      "seconds": 35.67,
+      "rss_peak_mb": 3539.2,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "super_resolution_setup",
+      "classification": "Setup (loads model weights, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "backend": "swinir"
+      },
+      "input_precision": "-",
+      "output_precision": "-",
+      "seconds": 9.847,
+      "rss_peak_mb": 1177.0,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "load_model_swinir_m_x4_classical",
+      "classification": "Setup (loads model weights, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "weights": "swinir_m_x4_classical",
+        "device": "auto",
+        "precision": "auto"
+      },
+      "input_precision": "weights file",
+      "output_precision": "network",
+      "seconds": 1.502,
+      "rss_peak_mb": 1423.0,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "super_resolution_conservative",
+      "classification": "Inference",
+      "enabled": true,
+      "parameters": {
+        "weights": "swinir_m_x4_classical",
+        "native_scale": 4,
+        "then": "Lanczos-3 x0.4282 (downscale)",
+        "tile": "640 (60% of free CUDA memory at 33 kB per input pixel (SwinIR, float32))",
+        "overlap": 64,
+        "strength": 1.0,
+        "device": "cuda",
+        "precision": "float32"
+      },
+      "input_precision": "float32 linear (sRGB-encoded for the network)",
+      "output_precision": "float32 linear",
+      "seconds": 395.072,
+      "rss_peak_mb": 4208.0,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "source_projection_conservative",
+      "classification": "Interpolation",
+      "enabled": true,
+      "parameters": {
+        "strength": 1.0,
+        "reduction": "area average",
+        "upsampling": "Keys bicubic"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "float32 linear",
+      "seconds": 6.131,
+      "rss_peak_mb": 3601.6,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "seam_check_conservative",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "boundaries": 54
+      },
+      "input_precision": "-",
+      "output_precision": "-",
+      "seconds": 4.009,
+      "rss_peak_mb": 2687.6,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "interpolation_difference_conservative",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "reference": "Lanczos-3"
+      },
+      "input_precision": "-",
+      "output_precision": "-",
+      "seconds": 16.462,
+      "rss_peak_mb": 3006.6,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "export_exr_sr_conservative",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "precision": "half",
+        "compression": "zip"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "half linear",
+      "seconds": 9.779,
+      "rss_peak_mb": 2934.6,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "encode_srgb16_sr_conservative",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "transfer": "sRGB",
+        "clip": "[0, 1]"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "uint16 sRGB",
+      "seconds": 2.467,
+      "rss_peak_mb": 3041.4,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "export_tiff16_sr_conservative",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "compression": "zlib"
+      },
+      "input_precision": "uint16 sRGB",
+      "output_precision": "uint16 sRGB TIFF",
+      "seconds": 6.242,
+      "rss_peak_mb": 3023.5,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "source_consistency_sr_conservative",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "reduction": "area average (box filter over each output pixel footprint), Pillow float32",
+        "compared": "16-bit sRGB master vs source"
+      },
+      "input_precision": "uint16 sRGB",
+      "output_precision": "metrics",
+      "seconds": 35.729,
+      "rss_peak_mb": 4898.7,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "load_model_swinir_m_x4_realsr_gan",
+      "classification": "Setup (loads model weights, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "weights": "swinir_m_x4_realsr_gan",
+        "device": "auto",
+        "precision": "auto"
+      },
+      "input_precision": "weights file",
+      "output_precision": "network",
+      "seconds": 2.921,
+      "rss_peak_mb": 2094.2,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "super_resolution_balanced",
+      "classification": "Inference",
+      "enabled": true,
+      "parameters": {
+        "weights": "swinir_m_x4_realsr_gan",
+        "native_scale": 4,
+        "then": "Lanczos-3 x0.4282 (downscale)",
+        "tile": "640 (60% of free CUDA memory at 33 kB per input pixel (SwinIR, float32))",
+        "overlap": 64,
+        "strength": 1.0,
+        "device": "cuda",
+        "precision": "float32"
+      },
+      "input_precision": "float32 linear (sRGB-encoded for the network)",
+      "output_precision": "float32 linear",
+      "seconds": 401.67,
+      "rss_peak_mb": 4328.4,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "source_projection_balanced",
+      "classification": "Interpolation",
+      "enabled": true,
+      "parameters": {
+        "strength": 1.0,
+        "reduction": "area average",
+        "upsampling": "Keys bicubic"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "float32 linear",
+      "seconds": 6.028,
+      "rss_peak_mb": 3716.2,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "seam_check_balanced",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "boundaries": 54
+      },
+      "input_precision": "-",
+      "output_precision": "-",
+      "seconds": 2.92,
+      "rss_peak_mb": 2804.3,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "interpolation_difference_balanced",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "reference": "Lanczos-3"
+      },
+      "input_precision": "-",
+      "output_precision": "-",
+      "seconds": 15.736,
+      "rss_peak_mb": 3157.4,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "export_exr_sr_balanced",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "precision": "half",
+        "compression": "zip"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "half linear",
+      "seconds": 9.738,
+      "rss_peak_mb": 3057.5,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "encode_srgb16_sr_balanced",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "transfer": "sRGB",
+        "clip": "[0, 1]"
+      },
+      "input_precision": "float32 linear",
+      "output_precision": "uint16 sRGB",
+      "seconds": 2.464,
+      "rss_peak_mb": 3141.3,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "export_tiff16_sr_balanced",
+      "classification": "Packaging",
+      "enabled": true,
+      "parameters": {
+        "compression": "zlib"
+      },
+      "input_precision": "uint16 sRGB",
+      "output_precision": "uint16 sRGB TIFF",
+      "seconds": 6.152,
+      "rss_peak_mb": 3040.2,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "source_consistency_sr_balanced",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "reduction": "area average (box filter over each output pixel footprint), Pillow float32",
+        "compared": "16-bit sRGB master vs source"
+      },
+      "input_precision": "uint16 sRGB",
+      "output_precision": "metrics",
+      "seconds": 35.674,
+      "rss_peak_mb": 5009.9,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    },
+    {
+      "name": "crop_comparison",
+      "classification": "Measurement (reads data, produces no image data)",
+      "enabled": true,
+      "parameters": {
+        "crops": 4
+      },
+      "input_precision": "uint16 sRGB",
+      "output_precision": "uint8 sRGB review PNG",
+      "seconds": 1.84,
+      "rss_peak_mb": 2087.8,
+      "memory_warnings": [],
+      "error": null,
+      "notes": []
+    }
+  ],
+  "baselines": {
+    "lanczos": {
+      "description": "Lanczos-3 windowed sinc (a = 3, 6x6 taps when upscaling), Pillow float32",
+      "classification": "Interpolation",
+      "exports": {
+        "exr": {
+          "path": "/content/experiment_50MP/outputs/universal/20261024T090241Z_40e30440_baselines/test_image_1_lanczos_10852x4604_lin_rec709_half.exr",
+          "kind": "exr_half_linear_rec709",
+          "width": 10852,
+          "height": 4604,
+          "sample_type": "float16",
+          "channels": 3,
+          "compression": "ZIP_COMPRESSION",
+          "file_sha256": "fc19fe3d01cdf4e029ac72cab66d700f5c87c8766504050374211e8e8b01fca0",
+          "pixel_sha256": "97e43d2dba1f295b560a71dd5fe002fab134812cabf3c7e4aaec0a0daa7905e5",
+          "size_bytes": 161522847,
+          "checks": {
+            "decodes": true,
+            "channels_rgb": true,
+            "dimensions": true,
+            "channel_precision": true,
+            "chromaticities": true,
+            "attributes_roundtrip": true,
+            "pixels_identical": true,
+            "finite_values": true
+          },
+          "valid": true
+        },
+        "tiff16": {
+          "path": "/content/experiment_50MP/outputs/universal/20261024T090241Z_40e30440_baselines/test_image_1_lanczos_10852x4604_srgb16.tif",
+          "kind": "tiff16_srgb",
+          "width": 10852,
+          "height": 4604,
+          "sample_type": "uint16",
+          "channels": 3,
+          "compression": "ADOBE_DEFLATE",
+          "file_sha256": "56f45f4b42171c6572bf0f7d4aecbc8aff06a6b487f209cf6cf51bddc97b2752",
+          "pixel_sha256": "f1f26bdaf8f7e822f142ee355756357bb9550b2fbfb5b5449d95d5814bf90da3",
+          "size_bytes": 231259941,
+          "checks": {
+            "decodes": true,
+            "single_image": true,
+            "dimensions": true,
+            "bits_per_sample_16": true,
+            "samples_per_pixel_3": true,
+            "photometric_rgb": true,
+            "lossless_compression": true,
+            "icc_profile_embedded": true,
+            "metadata_roundtrip": true,
+            "no_8bit_downconversion": true,
+            "pixels_identical": true
+          },
+          "valid": true
+        }
+      },
+      "working_pixel_sha256": "7f156f58af5a1966da17f51622cb4fb33b252bc514c031846eacc3068e7faa25",
+      "statistics": {
+        "domain": "linear working space",
+        "mean": {
+          "R": 0.359827,
+          "G": 0.186211,
+          "B": 0.125494
+        },
+        "std": {
+          "R": 0.270779,
+          "G": 0.181297,
+          "B": 0.158533
+        },
+        "min": {
+          "R": -0.000392,
+          "G": -0.001307,
+          "B": -0.001907
+        },
+        "max": {
+          "R": 1.100161,
+          "G": 1.00825,
+          "B": 1.009671
+        },
+        "below_zero_fraction": 0.0042264673880381375,
+        "above_one_fraction": 0.0005276345862489805
+      },
+      "tiff_clipping": {
+        "samples": 149887824,
+        "below_zero": 633496,
+        "above_one": 79086,
+        "nonfinite": 0,
+        "below_zero_fraction": 0.0042264673880381375,
+        "above_one_fraction": 0.0005276345862489805
+      },
+      "source_consistency": {
+        "domain": "sRGB-encoded values in [0, 1] at source resolution (area-average reduction)",
+        "psnr_db": 55.230335409295044,
+        "ssim": 0.9985317441324683,
+        "ms_ssim": {
+          "value": 0.9998147716921741,
+          "levels": 5
+        },
+        "lpips": null,
+        "lpips_note": "not computed: LPIPS needs pretrained network weights, which Phase 0/1 does not download",
+        "edge_displacement": {
+          "mean_px": 0.44967890103535235,
+          "p95_px": 1.0,
+          "edge_pixel_ratio": 0.9919331026702907,
+          "reference_edge_pixels": 264166
+        },
+        "color_difference_ciede2000": {
+          "mean": 0.13802455365657806,
+          "p95": 0.3616885244846344,
+          "max": 6.309780597686768
+        },
+        "luminance_distribution": {
+          "domain": "CIE L* (0 to 100)",
+          "mean_shift": 0.0016937255859375,
+          "std_ratio": 0.9998549818992615,
+          "wasserstein_1": 0.004687202628701925
+        }
+      }
+    },
+    "bicubic": {
+      "description": "Keys cubic convolution (a = -0.5, 4x4 taps when upscaling), Pillow float32",
+      "classification": "Interpolation",
+      "exports": {
+        "exr": {
+          "path": "/content/experiment_50MP/outputs/universal/20261024T090241Z_40e30440_baselines/test_image_1_bicubic_10852x4604_lin_rec709_half.exr",
+          "kind": "exr_half_linear_rec709",
+          "width": 10852,
+          "height": 4604,
+          "sample_type": "float16",
+          "channels": 3,
+          "compression": "ZIP_COMPRESSION",
+          "file_sha256": "e313759ed062ce69cf270e6223e557e5df1a594bc80ac8375f21bdde8dff044f",
+          "pixel_sha256": "14dd228853f342a47dbe8dfff63eafec43c68f7a70a6f12e7657868a7f935b23",
+          "size_bytes": 159410775,
+          "checks": {
+            "decodes": true,
+            "channels_rgb": true,
+            "dimensions": true,
+            "channel_precision": true,
+            "chromaticities": true,
+            "attributes_roundtrip": true,
+            "pixels_identical": true,
+            "finite_values": true
+          },
+          "valid": true
+        },
+        "tiff16": {
+          "path": "/content/experiment_50MP/outputs/universal/20261024T090241Z_40e30440_baselines/test_image_1_bicubic_10852x4604_srgb16.tif",
+          "kind": "tiff16_srgb",
+          "width": 10852,
+          "height": 4604,
+          "sample_type": "uint16",
+          "channels": 3,
+          "compression": "ADOBE_DEFLATE",
+          "file_sha256": "dd75fdfd8e3319d739ab3dcc94dc06adfa4971ad5796be34b3d58e0dc0fcbb94",
+          "pixel_sha256": "499ad3dbee3b157a1538383fd21c74228d6856d8e9fe12271a07100d37c98914",
+          "size_bytes": 228794755,
+          "checks": {
+            "decodes": true,
+            "single_image": true,
+            "dimensions": true,
+            "bits_per_sample_16": true,
+            "samples_per_pixel_3": true,
+            "photometric_rgb": true,
+            "lossless_compression": true,
+            "icc_profile_embedded": true,
+            "metadata_roundtrip": true,
+            "no_8bit_downconversion": true,
+            "pixels_identical": true
+          },
+          "valid": true
+        }
+      },
+      "working_pixel_sha256": "9f84bb4803921a828daa019b252e98d3720e64610a0def2f65b7887b298ef023",
+      "statistics": {
+        "domain": "linear working space",
+        "mean": {
+          "R": 0.359827,
+          "G": 0.186211,
+          "B": 0.125494
+        },
+        "std": {
+          "R": 0.270764,
+          "G": 0.181288,
+          "B": 0.158527
+        },
+        "min": {
+          "R": -0.000211,
+          "G": -0.001191,
+          "B": -0.001169
+        },
+        "max": {
+          "R": 1.071401,
+          "G": 1.004224,
+          "B": 1.005173
+        },
+        "below_zero_fraction": 0.004110934321122708,
+        "above_one_fraction": 0.00047608270035329886
+      },
+      "tiff_clipping": {
+        "samples": 149887824,
+        "below_zero": 616179,
+        "above_one": 71359,
+        "nonfinite": 0,
+        "below_zero_fraction": 0.004110934321122708,
+        "above_one_fraction": 0.00047608270035329886
+      },
+      "source_consistency": {
+        "domain": "sRGB-encoded values in [0, 1] at source resolution (area-average reduction)",
+        "psnr_db": 54.9264715085246,
+        "ssim": 0.9983535422923498,
+        "ms_ssim": {
+          "value": 0.9997959308835064,
+          "levels": 5
+        },
+        "lpips": null,
+        "lpips_note": "not computed: LPIPS needs pretrained network weights, which Phase 0/1 does not download",
+        "edge_displacement": {
+          "mean_px": 0.451087545908905,
+          "p95_px": 1.0,
+          "edge_pixel_ratio": 0.9851116343511277,
+          "reference_edge_pixels": 264166
+        },
+        "color_difference_ciede2000": {
+          "mean": 0.14561839401721954,
+          "p95": 0.382365345954895,
+          "max": 6.888844013214111
+        },
+        "luminance_distribution": {
+          "domain": "CIE L* (0 to 100)",
+          "mean_shift": 0.00208282470703125,
+          "std_ratio": 0.9998264908790588,
+          "wasserstein_1": 0.005110947415232658
+        }
+      }
+    }
+  },
+  "status": "complete",
+  "run_id": "20261024T090241Z_40e30440_baselines",
+  "source": {
+    "original_path": "/content/experiment_50MP/outputs/_staging/test_image_1.jpg",
+    "stored_copy": "/content/experiment_50MP/inputs/universal/40e304406633_test_image_1.jpg",
+    "sha256": "40e304406633ec29dce11d9ca381d93b4ed24b4096c95a5cbf0b40973d0f6329",
+    "pixel_sha256": "4c1b2455300e835903774e712fc59bcad3e9b655ea7ff5c8286e6f947afdfcb6",
+    "width": 6336,
+    "height": 2688,
+    "color_space": {
+      "name": "srgb",
+      "description": "sRGB IEC 61966-2-1",
+      "transfer": "sRGB piecewise",
+      "origin": "untagged_default",
+      "signal": "encoded display-referred RGB",
+      "matrix_to_working": null
+    }
+  },
+  "validation": {
+    "file": {
+      "original_name": "test_image_1.jpg",
+      "format": "JPEG",
+      "mandatory_format": true,
+      "size_bytes": 7470965,
+      "sha256": "40e304406633ec29dce11d9ca381d93b4ed24b4096c95a5cbf0b40973d0f6329",
+      "stored_copy": "/content/experiment_50MP/inputs/universal/40e304406633_test_image_1.jpg",
+      "stored_read_only": true,
+      "decoder": "opencv"
+    },
+    "dimensions": {
+      "width": 6336,
+      "height": 2688,
+      "megapixels": 17.031168,
+      "aspect_ratio": 2.357142857142857,
+      "aspect_ratio_reduced": "33:14"
+    },
+    "samples": {
+      "dtype": "uint8",
+      "bit_depth": 8,
+      "effective_bit_depth": 8,
+      "channels_in_file": 3,
+      "color_channels": 3
+    },
+    "alpha": {
+      "present": false,
+      "opaque": true,
+      "min": null
+    },
+    "color": {
+      "icc_profile_present": false,
+      "icc_profile_description": null,
+      "icc_profile_bytes": 0,
+      "resolved": {
+        "name": "srgb",
+        "description": "sRGB IEC 61966-2-1",
+        "transfer": "sRGB piecewise",
+        "origin": "untagged_default",
+        "signal": "encoded display-referred RGB",
+        "matrix_to_working": null
+      },
+      "working_space": "linear-light RGB, Rec.709/sRGB primaries, D65 white, float32",
+      "working_signal": "linear-light display-referred RGB (not scene-referred radiance)"
+    },
+    "metadata": {
+      "exif_present": false,
+      "exif": {},
+      "text_keys": []
+    },
+    "clipping": {
+      "channels": {
+        "R": {
+          "at_min_fraction": 0.0001427970177970178,
+          "at_max_fraction": 0.003893508654250842
+        },
+        "G": {
+          "at_min_fraction": 0.017062188570977632,
+          "at_max_fraction": 0.00016610722177128428
+        },
+        "B": {
+          "at_min_fraction": 0.012913676854106541,
+          "at_max_fraction": 8.96004313973064e-05
+        }
+      },
+      "any_channel_at_max_fraction": 0.003996261442550505
+    },
+    "compression": {
+      "jpeg_quality_estimate": 99.1,
+      "blockiness_ratio": 1.006990909576416
+    },
+    "integrity": {
+      "structure_verified": true,
+      "fully_decoded": true
+    },
+    "pixel_sha256": "4c1b2455300e835903774e712fc59bcad3e9b655ea7ff5c8286e6f947afdfcb6",
+    "duplicates": [],
+    "warnings": [
+      "no embedded ICC profile; assumed sRGB (override with source_color_space)",
+      "possible shadow clipping in G: 1.71% at minimum",
+      "possible shadow clipping in B: 1.29% at minimum"
+    ]
+  },
+  "target_resolution": {
+    "source_width": 6336,
+    "source_height": 2688,
+    "width": 10852,
+    "height": 4604,
+    "pixels": 49962608,
+    "megapixels": 49.962608,
+    "target_pixels": 50000000,
+    "mode": "tolerance",
+    "pixel_count_error": -0.00074784,
+    "aspect_ratio_error": -2.6327567596029802e-05,
+    "nominal_scale": 1.713415872291065,
+    "scale_x": 1.7127525252525253,
+    "scale_y": 1.712797619047619
+  },
+  "memory": {
+    "estimates": [
+      {
+        "representation": "RGB 8-bit",
+        "bytes_per_pixel": 3,
+        "estimated_mb": 149.9
+      },
+      {
+        "representation": "RGB 16-bit integer",
+        "bytes_per_pixel": 6,
+        "estimated_mb": 299.8
+      },
+      {
+        "representation": "RGB float16",
+        "bytes_per_pixel": 6,
+        "estimated_mb": 299.8
+      },
+      {
+        "representation": "RGB float32",
+        "bytes_per_pixel": 12,
+        "estimated_mb": 599.6
+      },
+      {
+        "representation": "RGBA float32",
+        "bytes_per_pixel": 16,
+        "estimated_mb": 799.4
+      },
+      {
+        "representation": "Single-channel float32 mask",
+        "bytes_per_pixel": 4,
+        "estimated_mb": 199.9
+      }
+    ],
+    "benchmark": [
+      {
+        "representation": "RGB 8-bit",
+        "bytes_per_pixel": 3,
+        "estimated_mb": 149.9,
+        "measured_rss_mb": 150.0,
+        "allocate_seconds": 0.032
+      },
+      {
+        "representation": "RGB 16-bit integer",
+        "bytes_per_pixel": 6,
+        "estimated_mb": 299.8,
+        "measured_rss_mb": 299.8,
+        "allocate_seconds": 0.066
+      },
+      {
+        "representation": "RGB float16",
+        "bytes_per_pixel": 6,
+        "estimated_mb": 299.8,
+        "measured_rss_mb": 299.8,
+        "allocate_seconds": 0.069
+      },
+      {
+        "representation": "RGB float32",
+        "bytes_per_pixel": 12,
+        "estimated_mb": 599.6,
+        "measured_rss_mb": 599.6,
+        "allocate_seconds": 0.136
+      },
+      {
+        "representation": "RGBA float32",
+        "bytes_per_pixel": 16,
+        "estimated_mb": 799.4,
+        "measured_rss_mb": 799.4,
+        "allocate_seconds": 0.179
+      },
+      {
+        "representation": "Single-channel float32 mask",
+        "bytes_per_pixel": 4,
+        "estimated_mb": 199.9,
+        "measured_rss_mb": 199.9,
+        "allocate_seconds": 0.046
+      }
+    ],
+    "pipeline_peak_rss_mb": 5009.9,
+    "process_lifetime_peak_rss_mb": 5013.2
+  },
+  "storage": {
+    "upper_bound_bytes": 2602579200,
+    "per_baseline_bytes": 599551296,
+    "intermediates_bytes": 204374016,
+    "note": "uncompressed upper bound; lossless compression usually reduces it"
+  },
+  "crops": [
+    {
+      "name": "center",
+      "x": 3040,
+      "y": 1216,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "detail_1",
+      "x": 3584,
+      "y": 1920,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "detail_2",
+      "x": 3712,
+      "y": 2176,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "detail_3",
+      "x": 3584,
+      "y": 2432,
+      "width": 256,
+      "height": 256
+    }
+  ],
+  "intermediates": [
+    {
+      "path": "/content/experiment_50MP/outputs/universal/20261024T090241Z_40e30440_baselines/intermediates/test_image_1_source_lin_rec709_f32.exr",
+      "kind": "exr_float_linear_rec709",
+      "width": 6336,
+      "height": 2688,
+      "sample_type": "float32",
+      "channels": 3,
+      "compression": "ZIP_COMPRESSION",
+      "file_sha256": "2f7a56235f239dcedba024766bc35fecd00956405527f428f2a1fb665507ce64",
+      "pixel_sha256": "429cf4fa44f5ac900a39c703b19de559a8277627f4327667a531e890f88b735f",
+      "size_bytes": 92328983,
+      "checks": {
+        "decodes": true,
+        "channels_rgb": true,
+        "dimensions": true,
+        "channel_precision": true,
+        "chromaticities": true,
+        "attributes_roundtrip": true,
+        "pixels_identical": true,
+        "finite_values": true
+      },
+      "valid": true
+    }
+  ],
+  "super_resolution": {
+    "backend": "swinir",
+    "scale_handling": "network at its native x4, then Lanczos-3 in linear light to the exact target size",
+    "modes": {
+      "conservative": {
+        "preset": {
+          "mode": "conservative",
+          "label": "Mode A, conservative",
+          "network": "fidelity",
+          "consistency_strength": 1.0,
+          "intent": "Source consistency first: the fidelity network (pixel loss, no adversarial texture) and full low-frequency correction. Minimal invented texture; preferred for faces.",
+          "warning": ""
+        },
+        "classification": "Inference",
+        "weights": "swinir_m_x4_classical",
+        "strength": 1.0,
+        "consistency_strength": 1.0,
+        "exports": {
+          "exr": {
+            "path": "/content/experiment_50MP/outputs/universal/20261024T090241Z_40e30440_baselines/test_image_1_sr_conservative_10852x4604_lin_rec709_half.exr",
+            "kind": "exr_half_linear_rec709",
+            "width": 10852,
+            "height": 4604,
+            "sample_type": "float16",
+            "channels": 3,
+            "compression": "ZIP_COMPRESSION",
+            "file_sha256": "ea70ff40fdb9478d3360e5fd0a9e876d7e5cd252afd9014f9fce353545766424",
+            "pixel_sha256": "d79f9d57d9d03c2d71d0b288651697048c17367e7f89b122021100b1a15f003f",
+            "size_bytes": 165848442,
+            "checks": {
+              "decodes": true,
+              "channels_rgb": true,
+              "dimensions": true,
+              "channel_precision": true,
+              "chromaticities": true,
+              "attributes_roundtrip": true,
+              "pixels_identical": true,
+              "finite_values": true
+            },
+            "valid": true
+          },
+          "tiff16": {
+            "path": "/content/experiment_50MP/outputs/universal/20261024T090241Z_40e30440_baselines/test_image_1_sr_conservative_10852x4604_srgb16.tif",
+            "kind": "tiff16_srgb",
+            "width": 10852,
+            "height": 4604,
+            "sample_type": "uint16",
+            "channels": 3,
+            "compression": "ADOBE_DEFLATE",
+            "file_sha256": "4061d61a5ee895bc93a7a417abda4c9750475cd7f46746f250526572e17cecae",
+            "pixel_sha256": "86a37ba3915d768922a69c6d9df478d202e9e666f2b95cac49f1775cf484fb66",
+            "size_bytes": 234621729,
+            "checks": {
+              "decodes": true,
+              "single_image": true,
+              "dimensions": true,
+              "bits_per_sample_16": true,
+              "samples_per_pixel_3": true,
+              "photometric_rgb": true,
+              "lossless_compression": true,
+              "icc_profile_embedded": true,
+              "metadata_roundtrip": true,
+              "no_8bit_downconversion": true,
+              "pixels_identical": true
+            },
+            "valid": true
+          }
+        },
+        "tiling": {
+          "tile_size": 640,
+          "tile_overlap": 64,
+          "grid_rows_cols": [
+            5,
+            11
+          ],
+          "tiles": 55,
+          "model_calls": 55,
+          "inference_seconds": 345.353,
+          "fallbacks": [],
+          "final_device": "cuda",
+          "overlap_disagreement": {
+            "unit": "sRGB 8-bit code values, inside the crossfade zones",
+            "low_frequency": "difference smoothed with a Gaussian of 2 source pixels",
+            "blend_error": "low-frequency difference times the smaller blending weight: how far the crossfade can move the image from the better-placed tile (the soft-seam measure)",
+            "boundaries": 54,
+            "blend_error_p99_abs_max": 0.0052,
+            "low_frequency_p99_abs_max": 0.0242,
+            "mean_abs_max": 0.0108,
+            "p99_abs_max": 0.0585,
+            "max_abs": 0.5172,
+            "per_boundary": [
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.0082,
+                "p99_abs_8bit": 0.0394,
+                "max_abs_8bit": 0.1461,
+                "low_frequency_p99_abs_8bit": 0.0115,
+                "blend_error_p99_abs_8bit": 0.0023,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.01,
+                "p99_abs_8bit": 0.0475,
+                "max_abs_8bit": 0.1903,
+                "low_frequency_p99_abs_8bit": 0.0159,
+                "blend_error_p99_abs_8bit": 0.0031,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.0086,
+                "p99_abs_8bit": 0.0433,
+                "max_abs_8bit": 0.2267,
+                "low_frequency_p99_abs_8bit": 0.0135,
+                "blend_error_p99_abs_8bit": 0.0025,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 0.0075,
+                "p99_abs_8bit": 0.0378,
+                "max_abs_8bit": 0.1901,
+                "low_frequency_p99_abs_8bit": 0.0098,
+                "blend_error_p99_abs_8bit": 0.0023,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.009,
+                "p99_abs_8bit": 0.0486,
+                "max_abs_8bit": 0.1344,
+                "low_frequency_p99_abs_8bit": 0.0105,
+                "blend_error_p99_abs_8bit": 0.0025,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 0.0073,
+                "p99_abs_8bit": 0.041,
+                "max_abs_8bit": 0.1041,
+                "low_frequency_p99_abs_8bit": 0.0107,
+                "blend_error_p99_abs_8bit": 0.0023,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.0056,
+                "p99_abs_8bit": 0.0266,
+                "max_abs_8bit": 0.0923,
+                "low_frequency_p99_abs_8bit": 0.0056,
+                "blend_error_p99_abs_8bit": 0.0012,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.006,
+                "p99_abs_8bit": 0.0316,
+                "max_abs_8bit": 0.1493,
+                "low_frequency_p99_abs_8bit": 0.0063,
+                "blend_error_p99_abs_8bit": 0.0016,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.0044,
+                "p99_abs_8bit": 0.0235,
+                "max_abs_8bit": 0.0858,
+                "low_frequency_p99_abs_8bit": 0.0054,
+                "blend_error_p99_abs_8bit": 0.0011,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.0076,
+                "p99_abs_8bit": 0.0429,
+                "max_abs_8bit": 0.3301,
+                "low_frequency_p99_abs_8bit": 0.0079,
+                "blend_error_p99_abs_8bit": 0.0021,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.0087,
+                "p99_abs_8bit": 0.0469,
+                "max_abs_8bit": 0.1437,
+                "low_frequency_p99_abs_8bit": 0.01,
+                "blend_error_p99_abs_8bit": 0.0022,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.0088,
+                "p99_abs_8bit": 0.0412,
+                "max_abs_8bit": 0.1379,
+                "low_frequency_p99_abs_8bit": 0.0105,
+                "blend_error_p99_abs_8bit": 0.0025,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.009,
+                "p99_abs_8bit": 0.0424,
+                "max_abs_8bit": 0.3931,
+                "low_frequency_p99_abs_8bit": 0.0109,
+                "blend_error_p99_abs_8bit": 0.0027,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 0.0074,
+                "p99_abs_8bit": 0.0317,
+                "max_abs_8bit": 0.0888,
+                "low_frequency_p99_abs_8bit": 0.0071,
+                "blend_error_p99_abs_8bit": 0.0017,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.0087,
+                "p99_abs_8bit": 0.0508,
+                "max_abs_8bit": 0.127,
+                "low_frequency_p99_abs_8bit": 0.0125,
+                "blend_error_p99_abs_8bit": 0.0032,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 0.0064,
+                "p99_abs_8bit": 0.0324,
+                "max_abs_8bit": 0.1051,
+                "low_frequency_p99_abs_8bit": 0.0073,
+                "blend_error_p99_abs_8bit": 0.0016,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.0055,
+                "p99_abs_8bit": 0.0246,
+                "max_abs_8bit": 0.0951,
+                "low_frequency_p99_abs_8bit": 0.0045,
+                "blend_error_p99_abs_8bit": 0.001,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.0044,
+                "p99_abs_8bit": 0.0219,
+                "max_abs_8bit": 0.1165,
+                "low_frequency_p99_abs_8bit": 0.0043,
+                "blend_error_p99_abs_8bit": 0.0009,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.004,
+                "p99_abs_8bit": 0.0184,
+                "max_abs_8bit": 0.147,
+                "low_frequency_p99_abs_8bit": 0.0035,
+                "blend_error_p99_abs_8bit": 0.0008,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.0077,
+                "p99_abs_8bit": 0.0451,
+                "max_abs_8bit": 0.1499,
+                "low_frequency_p99_abs_8bit": 0.008,
+                "blend_error_p99_abs_8bit": 0.0017,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "y",
+                "position_source_px": 575.96,
+                "mean_abs_8bit": 0.0042,
+                "p99_abs_8bit": 0.03,
+                "max_abs_8bit": 0.1048,
+                "low_frequency_p99_abs_8bit": 0.0069,
+                "blend_error_p99_abs_8bit": 0.0019
+              },
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.007,
+                "p99_abs_8bit": 0.0415,
+                "max_abs_8bit": 0.1291,
+                "low_frequency_p99_abs_8bit": 0.0077,
+                "blend_error_p99_abs_8bit": 0.002,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.0089,
+                "p99_abs_8bit": 0.0446,
+                "max_abs_8bit": 0.1302,
+                "low_frequency_p99_abs_8bit": 0.0109,
+                "blend_error_p99_abs_8bit": 0.0023,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.0093,
+                "p99_abs_8bit": 0.0444,
+                "max_abs_8bit": 0.3835,
+                "low_frequency_p99_abs_8bit": 0.0127,
+                "blend_error_p99_abs_8bit": 0.0024,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 0.0084,
+                "p99_abs_8bit": 0.0403,
+                "max_abs_8bit": 0.2175,
+                "low_frequency_p99_abs_8bit": 0.0096,
+                "blend_error_p99_abs_8bit": 0.0022,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.0076,
+                "p99_abs_8bit": 0.046,
+                "max_abs_8bit": 0.2267,
+                "low_frequency_p99_abs_8bit": 0.0108,
+                "blend_error_p99_abs_8bit": 0.0031,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 0.0065,
+                "p99_abs_8bit": 0.0333,
+                "max_abs_8bit": 0.1076,
+                "low_frequency_p99_abs_8bit": 0.0078,
+                "blend_error_p99_abs_8bit": 0.0018,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.0059,
+                "p99_abs_8bit": 0.0292,
+                "max_abs_8bit": 0.1095,
+                "low_frequency_p99_abs_8bit": 0.0066,
+                "blend_error_p99_abs_8bit": 0.0014,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.0045,
+                "p99_abs_8bit": 0.0233,
+                "max_abs_8bit": 0.0668,
+                "low_frequency_p99_abs_8bit": 0.0045,
+                "blend_error_p99_abs_8bit": 0.0009,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.0044,
+                "p99_abs_8bit": 0.022,
+                "max_abs_8bit": 0.149,
+                "low_frequency_p99_abs_8bit": 0.0044,
+                "blend_error_p99_abs_8bit": 0.0008,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.0077,
+                "p99_abs_8bit": 0.0435,
+                "max_abs_8bit": 0.1658,
+                "low_frequency_p99_abs_8bit": 0.0078,
+                "blend_error_p99_abs_8bit": 0.0019,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "y",
+                "position_source_px": 1087.99,
+                "mean_abs_8bit": 0.0042,
+                "p99_abs_8bit": 0.0299,
+                "max_abs_8bit": 0.1264,
+                "low_frequency_p99_abs_8bit": 0.0068,
+                "blend_error_p99_abs_8bit": 0.0019
+              },
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.0057,
+                "p99_abs_8bit": 0.0268,
+                "max_abs_8bit": 0.0829,
+                "low_frequency_p99_abs_8bit": 0.0058,
+                "blend_error_p99_abs_8bit": 0.0014,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.0081,
+                "p99_abs_8bit": 0.0467,
+                "max_abs_8bit": 0.1617,
+                "low_frequency_p99_abs_8bit": 0.0116,
+                "blend_error_p99_abs_8bit": 0.0023,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.0081,
+                "p99_abs_8bit": 0.0419,
+                "max_abs_8bit": 0.5172,
+                "low_frequency_p99_abs_8bit": 0.009,
+                "blend_error_p99_abs_8bit": 0.002,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 0.0081,
+                "p99_abs_8bit": 0.0378,
+                "max_abs_8bit": 0.2939,
+                "low_frequency_p99_abs_8bit": 0.0084,
+                "blend_error_p99_abs_8bit": 0.002,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.0068,
+                "p99_abs_8bit": 0.0323,
+                "max_abs_8bit": 0.1434,
+                "low_frequency_p99_abs_8bit": 0.0117,
+                "blend_error_p99_abs_8bit": 0.0019,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 0.0092,
+                "p99_abs_8bit": 0.045,
+                "max_abs_8bit": 0.5084,
+                "low_frequency_p99_abs_8bit": 0.0158,
+                "blend_error_p99_abs_8bit": 0.0028,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.0073,
+                "p99_abs_8bit": 0.0341,
+                "max_abs_8bit": 0.0924,
+                "low_frequency_p99_abs_8bit": 0.0076,
+                "blend_error_p99_abs_8bit": 0.002,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.007,
+                "p99_abs_8bit": 0.0359,
+                "max_abs_8bit": 0.1711,
+                "low_frequency_p99_abs_8bit": 0.0093,
+                "blend_error_p99_abs_8bit": 0.0017,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.0059,
+                "p99_abs_8bit": 0.0283,
+                "max_abs_8bit": 0.2591,
+                "low_frequency_p99_abs_8bit": 0.0055,
+                "blend_error_p99_abs_8bit": 0.0013,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.0085,
+                "p99_abs_8bit": 0.0451,
+                "max_abs_8bit": 0.1159,
+                "low_frequency_p99_abs_8bit": 0.0089,
+                "blend_error_p99_abs_8bit": 0.0021,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "y",
+                "position_source_px": 1600.01,
+                "mean_abs_8bit": 0.0043,
+                "p99_abs_8bit": 0.0302,
+                "max_abs_8bit": 0.1129,
+                "low_frequency_p99_abs_8bit": 0.0064,
+                "blend_error_p99_abs_8bit": 0.0019
+              },
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.0058,
+                "p99_abs_8bit": 0.0278,
+                "max_abs_8bit": 0.0883,
+                "low_frequency_p99_abs_8bit": 0.0062,
+                "blend_error_p99_abs_8bit": 0.0013,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.0084,
+                "p99_abs_8bit": 0.0475,
+                "max_abs_8bit": 0.1842,
+                "low_frequency_p99_abs_8bit": 0.0105,
+                "blend_error_p99_abs_8bit": 0.0026,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.008,
+                "p99_abs_8bit": 0.0396,
+                "max_abs_8bit": 0.1086,
+                "low_frequency_p99_abs_8bit": 0.0089,
+                "blend_error_p99_abs_8bit": 0.002,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 0.007,
+                "p99_abs_8bit": 0.0377,
+                "max_abs_8bit": 0.0918,
+                "low_frequency_p99_abs_8bit": 0.0079,
+                "blend_error_p99_abs_8bit": 0.002,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.0108,
+                "p99_abs_8bit": 0.0585,
+                "max_abs_8bit": 0.1922,
+                "low_frequency_p99_abs_8bit": 0.0242,
+                "blend_error_p99_abs_8bit": 0.0052,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 0.0076,
+                "p99_abs_8bit": 0.0438,
+                "max_abs_8bit": 0.1093,
+                "low_frequency_p99_abs_8bit": 0.0133,
+                "blend_error_p99_abs_8bit": 0.0023,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.0075,
+                "p99_abs_8bit": 0.0385,
+                "max_abs_8bit": 0.1014,
+                "low_frequency_p99_abs_8bit": 0.0084,
+                "blend_error_p99_abs_8bit": 0.0022,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.0101,
+                "p99_abs_8bit": 0.0499,
+                "max_abs_8bit": 0.2019,
+                "low_frequency_p99_abs_8bit": 0.0169,
+                "blend_error_p99_abs_8bit": 0.0028,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.0051,
+                "p99_abs_8bit": 0.0257,
+                "max_abs_8bit": 0.1294,
+                "low_frequency_p99_abs_8bit": 0.005,
+                "blend_error_p99_abs_8bit": 0.0013,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.0093,
+                "p99_abs_8bit": 0.0507,
+                "max_abs_8bit": 0.1378,
+                "low_frequency_p99_abs_8bit": 0.0121,
+                "blend_error_p99_abs_8bit": 0.0027,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "y",
+                "position_source_px": 2112.04,
+                "mean_abs_8bit": 0.0046,
+                "p99_abs_8bit": 0.0323,
+                "max_abs_8bit": 0.102,
+                "low_frequency_p99_abs_8bit": 0.0076,
+                "blend_error_p99_abs_8bit": 0.0021
+              }
+            ]
+          },
+          "tile_basis": "60% of free CUDA memory at 33 kB per input pixel (SwinIR, float32)"
+        },
+        "final_resample": {
+          "filter": "Lanczos-3, linear light",
+          "factor": 0.4281881313131313
+        },
+        "model": {
+          "weights": {
+            "name": "swinir_m_x4_classical",
+            "file": "001_classicalSR_DF2K_s64w8_SwinIR-M_x4.pth",
+            "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DF2K_s64w8_SwinIR-M_x4.pth",
+            "sha256": "4e78e33f22c1aa8a773db0cf4a7381bae97c2362c717f155439ebc690cbd9215",
+            "size_bytes": 67869037,
+            "architecture": "SwinIR-M x4, pixel-shuffle upsampler (11.9M parameters)",
+            "role": "fidelity",
+            "license": "Apache-2.0 (SwinIR code and released weights, Liang et al. 2021)",
+            "training_data": "DF2K (DIV2K + Flickr2K), bicubic degradation, L1 loss",
+            "commercial_use": "Licence permits commercial use; DIV2K is published for academic research only, so commercial use of these weights is unresolved.",
+            "description": "Classical SR: reconstructs edges faithfully, keeps source texture, invents the least."
+          },
+          "architecture": "SwinIR",
+          "scale": 4,
+          "tile_alignment": 8,
+          "device": {
+            "device": "cuda",
+            "torch": "2.11.0+cu130",
+            "name": "NVIDIA L4",
+            "memory_total_gb": 23.66,
+            "memory_free_gb": 15.63,
+            "cuda": "13.0"
+          },
+          "precision": "float32",
+          "peak_device_memory_mb": 4400.4
+        },
+        "source_projection": {
+          "strength": 1.0,
+          "operator": "residual at source size (area reduction), upsampled with Keys bicubic, linear light",
+          "mean_abs_residual_linear_before": 0.000875,
+          "mean_abs_residual_linear_after": 0.000241
+        },
+        "seams": {
+          "method": "mean excess luma step (8-bit codes) across each boundary line over lines 4 to 12 px away, on samples where the content is flat across the line",
+          "max_score": 0.0008,
+          "mean_score": 0.0001,
+          "per_boundary": [
+            {
+              "axis": "x",
+              "position_px": 1035,
+              "score": 0.0008
+            },
+            {
+              "axis": "x",
+              "position_px": 2007,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 2980,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 3953,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 4933,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 5912,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 6885,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 7858,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 8831,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 9811,
+              "score": 0.0
+            },
+            {
+              "axis": "y",
+              "position_px": 987,
+              "score": 0.0
+            },
+            {
+              "axis": "y",
+              "position_px": 1864,
+              "score": 0.0
+            },
+            {
+              "axis": "y",
+              "position_px": 2740,
+              "score": 0.0
+            },
+            {
+              "axis": "y",
+              "position_px": 3617,
+              "score": 0.0
+            }
+          ],
+          "passed": true,
+          "limits": {
+            "max_score": 1.0,
+            "blend_error_p99_abs_8bit": 2.0
+          }
+        },
+        "interpolation_difference": {
+          "unit": "sRGB luma, 8-bit code values, |super-resolution - Lanczos| at output resolution",
+          "mean": 0.2807,
+          "p95": 0,
+          "p99": 1,
+          "fraction_above_8": 9.8e-05
+        },
+        "working_pixel_sha256": "2239a0449fcbe1833cde60b99006e045cfc4a5bbd74883d8cf070734831dad1a",
+        "statistics": {
+          "domain": "linear working space",
+          "mean": {
+            "R": 0.359828,
+            "G": 0.186213,
+            "B": 0.125496
+          },
+          "std": {
+            "R": 0.270833,
+            "G": 0.181333,
+            "B": 0.158558
+          },
+          "min": {
+            "R": -0.000337,
+            "G": -0.003342,
+            "B": -0.003239
+          },
+          "max": {
+            "R": 1.045907,
+            "G": 1.008533,
+            "B": 1.011294
+          },
+          "below_zero_fraction": 0.005068116807139718,
+          "above_one_fraction": 0.0007335952785597848
+        },
+        "tiff_clipping": {
+          "samples": 149887824,
+          "below_zero": 759649,
+          "above_one": 109957,
+          "nonfinite": 0,
+          "below_zero_fraction": 0.005068116807139718,
+          "above_one_fraction": 0.0007335952785597848
+        },
+        "source_consistency": {
+          "domain": "sRGB-encoded values in [0, 1] at source resolution (area-average reduction)",
+          "psnr_db": 66.91390933985149,
+          "ssim": 0.9998675224536613,
+          "ms_ssim": {
+            "value": 0.9999849169471544,
+            "levels": 5
+          },
+          "lpips": null,
+          "lpips_note": "not computed: LPIPS needs pretrained network weights, which Phase 0/1 does not download",
+          "edge_displacement": {
+            "mean_px": 0.09860637731199243,
+            "p95_px": 0.0,
+            "edge_pixel_ratio": 1.00268391844522,
+            "reference_edge_pixels": 264166
+          },
+          "color_difference_ciede2000": {
+            "mean": 0.041712209582328796,
+            "p95": 0.11185731738805771,
+            "max": 1.636755347251892
+          },
+          "luminance_distribution": {
+            "domain": "CIE L* (0 to 100)",
+            "mean_shift": -0.00046539306640625,
+            "std_ratio": 1.0000284910202026,
+            "wasserstein_1": 0.0022816983982920647
+          }
+        }
+      },
+      "balanced": {
+        "preset": {
+          "mode": "balanced",
+          "label": "Mode B, balanced",
+          "network": "perceptual",
+          "consistency_strength": 1.0,
+          "intent": "Moderate detail reconstruction: the perceptual (adversarial) network for sharper edges and inferred texture, with full low-frequency correction so tone and colour stay on the source. Default for general scenes.",
+          "warning": ""
+        },
+        "classification": "Inference",
+        "weights": "swinir_m_x4_realsr_gan",
+        "strength": 1.0,
+        "consistency_strength": 1.0,
+        "exports": {
+          "exr": {
+            "path": "/content/experiment_50MP/outputs/universal/20261024T090241Z_40e30440_baselines/test_image_1_sr_balanced_10852x4604_lin_rec709_half.exr",
+            "kind": "exr_half_linear_rec709",
+            "width": 10852,
+            "height": 4604,
+            "sample_type": "float16",
+            "channels": 3,
+            "compression": "ZIP_COMPRESSION",
+            "file_sha256": "677df02566a6e9a0603a5301d61ac65aa4f5d0b892cc5f93a47bc470a724d3ce",
+            "pixel_sha256": "0f298607cb8802b36ee67dd1151ac616a4716b6f4a60da238ce937f850bc1b1b",
+            "size_bytes": 165548362,
+            "checks": {
+              "decodes": true,
+              "channels_rgb": true,
+              "dimensions": true,
+              "channel_precision": true,
+              "chromaticities": true,
+              "attributes_roundtrip": true,
+              "pixels_identical": true,
+              "finite_values": true
+            },
+            "valid": true
+          },
+          "tiff16": {
+            "path": "/content/experiment_50MP/outputs/universal/20261024T090241Z_40e30440_baselines/test_image_1_sr_balanced_10852x4604_srgb16.tif",
+            "kind": "tiff16_srgb",
+            "width": 10852,
+            "height": 4604,
+            "sample_type": "uint16",
+            "channels": 3,
+            "compression": "ADOBE_DEFLATE",
+            "file_sha256": "d383c1628a9a1f732e5e2dfebfcc40f870c9c6931fad0dca903117052e28f031",
+            "pixel_sha256": "480bd472f97267af7222eab0aca74e93fa11f42fe5f82bd9fc9b34654fd4b321",
+            "size_bytes": 234953163,
+            "checks": {
+              "decodes": true,
+              "single_image": true,
+              "dimensions": true,
+              "bits_per_sample_16": true,
+              "samples_per_pixel_3": true,
+              "photometric_rgb": true,
+              "lossless_compression": true,
+              "icc_profile_embedded": true,
+              "metadata_roundtrip": true,
+              "no_8bit_downconversion": true,
+              "pixels_identical": true
+            },
+            "valid": true
+          }
+        },
+        "tiling": {
+          "tile_size": 640,
+          "tile_overlap": 64,
+          "grid_rows_cols": [
+            5,
+            11
+          ],
+          "tiles": 55,
+          "model_calls": 55,
+          "inference_seconds": 352.012,
+          "fallbacks": [],
+          "final_device": "cuda",
+          "overlap_disagreement": {
+            "unit": "sRGB 8-bit code values, inside the crossfade zones",
+            "low_frequency": "difference smoothed with a Gaussian of 2 source pixels",
+            "blend_error": "low-frequency difference times the smaller blending weight: how far the crossfade can move the image from the better-placed tile (the soft-seam measure)",
+            "boundaries": 54,
+            "blend_error_p99_abs_max": 0.7036,
+            "low_frequency_p99_abs_max": 2.7581,
+            "mean_abs_max": 1.2617,
+            "p99_abs_max": 9.3524,
+            "max_abs": 57.577,
+            "per_boundary": [
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.5524,
+                "p99_abs_8bit": 3.9216,
+                "max_abs_8bit": 12.3912,
+                "low_frequency_p99_abs_8bit": 1.9576,
+                "blend_error_p99_abs_8bit": 0.5503,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.3339,
+                "p99_abs_8bit": 1.8175,
+                "max_abs_8bit": 6.3468,
+                "low_frequency_p99_abs_8bit": 0.9348,
+                "blend_error_p99_abs_8bit": 0.1997,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.2624,
+                "p99_abs_8bit": 1.2153,
+                "max_abs_8bit": 4.9392,
+                "low_frequency_p99_abs_8bit": 0.9091,
+                "blend_error_p99_abs_8bit": 0.1685,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 0.4257,
+                "p99_abs_8bit": 2.0498,
+                "max_abs_8bit": 6.1536,
+                "low_frequency_p99_abs_8bit": 0.9803,
+                "blend_error_p99_abs_8bit": 0.2709,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.5505,
+                "p99_abs_8bit": 3.3731,
+                "max_abs_8bit": 15.9216,
+                "low_frequency_p99_abs_8bit": 1.1524,
+                "blend_error_p99_abs_8bit": 0.3623,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 0.6385,
+                "p99_abs_8bit": 4.5451,
+                "max_abs_8bit": 16.5315,
+                "low_frequency_p99_abs_8bit": 1.4757,
+                "blend_error_p99_abs_8bit": 0.392,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.3226,
+                "p99_abs_8bit": 1.5444,
+                "max_abs_8bit": 4.4104,
+                "low_frequency_p99_abs_8bit": 0.9892,
+                "blend_error_p99_abs_8bit": 0.2601,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.4596,
+                "p99_abs_8bit": 3.903,
+                "max_abs_8bit": 22.0629,
+                "low_frequency_p99_abs_8bit": 1.7523,
+                "blend_error_p99_abs_8bit": 0.4191,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.1894,
+                "p99_abs_8bit": 0.9919,
+                "max_abs_8bit": 6.3077,
+                "low_frequency_p99_abs_8bit": 0.4727,
+                "blend_error_p99_abs_8bit": 0.1264,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.2462,
+                "p99_abs_8bit": 1.6323,
+                "max_abs_8bit": 6.9687,
+                "low_frequency_p99_abs_8bit": 0.7831,
+                "blend_error_p99_abs_8bit": 0.1989,
+                "source_rows": [
+                  0,
+                  640
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.4338,
+                "p99_abs_8bit": 2.8543,
+                "max_abs_8bit": 12.5457,
+                "low_frequency_p99_abs_8bit": 1.8051,
+                "blend_error_p99_abs_8bit": 0.4913,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.303,
+                "p99_abs_8bit": 1.5429,
+                "max_abs_8bit": 5.3171,
+                "low_frequency_p99_abs_8bit": 1.1385,
+                "blend_error_p99_abs_8bit": 0.1971,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.2822,
+                "p99_abs_8bit": 1.3919,
+                "max_abs_8bit": 4.3813,
+                "low_frequency_p99_abs_8bit": 0.8929,
+                "blend_error_p99_abs_8bit": 0.1725,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 0.2508,
+                "p99_abs_8bit": 1.1932,
+                "max_abs_8bit": 4.7212,
+                "low_frequency_p99_abs_8bit": 0.698,
+                "blend_error_p99_abs_8bit": 0.1564,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.4602,
+                "p99_abs_8bit": 2.5786,
+                "max_abs_8bit": 32.1005,
+                "low_frequency_p99_abs_8bit": 1.0439,
+                "blend_error_p99_abs_8bit": 0.2438,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 0.3769,
+                "p99_abs_8bit": 1.9418,
+                "max_abs_8bit": 7.6188,
+                "low_frequency_p99_abs_8bit": 0.7841,
+                "blend_error_p99_abs_8bit": 0.1803,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.3,
+                "p99_abs_8bit": 1.5137,
+                "max_abs_8bit": 5.2208,
+                "low_frequency_p99_abs_8bit": 1.112,
+                "blend_error_p99_abs_8bit": 0.1886,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.2654,
+                "p99_abs_8bit": 1.3165,
+                "max_abs_8bit": 5.1641,
+                "low_frequency_p99_abs_8bit": 0.6988,
+                "blend_error_p99_abs_8bit": 0.1694,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.2004,
+                "p99_abs_8bit": 0.8866,
+                "max_abs_8bit": 2.6323,
+                "low_frequency_p99_abs_8bit": 0.5176,
+                "blend_error_p99_abs_8bit": 0.1133,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.4208,
+                "p99_abs_8bit": 2.2193,
+                "max_abs_8bit": 5.8887,
+                "low_frequency_p99_abs_8bit": 1.5048,
+                "blend_error_p99_abs_8bit": 0.3792,
+                "source_rows": [
+                  512,
+                  1152
+                ]
+              },
+              {
+                "axis": "y",
+                "position_source_px": 575.96,
+                "mean_abs_8bit": 0.1243,
+                "p99_abs_8bit": 1.0239,
+                "max_abs_8bit": 12.4,
+                "low_frequency_p99_abs_8bit": 0.707,
+                "blend_error_p99_abs_8bit": 0.1647
+              },
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.163,
+                "p99_abs_8bit": 0.8275,
+                "max_abs_8bit": 3.2195,
+                "low_frequency_p99_abs_8bit": 0.5315,
+                "blend_error_p99_abs_8bit": 0.1191,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.4981,
+                "p99_abs_8bit": 2.2781,
+                "max_abs_8bit": 7.3682,
+                "low_frequency_p99_abs_8bit": 1.4467,
+                "blend_error_p99_abs_8bit": 0.3399,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.4515,
+                "p99_abs_8bit": 1.8888,
+                "max_abs_8bit": 7.2772,
+                "low_frequency_p99_abs_8bit": 1.3139,
+                "blend_error_p99_abs_8bit": 0.243,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 0.3205,
+                "p99_abs_8bit": 1.3399,
+                "max_abs_8bit": 5.2552,
+                "low_frequency_p99_abs_8bit": 0.7602,
+                "blend_error_p99_abs_8bit": 0.155,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.4701,
+                "p99_abs_8bit": 2.6738,
+                "max_abs_8bit": 25.9379,
+                "low_frequency_p99_abs_8bit": 1.3809,
+                "blend_error_p99_abs_8bit": 0.3919,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 0.3146,
+                "p99_abs_8bit": 1.747,
+                "max_abs_8bit": 8.1043,
+                "low_frequency_p99_abs_8bit": 0.912,
+                "blend_error_p99_abs_8bit": 0.1824,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.3446,
+                "p99_abs_8bit": 1.8967,
+                "max_abs_8bit": 8.2852,
+                "low_frequency_p99_abs_8bit": 1.0325,
+                "blend_error_p99_abs_8bit": 0.2478,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.225,
+                "p99_abs_8bit": 0.9853,
+                "max_abs_8bit": 4.0687,
+                "low_frequency_p99_abs_8bit": 0.5733,
+                "blend_error_p99_abs_8bit": 0.1149,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.2216,
+                "p99_abs_8bit": 1.0722,
+                "max_abs_8bit": 3.3251,
+                "low_frequency_p99_abs_8bit": 0.612,
+                "blend_error_p99_abs_8bit": 0.1478,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.3992,
+                "p99_abs_8bit": 2.0959,
+                "max_abs_8bit": 6.0859,
+                "low_frequency_p99_abs_8bit": 1.5421,
+                "blend_error_p99_abs_8bit": 0.2954,
+                "source_rows": [
+                  1024,
+                  1664
+                ]
+              },
+              {
+                "axis": "y",
+                "position_source_px": 1087.99,
+                "mean_abs_8bit": 0.1355,
+                "p99_abs_8bit": 1.1001,
+                "max_abs_8bit": 35.5336,
+                "low_frequency_p99_abs_8bit": 0.7732,
+                "blend_error_p99_abs_8bit": 0.1742
+              },
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.2555,
+                "p99_abs_8bit": 1.1653,
+                "max_abs_8bit": 3.4018,
+                "low_frequency_p99_abs_8bit": 0.6116,
+                "blend_error_p99_abs_8bit": 0.119,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.3011,
+                "p99_abs_8bit": 1.6198,
+                "max_abs_8bit": 4.885,
+                "low_frequency_p99_abs_8bit": 1.2674,
+                "blend_error_p99_abs_8bit": 0.2754,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.5507,
+                "p99_abs_8bit": 2.6195,
+                "max_abs_8bit": 11.1178,
+                "low_frequency_p99_abs_8bit": 1.7592,
+                "blend_error_p99_abs_8bit": 0.4304,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 1.2617,
+                "p99_abs_8bit": 9.3524,
+                "max_abs_8bit": 57.577,
+                "low_frequency_p99_abs_8bit": 2.6306,
+                "blend_error_p99_abs_8bit": 0.5526,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.4181,
+                "p99_abs_8bit": 2.2205,
+                "max_abs_8bit": 11.2422,
+                "low_frequency_p99_abs_8bit": 1.5557,
+                "blend_error_p99_abs_8bit": 0.3741,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 0.9621,
+                "p99_abs_8bit": 6.1478,
+                "max_abs_8bit": 36.0345,
+                "low_frequency_p99_abs_8bit": 2.7581,
+                "blend_error_p99_abs_8bit": 0.5872,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.5377,
+                "p99_abs_8bit": 2.3767,
+                "max_abs_8bit": 7.5858,
+                "low_frequency_p99_abs_8bit": 1.3672,
+                "blend_error_p99_abs_8bit": 0.4612,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.2768,
+                "p99_abs_8bit": 1.2153,
+                "max_abs_8bit": 3.7011,
+                "low_frequency_p99_abs_8bit": 0.8247,
+                "blend_error_p99_abs_8bit": 0.1651,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.3601,
+                "p99_abs_8bit": 1.5602,
+                "max_abs_8bit": 4.2303,
+                "low_frequency_p99_abs_8bit": 1.1065,
+                "blend_error_p99_abs_8bit": 0.1841,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.4026,
+                "p99_abs_8bit": 2.2015,
+                "max_abs_8bit": 7.4164,
+                "low_frequency_p99_abs_8bit": 1.4755,
+                "blend_error_p99_abs_8bit": 0.3516,
+                "source_rows": [
+                  1536,
+                  2176
+                ]
+              },
+              {
+                "axis": "y",
+                "position_source_px": 1600.01,
+                "mean_abs_8bit": 0.1141,
+                "p99_abs_8bit": 0.9053,
+                "max_abs_8bit": 14.1911,
+                "low_frequency_p99_abs_8bit": 0.7101,
+                "blend_error_p99_abs_8bit": 0.147
+              },
+              {
+                "axis": "x",
+                "position_source_px": 604.0,
+                "mean_abs_8bit": 0.1674,
+                "p99_abs_8bit": 0.636,
+                "max_abs_8bit": 2.0789,
+                "low_frequency_p99_abs_8bit": 0.3826,
+                "blend_error_p99_abs_8bit": 0.0988,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1172.0,
+                "mean_abs_8bit": 0.3063,
+                "p99_abs_8bit": 1.38,
+                "max_abs_8bit": 7.0154,
+                "low_frequency_p99_abs_8bit": 0.7939,
+                "blend_error_p99_abs_8bit": 0.1671,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 1740.0,
+                "mean_abs_8bit": 0.2978,
+                "p99_abs_8bit": 1.6491,
+                "max_abs_8bit": 11.0594,
+                "low_frequency_p99_abs_8bit": 1.1621,
+                "blend_error_p99_abs_8bit": 0.2376,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2308.0,
+                "mean_abs_8bit": 0.4377,
+                "p99_abs_8bit": 2.1705,
+                "max_abs_8bit": 6.9675,
+                "low_frequency_p99_abs_8bit": 1.1554,
+                "blend_error_p99_abs_8bit": 0.3117,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 2880.0,
+                "mean_abs_8bit": 0.5658,
+                "p99_abs_8bit": 5.4769,
+                "max_abs_8bit": 21.5377,
+                "low_frequency_p99_abs_8bit": 2.6724,
+                "blend_error_p99_abs_8bit": 0.7036,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 3452.0,
+                "mean_abs_8bit": 1.0654,
+                "p99_abs_8bit": 7.0744,
+                "max_abs_8bit": 36.6204,
+                "low_frequency_p99_abs_8bit": 1.4791,
+                "blend_error_p99_abs_8bit": 0.4163,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4020.0,
+                "mean_abs_8bit": 0.7005,
+                "p99_abs_8bit": 4.3199,
+                "max_abs_8bit": 28.3663,
+                "low_frequency_p99_abs_8bit": 1.9366,
+                "blend_error_p99_abs_8bit": 0.4495,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 4588.0,
+                "mean_abs_8bit": 0.3144,
+                "p99_abs_8bit": 1.2216,
+                "max_abs_8bit": 3.4852,
+                "low_frequency_p99_abs_8bit": 0.8627,
+                "blend_error_p99_abs_8bit": 0.1658,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5156.0,
+                "mean_abs_8bit": 0.2586,
+                "p99_abs_8bit": 1.1401,
+                "max_abs_8bit": 4.7402,
+                "low_frequency_p99_abs_8bit": 0.7209,
+                "blend_error_p99_abs_8bit": 0.1371,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "x",
+                "position_source_px": 5728.0,
+                "mean_abs_8bit": 0.2002,
+                "p99_abs_8bit": 0.9024,
+                "max_abs_8bit": 5.1631,
+                "low_frequency_p99_abs_8bit": 0.5235,
+                "blend_error_p99_abs_8bit": 0.0975,
+                "source_rows": [
+                  2048,
+                  2688
+                ]
+              },
+              {
+                "axis": "y",
+                "position_source_px": 2112.04,
+                "mean_abs_8bit": 0.145,
+                "p99_abs_8bit": 1.4777,
+                "max_abs_8bit": 21.7947,
+                "low_frequency_p99_abs_8bit": 0.8623,
+                "blend_error_p99_abs_8bit": 0.1751
+              }
+            ]
+          },
+          "tile_basis": "60% of free CUDA memory at 33 kB per input pixel (SwinIR, float32)"
+        },
+        "final_resample": {
+          "filter": "Lanczos-3, linear light",
+          "factor": 0.4281881313131313
+        },
+        "model": {
+          "weights": {
+            "name": "swinir_m_x4_realsr_gan",
+            "file": "003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.pth",
+            "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.pth",
+            "sha256": "b9afb61e65e04eb7f8aba5095d070bbe9af28df76acd0c9405aeb33b814bcfc6",
+            "size_bytes": 67129861,
+            "architecture": "SwinIR-M x4, nearest+conv upsampler (11.7M parameters)",
+            "role": "perceptual",
+            "license": "Apache-2.0 (SwinIR code and released weights, Liang et al. 2021)",
+            "training_data": "DIV2K + Flickr2K + OST, BSRGAN real-world degradation, L1 + perceptual + adversarial loss",
+            "commercial_use": "Licence permits commercial use; DIV2K is published for academic research only, so commercial use of these weights is unresolved.",
+            "description": "Real-world SR: sharper edges and synthesised texture."
+          },
+          "architecture": "SwinIR",
+          "scale": 4,
+          "tile_alignment": 8,
+          "device": {
+            "device": "cuda",
+            "torch": "2.11.0+cu130",
+            "name": "NVIDIA L4",
+            "memory_total_gb": 23.66,
+            "memory_free_gb": 15.57,
+            "cuda": "13.0"
+          },
+          "precision": "float32",
+          "peak_device_memory_mb": 4399.7
+        },
+        "source_projection": {
+          "strength": 1.0,
+          "operator": "residual at source size (area reduction), upsampled with Keys bicubic, linear light",
+          "mean_abs_residual_linear_before": 0.007733,
+          "mean_abs_residual_linear_after": 0.000926
+        },
+        "seams": {
+          "method": "mean excess luma step (8-bit codes) across each boundary line over lines 4 to 12 px away, on samples where the content is flat across the line",
+          "max_score": 0.016,
+          "mean_score": 0.0011,
+          "per_boundary": [
+            {
+              "axis": "x",
+              "position_px": 1035,
+              "score": 0.016
+            },
+            {
+              "axis": "x",
+              "position_px": 2007,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 2980,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 3953,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 4933,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 5912,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 6885,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 7858,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 8831,
+              "score": 0.0
+            },
+            {
+              "axis": "x",
+              "position_px": 9811,
+              "score": 0.0
+            },
+            {
+              "axis": "y",
+              "position_px": 987,
+              "score": 0.0
+            },
+            {
+              "axis": "y",
+              "position_px": 1864,
+              "score": 0.0
+            },
+            {
+              "axis": "y",
+              "position_px": 2740,
+              "score": 0.0
+            },
+            {
+              "axis": "y",
+              "position_px": 3617,
+              "score": 0.0
+            }
+          ],
+          "passed": true,
+          "limits": {
+            "max_score": 1.0,
+            "blend_error_p99_abs_8bit": 2.0
+          }
+        },
+        "interpolation_difference": {
+          "unit": "sRGB luma, 8-bit code values, |super-resolution - Lanczos| at output resolution",
+          "mean": 0.4611,
+          "p95": 1,
+          "p99": 4,
+          "fraction_above_8": 0.004428
+        },
+        "working_pixel_sha256": "774401ce9b48a011b28bd86b982dae2ef173429696a1b808665702fae0cfdb62",
+        "statistics": {
+          "domain": "linear working space",
+          "mean": {
+            "R": 0.35983,
+            "G": 0.186214,
+            "B": 0.125495
+          },
+          "std": {
+            "R": 0.27086,
+            "G": 0.181371,
+            "B": 0.158566
+          },
+          "min": {
+            "R": -0.121412,
+            "G": -0.17009,
+            "B": -0.137284
+          },
+          "max": {
+            "R": 1.044257,
+            "G": 1.004043,
+            "B": 1.005136
+          },
+          "below_zero_fraction": 0.004046646243927058,
+          "above_one_fraction": 0.0004502700632974697
+        },
+        "tiff_clipping": {
+          "samples": 149887824,
+          "below_zero": 606543,
+          "above_one": 67490,
+          "nonfinite": 0,
+          "below_zero_fraction": 0.004046646243927058,
+          "above_one_fraction": 0.0004502700632974697
+        },
+        "source_consistency": {
+          "domain": "sRGB-encoded values in [0, 1] at source resolution (area-average reduction)",
+          "psnr_db": 53.21428268673064,
+          "ssim": 0.9979322127285367,
+          "ms_ssim": {
+            "value": 0.9997797588571088,
+            "levels": 5
+          },
+          "lpips": null,
+          "lpips_note": "not computed: LPIPS needs pretrained network weights, which Phase 0/1 does not download",
+          "edge_displacement": {
+            "mean_px": 0.31681491085123603,
+            "p95_px": 1.0,
+            "edge_pixel_ratio": 1.011152078617233,
+            "reference_edge_pixels": 264166
+          },
+          "color_difference_ciede2000": {
+            "mean": 0.16241535544395447,
+            "p95": 0.41479724645614624,
+            "max": 23.720170974731445
+          },
+          "luminance_distribution": {
+            "domain": "CIE L* (0 to 100)",
+            "mean_shift": -0.00054168701171875,
+            "std_ratio": 1.0000425577163696,
+            "wasserstein_1": 0.0045495969243347645
+          }
+        }
+      }
+    }
+  },
+  "crop_panels": [
+    {
+      "crop": "center",
+      "path": "/content/experiment_50MP/reports/20261024T090241Z_40e30440_baselines/figures/crop_center.png",
+      "methods": {
+        "lanczos": {
+          "output_box": [
+            5207,
+            2083,
+            5645,
+            2521
+          ],
+          "high_frequency_energy": 6.660863229021823e-05
+        },
+        "bicubic": {
+          "output_box": [
+            5207,
+            2083,
+            5645,
+            2521
+          ],
+          "high_frequency_energy": 6.0686756373289794e-05
+        },
+        "sr_conservative": {
+          "output_box": [
+            5207,
+            2083,
+            5645,
+            2521
+          ],
+          "high_frequency_energy": 0.00011610581685481556
+        },
+        "sr_balanced": {
+          "output_box": [
+            5207,
+            2083,
+            5645,
+            2521
+          ],
+          "high_frequency_energy": 0.00032524672311112725
+        }
+      }
+    },
+    {
+      "crop": "detail_1",
+      "path": "/content/experiment_50MP/reports/20261024T090241Z_40e30440_baselines/figures/crop_detail_1.png",
+      "methods": {
+        "lanczos": {
+          "output_box": [
+            6139,
+            3289,
+            6577,
+            3727
+          ],
+          "high_frequency_energy": 0.0002583739716580193
+        },
+        "bicubic": {
+          "output_box": [
+            6139,
+            3289,
+            6577,
+            3727
+          ],
+          "high_frequency_energy": 0.00024326164791931094
+        },
+        "sr_conservative": {
+          "output_box": [
+            6139,
+            3289,
+            6577,
+            3727
+          ],
+          "high_frequency_energy": 0.0003566405169342118
+        },
+        "sr_balanced": {
+          "output_box": [
+            6139,
+            3289,
+            6577,
+            3727
+          ],
+          "high_frequency_energy": 0.002291804554832676
+        }
+      }
+    },
+    {
+      "crop": "detail_2",
+      "path": "/content/experiment_50MP/reports/20261024T090241Z_40e30440_baselines/figures/crop_detail_2.png",
+      "methods": {
+        "lanczos": {
+          "output_box": [
+            6358,
+            3727,
+            6796,
+            4166
+          ],
+          "high_frequency_energy": 0.00023713976617939763
+        },
+        "bicubic": {
+          "output_box": [
+            6358,
+            3727,
+            6796,
+            4166
+          ],
+          "high_frequency_energy": 0.0002216631412627199
+        },
+        "sr_conservative": {
+          "output_box": [
+            6358,
+            3727,
+            6796,
+            4166
+          ],
+          "high_frequency_energy": 0.00033286327250724336
+        },
+        "sr_balanced": {
+          "output_box": [
+            6358,
+            3727,
+            6796,
+            4166
+          ],
+          "high_frequency_energy": 0.002136032611017562
+        }
+      }
+    },
+    {
+      "crop": "detail_3",
+      "path": "/content/experiment_50MP/reports/20261024T090241Z_40e30440_baselines/figures/crop_detail_3.png",
+      "methods": {
+        "lanczos": {
+          "output_box": [
+            6139,
+            4166,
+            6577,
+            4604
+          ],
+          "high_frequency_energy": 0.0001803431805332034
+        },
+        "bicubic": {
+          "output_box": [
+            6139,
+            4166,
+            6577,
+            4604
+          ],
+          "high_frequency_energy": 0.00016878581809113682
+        },
+        "sr_conservative": {
+          "output_box": [
+            6139,
+            4166,
+            6577,
+            4604
+          ],
+          "high_frequency_energy": 0.0002549055072411236
+        },
+        "sr_balanced": {
+          "output_box": [
+            6139,
+            4166,
+            6577,
+            4604
+          ],
+          "high_frequency_energy": 0.002815610041727079
+        }
+      }
+    }
+  ],
+  "finished_at": "2026-10-24T09:21:23+00:00",
+  "total_seconds": 1121.935,
+  "storage_used_bytes": 1693343266,
+  "output_checksums": {
+    "test_image_1_source_lin_rec709_f32.exr": "2f7a56235f239dcedba024766bc35fecd00956405527f428f2a1fb665507ce64",
+    "test_image_1_lanczos_10852x4604_lin_rec709_half.exr": "fc19fe3d01cdf4e029ac72cab66d700f5c87c8766504050374211e8e8b01fca0",
+    "test_image_1_lanczos_10852x4604_srgb16.tif": "56f45f4b42171c6572bf0f7d4aecbc8aff06a6b487f209cf6cf51bddc97b2752",
+    "test_image_1_bicubic_10852x4604_lin_rec709_half.exr": "e313759ed062ce69cf270e6223e557e5df1a594bc80ac8375f21bdde8dff044f",
+    "test_image_1_bicubic_10852x4604_srgb16.tif": "dd75fdfd8e3319d739ab3dcc94dc06adfa4971ad5796be34b3d58e0dc0fcbb94",
+    "test_image_1_sr_conservative_10852x4604_lin_rec709_half.exr": "ea70ff40fdb9478d3360e5fd0a9e876d7e5cd252afd9014f9fce353545766424",
+    "test_image_1_sr_conservative_10852x4604_srgb16.tif": "4061d61a5ee895bc93a7a417abda4c9750475cd7f46746f250526572e17cecae",
+    "test_image_1_sr_balanced_10852x4604_lin_rec709_half.exr": "677df02566a6e9a0603a5301d61ac65aa4f5d0b892cc5f93a47bc470a724d3ce",
+    "test_image_1_sr_balanced_10852x4604_srgb16.tif": "d383c1628a9a1f732e5e2dfebfcc40f870c9c6931fad0dca903117052e28f031"
+  }
+}
