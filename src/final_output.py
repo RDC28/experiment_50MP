@@ -36,6 +36,7 @@ FACE_ORDER = ("sr_conservative", "lanczos", "bicubic")
 GENERAL_ORDER = ("sr_balanced", "sr_conservative", "lanczos", "bicubic")
 FINAL_DIR = "final"
 FINAL_PREFIX = "final_"
+KINDS = ("tiff16", "exr")
 DRIVE_ROOT = "/content/drive"
 
 
@@ -120,13 +121,16 @@ def publish(record: dict, exports: dict, masters_dir: Path, preview: Path | None
     Each TIFF and EXR (and its sidecar) is hard-linked, or copied, into ``final/`` with ``final_`` in front of
     its name and verified by SHA-256. ``preview``, when it exists, is copied next to it as
     ``final_preview.jpg``. Returns ``record`` with ``files`` (and ``preview``) added, the shape ``deliver``
-    reads. Specialised pipelines that build their one final master themselves call this directly.
+    reads. Specialised pipelines that build their one final master themselves call this directly. Without a
+    TIFF or EXR there is no final image: ``method`` becomes None and ``reason`` says so.
     """
+    if not any(exports.get(kind) for kind in KINDS):
+        return {**record, "method": None, "reason": "no master file was exported", "files": {}}
     record = dict(record)
     final_dir = Path(masters_dir) / FINAL_DIR
     final_dir.mkdir(parents=True, exist_ok=True)
     files = {}
-    for kind in ("tiff16", "exr"):
+    for kind in KINDS:
         export = exports.get(kind)
         if not export:
             continue
@@ -180,15 +184,15 @@ def deliver(
 
     Copies the final folder (TIFF, EXR and their sidecars) into ``drive_dir/<run id>`` when Google Drive is
     mounted at ``drive_root`` and the masters are not on Drive already, then, in Colab and with ``download``,
-    downloads the final TIFF through the browser. Returns what was done.
+    downloads the final TIFF (the EXR when no TIFF was exported) through the browser. Returns what was done.
     """
     final = manifest.get("final_output") or {}
     files = final.get("files") or {}
     done: dict = {"downloaded": None, "copied_to": None}
     if not files:
-        log(f"no final image: {final.get('reason', 'the run did not finish')}")
+        log(f"no final image, nothing downloaded: {final.get('reason', 'the run did not finish')}")
         return done
-    tiff = Path(files["tiff16"]["path"]) if "tiff16" in files else None
+    image = Path(files["tiff16" if "tiff16" in files else "exr"]["path"])
     if drive_dir:
         drive, root = Path(drive_dir), Path(drive_root)
         source = Path(next(iter(files.values()))["path"]).parent
@@ -204,15 +208,17 @@ def deliver(
                 shutil.copy2(path, target / path.name)
             done["copied_to"] = str(target)
             log(f"final image copied to Drive: {target}")
-    if download and tiff is not None:
+    if download:
         try:
             from google.colab import files as colab_files
         except ImportError:
-            log(f"not in Colab: the final image is {tiff}")
+            log(f"not in Colab: the final image is {image}")
         else:
-            log(f"downloading {tiff.name} ({tiff.stat().st_size / 1e6:,.0f} MB)")
-            colab_files.download(str(tiff))
-            done["downloaded"] = str(tiff)
+            if "tiff16" not in files:
+                log("no final TIFF was exported, so the final EXR is downloaded instead")
+            log(f"downloading {image.name} ({image.stat().st_size / 1e6:,.0f} MB)")
+            colab_files.download(str(image))
+            done["downloaded"] = str(image)
     return done
 
 

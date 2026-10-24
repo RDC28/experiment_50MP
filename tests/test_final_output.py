@@ -206,10 +206,25 @@ def test_delivery_outside_colab_prints_the_path(tmp_path, monkeypatch):
     assert logs == [f"not in Colab: the final image is {m['final_output']['files']['tiff16']['path']}"]
 
 
-def test_delivery_without_a_final_image_says_why(tmp_path):
+def test_delivery_without_a_final_tiff_downloads_the_exr(tmp_path, colab):
+    m, masters, figures = written_run(tmp_path)
+    del m["super_resolution"]["modes"]["conservative"]["exports"]["tiff16"]
+    m["final_output"] = final_output.write_final(final_output.select(m), m, masters, figures)
     logs = []
-    final_output.deliver({"final_output": {"method": None, "reason": "no output finished"}}, log=logs.append)
-    assert logs == ["no final image: no output finished"]
+    done = final_output.deliver(m, log=logs.append)
+    exr = m["final_output"]["files"]["exr"]["path"]
+    assert colab == [exr] and done["downloaded"] == exr
+    assert logs[0] == "no final TIFF was exported, so the final EXR is downloaded instead"
+
+
+def test_publishing_without_a_master_file_leaves_no_final_image(tmp_path, colab):
+    record = {"method": "final_night", "rule": "notebook", "reason": "notebook 02 makes one master", "notes": []}
+    final = final_output.publish(record, {}, tmp_path / "masters", tmp_path / "night_preview.jpg")
+    assert final["method"] is None and final["reason"] == "no master file was exported" and final["files"] == {}
+    logs = []
+    done = final_output.deliver({"final_output": final}, log=logs.append)
+    assert done == {"downloaded": None, "copied_to": None} and colab == []
+    assert logs == ["no final image, nothing downloaded: no master file was exported"]
 
 
 def test_a_general_scene_whose_balanced_mode_fails_a_seam_gate_ends_with_the_conservative_mode():
