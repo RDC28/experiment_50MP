@@ -118,7 +118,7 @@ INPUTS_ROOT = "{tmp_path / "inputs"}"
 
     manifest = json.loads(next((tmp_path / "reports").glob("*/manifest.json")).read_text())
     assert manifest["status"] == "complete"
-    assert manifest["notebook_version"] == "02_Night_Scenery_50MP/1.0"
+    assert manifest["notebook_version"] == "02_Night_Scenery_50MP/1.1"
     assert manifest["config"]["shadows"]["lift_strength"] == "low"
     assert manifest["config"]["texture"]["sharpening_strength"] == 0.3
     assert manifest["regions"]["overrides"][0]["note"] == "notebook test"

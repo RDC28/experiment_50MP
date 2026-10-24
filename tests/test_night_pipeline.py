@@ -5,6 +5,7 @@ The SR slots run Phase 2's real per-mode path with ``sr_models.load_model`` repl
 """
 
 import json
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -265,7 +266,7 @@ def test_report_has_every_section_and_the_metrics_table(run):
     assert "(figures/sr_difference_balanced.png)" in report
     assert f"`{sr_models.WEIGHTS[FIDELITY].sha256}`" in report  # models and weight hashes
     assert "synthesised, not recovered" in report and "seam checks:" in report
-    assert "stand-in" not in report and "not merged" not in report
+    assert not re.search(r"stand.in|not\s+merged", report)  # no leftover pre-Phase 2 SR placeholder label
     assert "Failure rule (PRD 12.6)" in report
     assert "sky_atmosphere at boxes [[0, 0, 16, 4]] (64 px) test override" in report
     for figure in ("regions.png", "banding_diagnostics.png", "halo_profile.png", "crop_shadow.png"):
