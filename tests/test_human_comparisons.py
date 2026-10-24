@@ -19,7 +19,10 @@ def test_synthetic_comparison_package(tmp_path):
     encoded, faces = test_images.make_crowd_test_image()
     source = cm.srgb_to_linear(encoded.astype(np.float32) / 255).astype(np.float32)
     config = HumanConfig(
-        face_detector="haar", manual_face_boxes=tuple(astuple(face) for face in faces), primary_subject_index=0
+        sr_backend="lanczos_stand_in",
+        face_detector="haar",
+        manual_face_boxes=tuple(astuple(face) for face in faces),
+        primary_subject_index=0,
     )
     result = reconstruct_human_crowd(source, 480, 320, config, log=lambda _: None)
     package = write_human_comparisons(source, result, tmp_path, tier_config=config.face_tiers)
@@ -66,7 +69,9 @@ def test_synthetic_comparison_package(tmp_path):
 
 def test_empty_face_selection_is_packaged(tmp_path):
     source = np.full((16, 24, 3), 0.2, np.float32)
-    result = reconstruct_human_crowd(source, 24, 16, HumanConfig(face_detector="haar"), log=lambda _: None)
+    result = reconstruct_human_crowd(
+        source, 24, 16, HumanConfig(sr_backend="lanczos_stand_in", face_detector="haar"), log=lambda _: None
+    )
     package = write_human_comparisons(source, result, tmp_path)
     assert package["face_crops"] == []
     assert len(package["figures"]) == 9
@@ -75,7 +80,9 @@ def test_empty_face_selection_is_packaged(tmp_path):
 
 def test_mismatched_candidate_rejected_before_writing(tmp_path):
     source = np.full((16, 24, 3), 0.2, np.float32)
-    result = reconstruct_human_crowd(source, 24, 16, HumanConfig(face_detector="haar"), log=lambda _: None)
+    result = reconstruct_human_crowd(
+        source, 24, 16, HumanConfig(sr_backend="lanczos_stand_in", face_detector="haar"), log=lambda _: None
+    )
     result = replace(result, candidates={**result.candidates, "balanced": source[:8]})
     with pytest.raises(ValueError, match="share final dimensions"):
         write_human_comparisons(source, result, tmp_path / "figures")

@@ -115,3 +115,22 @@ def test_invalid_colour_balance(value):
         from_dict({"colour_balance": value})
     with pytest.raises(ValueError):
         balance_colour(np.zeros((1, 1, 3), np.float32), value)
+
+
+@pytest.mark.parametrize("backend", ["swinir", "realesrgan", "lanczos_stand_in"])
+def test_sr_backend_round_trip_and_shared_controls(backend):
+    config = from_dict({"sr_backend": backend, "sr_modes": ["conservative", "balanced"], "sr_device": "cpu"})
+    assert config.sr_backend == backend
+    assert config.sr_modes == ("conservative", "balanced")
+    assert config.sr_device == "cpu"
+    assert from_dict(config.to_dict()) == config
+    assert HumanConfig().sr_backend == "swinir"
+
+
+@pytest.mark.parametrize("backend", ["swinir", "realesrgan", "lanczos_stand_in"])
+@pytest.mark.parametrize(
+    "invalid", [{"sr_tile_size": 32}, {"sr_tile_size": 128, "sr_tile_overlap": 80}, {"sr_device": "invalid"}]
+)
+def test_all_backends_retain_phase2_validation(backend, invalid):
+    with pytest.raises(ValueError):
+        from_dict({"sr_backend": backend, **invalid})

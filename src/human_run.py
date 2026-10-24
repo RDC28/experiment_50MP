@@ -1,4 +1,4 @@
-"""Notebook 01 file-to-report orchestration with explicit stand-in provenance."""
+"""Notebook 01 file-to-report orchestration with backend-specific provenance."""
 
 import json
 import time
@@ -14,6 +14,7 @@ from .human_reconstruction import reconstruct_human_crowd
 from .pipeline import (
     MEASUREMENT,
     NOTICE,
+    SR_NOTICE,
     RunResult,
     StageError,
     StageRecord,
@@ -33,6 +34,8 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
     Quick uses the configured reduced target. Detection and source consistency
     are never identity proof. Failed runs retain a manifest and a review report.
     """
+    learned = config.sr_backend != "lanczos_stand_in"
+    sr_notice = SR_NOTICE if learned else STAND_IN_DESCRIPTION
     started = time.perf_counter()
     inputs, outputs, reports = resolve_roots(config, Path(project_root).resolve())
     run_id = run_id or make_run_id(ingestion.sha256_file(Path(source_path)), config.profile)
@@ -42,8 +45,8 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
     manifest = {
         "schema": "synthetic_raw_lab.human_crowd.manifest/1",
         "run_id": run_id,
-        "notice": NOTICE,
-        "sr_notice": STAND_IN_DESCRIPTION,
+        "notice": SR_NOTICE if learned else NOTICE,
+        "sr_notice": sr_notice,
         "notebook_version": notebook_version,
         "config": config.to_dict(),
         "models": [],
@@ -90,8 +93,25 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
                     manifest["models"] = [haar_model_metadata()]
                 elif config.face_detector == "yunet":
                     manifest["models"] = [yunet_model_metadata()]
-                result = reconstruct_human_crowd(source.linear, target.width, target.height, config, log=log)
+                result = reconstruct_human_crowd(
+                    source.linear, target.width, target.height, config, log=log, project_root=project_root
+                )
                 stages.extend(result.stages)
+                modes = {
+                    record.parameters["mode"]: record.parameters
+                    for record in result.stages
+                    if record.name.startswith("human_upscale_")
+                }
+                manifest["super_resolution"] = {
+                    "backend": config.sr_backend,
+                    "final_mode": "conservative",
+                    "balanced_usage": "comparison only",
+                    "modes": modes,
+                }
+                for summary in modes.values():
+                    model = summary.get("model")
+                    if model is not None and model not in manifest["models"]:
+                        manifest["models"].append(model)
                 manifest["primary_subject"] = {
                     "index": result.detections.primary_index,
                     "rule": result.detections.primary_selection_rule,
@@ -100,8 +120,20 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
                 }
                 manifest.update(identity=result.identity, failure_events=result.failure_events, crowd=result.crowd)
             provenance = _provenance(run_id, source, "lanczos", target)
-            provenance.update(sr_notice=STAND_IN_DESCRIPTION, config=config.to_dict())
-            provenance["stage_classification"].insert(2, "Simulation")
+            provenance.update(
+                notice=SR_NOTICE if learned else NOTICE,
+                sr_notice=sr_notice,
+                config=config.to_dict(),
+                super_resolution=manifest["super_resolution"],
+            )
+            if learned:
+                provenance["method"] = "Conservative learned SR with human protection and Lanczos identity fallback"
+                provenance["stage_classification"].insert(1, "Inference")
+                provenance["information"]["inferred"] = SR_NOTICE
+                provenance["information"]["interpolated"] = (
+                    "Lanczos baseline, native x4 SR resampled to target, and original-derived identity fallback"
+                )
+            provenance["stage_classification"].insert(-1, "Simulation")
             provenance["information"]["simulated"] = (
                 "Bounded region microcontrast, optional skin-weighted bilateral smoothing, "
                 "face-excluding edge sharpening, "
@@ -114,7 +146,7 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
                     masters / "final_lin_rec709_half.exr",
                     result.final,
                     {
-                        **_exr_attributes(run_id, source, STAND_IN_DESCRIPTION),
+                        **_exr_attributes(run_id, source, "Human and crowd reconstruction", notice=sr_notice),
                         "humanProvenance": json.dumps(provenance),
                     },
                     precision="half",
@@ -139,7 +171,7 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
                 manifest["review"] = {
                     "path": str(preview),
                     "classification": "Packaging",
-                    "notice": STAND_IN_DESCRIPTION,
+                    "notice": sr_notice,
                 }
             with stage("source_consistency", MEASUREMENT):
                 reduced = baselines.downsample_area(cm.srgb_uint16_to_linear(encoded), source.width, source.height)
@@ -238,6 +270,32 @@ def render_human_report(manifest):
         ),
         "Model artifact versions, SHA-256 and license: see the models list in [manifest.json](manifest.json) "
         "and repository MODELS.md. Detection is never identity proof.",
+        "## Super-resolution",
+        f"Backend: {manifest.get('super_resolution', {}).get('backend', 'unavailable')}. "
+        "Final uses conservative SR; balanced is comparison only. "
+        "SR weights and commercial-use terms: repository docs/models.md.",
+        table(
+            ["Mode", "Preset", "Weights", "Device / precision", "Tiling", "Seam checks"],
+            [
+                (
+                    mode,
+                    summary.get("preset", {}).get("label", "Lanczos interpolation"),
+                    summary.get("weights", "none"),
+                    f"{summary.get('device', '-')} / {summary.get('precision', '-')}",
+                    summary.get("tiling", "not applicable"),
+                    summary.get("seams", "not applicable"),
+                )
+                for mode, summary in manifest.get("super_resolution", {}).get("modes", {}).items()
+            ],
+        ),
+        table(
+            ["SR weights", "SHA-256", "Licence", "Commercial use"],
+            [
+                (weights["name"], weights["sha256"], weights["license"], weights["commercial_use"])
+                for model in manifest.get("models", [])
+                if (weights := model.get("weights")) is not None
+            ],
+        ),
         "## Primary subject",
         f"Selected face: {manifest.get('primary_subject', {}).get('index', 'unavailable')}; "
         f"selection rule: {manifest.get('primary_subject', {}).get('rule', 'unavailable')}. "

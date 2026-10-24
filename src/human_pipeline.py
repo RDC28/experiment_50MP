@@ -1,23 +1,34 @@
 """Human/crowd reconstruction building blocks (PRD 10, 18).
 
-The default backend is interpolation, not pretrained SR. Both comparison modes
-use the same stand-in until Phase 2 is available. Arrays remain unclipped linear
-Rec.709 float32, including Lanczos overshoot; no sensor data is recovered.
+The run-scoped Phase 2 adapter exposes learned SR with explicit provenance.
+The legacy registry supplies the explicit interpolation comparison path.
+Arrays remain linear Rec.709 float32; no sensor data is recovered.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal, Protocol
 
 import cv2
 import numpy as np
 
-from . import baselines
-from .pipeline import INTERPOLATION, StageRecord
+from . import baselines, sr_models
+from . import super_resolution as sr
+from .pipeline import (
+    INFERENCE,
+    INTERPOLATION,
+    SEAM_BLEND_ERROR_LIMIT,
+    SEAM_SCORE_LIMIT,
+    SR_NOTICE,
+    StageError,
+    StageRecord,
+    _current_model,
+)
 
 UpscaleMode = Literal["conservative", "balanced"]
-STAND_IN_DESCRIPTION = "stand-in: Lanczos interpolation, Phase 2 SR not yet available"
+STAND_IN_DESCRIPTION = "stand-in: Lanczos interpolation; no learned inference or recovered detail"
 
 
 @dataclass(frozen=True)
@@ -27,6 +38,7 @@ class UpscaleResult:
     mode: UpscaleMode
     description: str
     classification: str
+    metadata: dict = field(default_factory=dict)
 
     def stage_record(self) -> StageRecord:
         """Use the common manifest shape; the caller records timing and memory."""
@@ -38,6 +50,7 @@ class UpscaleResult:
                 "mode": self.mode,
                 "width": self.linear.shape[1],
                 "height": self.linear.shape[0],
+                **self.metadata,
             },
             input_precision="float32 linear",
             output_precision="float32 linear",
@@ -71,7 +84,107 @@ def lanczos_stand_in(linear: np.ndarray, width: int, height: int, mode: UpscaleM
     )
 
 
-# One replacement point for the future Phase 2 adapter; no model code or downloads.
+class Phase2Upscaler:
+    """Run-scoped learned SR adapter; cache networks, never full-size candidates.
+
+    The caller owns this instance for one run and calls close even on failure.
+    General blending belongs to the human reconstruction stage, so SR detail
+    strength stays at one rather than introducing a second blend control.
+    """
+
+    def __init__(self, config, project_root: str | Path, *, log=print):
+        if config.sr_backend not in sr_models.BACKENDS:
+            raise ValueError(f"unknown learned sr_backend {config.sr_backend!r}")
+        self.config = config
+        self.weights_dir = (
+            Path(config.sr_weights_dir) if config.sr_weights_dir else sr_models.default_weights_dir(Path(project_root))
+        )
+        self.log = log
+        self.loaded = {}
+
+    def __call__(self, linear, width, height, mode):
+        _validate_image(linear)
+        if mode not in ("conservative", "balanced"):
+            raise ValueError("mode must be conservative or balanced")
+        config = self.config
+        preset = sr.PRESETS[mode]
+        weights = sr_models.BACKENDS[config.sr_backend][preset.network]
+        try:
+            if not sr_models.available():
+                raise RuntimeError("PyTorch and spandrel are required; install the [sr] extra")
+            if weights not in self.loaded:
+                self.loaded[weights] = sr_models.load_model(
+                    weights,
+                    self.weights_dir,
+                    device=config.sr_device,
+                    precision=config.sr_precision,
+                    seed=config.random_seed,
+                    log=self.log,
+                )
+        except Exception as error:
+            raise StageError(
+                f"human_upscale_{mode}",
+                RuntimeError(f"{error}; use sr_backend: lanczos_stand_in for interpolation"),
+                None,
+            ) from error
+        model = self.loaded[weights]
+        tile, basis = config.sr_tile_size, "configured"
+        if not tile:
+            tile, basis = sr_models.auto_tile_size(
+                model.device,
+                model.precision,
+                model.architecture,
+                source_width=linear.shape[1],
+                scale=model.scale,
+            )
+        tile = max(tile, 2 * config.sr_tile_overlap)
+        output, tiling = sr.super_resolve(
+            linear,
+            width,
+            height,
+            model,
+            tile_size=tile,
+            tile_overlap=config.sr_tile_overlap,
+            detail_strength=1.0,
+            log=self.log,
+        )
+        model = self.loaded[weights] = _current_model(model, tiling)
+        metadata = {
+            "preset": preset.to_dict(),
+            "weights": weights,
+            "model": {**model.describe(), "weights": sr_models.WEIGHTS[weights].to_dict()},
+            "native_scale": model.scale,
+            "final_resample": "Lanczos-3 in linear light to exact target",
+            "device": model.device,
+            "precision": model.precision,
+            "tiling": {**tiling.to_dict(), "tile_basis": basis},
+        }
+        if config.preserve_source_structure:
+            metadata["source_projection"] = sr.project_to_source(output, linear, preset.consistency_strength)
+        seams = sr.seam_scores(output, tiling.boundaries, linear)
+        disagreement = metadata["tiling"]["overlap_disagreement"]
+        seams["passed"] = (seams["max_score"] or 0) <= SEAM_SCORE_LIMIT and (
+            disagreement["blend_error_p99_abs_max"] or 0
+        ) <= SEAM_BLEND_ERROR_LIMIT
+        seams["limits"] = {"max_score": SEAM_SCORE_LIMIT, "blend_error_p99_abs_8bit": SEAM_BLEND_ERROR_LIMIT}
+        metadata["seams"] = seams
+        return UpscaleResult(
+            output,
+            config.sr_backend,
+            mode,
+            f"{preset.label}; {weights}; native x4 then Lanczos-3 to target. {SR_NOTICE}",
+            INFERENCE,
+            metadata,
+        )
+
+    def close(self):
+        """Release device caches and network references at the end of a run."""
+        while self.loaded:
+            _, model = self.loaded.popitem()
+            model.release_cache()
+
+
+# Stateless interpolation backends; learned backends require a run-scoped Phase2Upscaler.
 UPSCALERS: dict[str, Upscaler] = {"lanczos_stand_in": lanczos_stand_in}
 
 

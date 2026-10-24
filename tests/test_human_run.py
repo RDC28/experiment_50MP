@@ -17,6 +17,7 @@ from synthetic_raw_lab.pipeline import StageError
 def configuration():
     _, faces = test_images.make_crowd_test_image()
     return HumanConfig(
+        sr_backend="lanczos_stand_in",
         face_detector="none",
         runtime_preset="quick",
         quick_target_megapixels=0.1536,
@@ -194,7 +195,11 @@ def test_default_yunet_unavailable_completes_manual_run(tmp_path, monkeypatch):
         raise RuntimeError("offline test artifact unavailable")
 
     monkeypatch.setattr(human_models, "ensure_yunet_model", unavailable)
-    config = configuration().replace(face_detector=HumanConfig().face_detector)
+    config = configuration().replace(
+        face_detector=HumanConfig(
+            sr_backend="lanczos_stand_in",
+        ).face_detector
+    )
     assert config.face_detector == "yunet"
     result = run_human_crowd(source_file(tmp_path), config, tmp_path, log=lambda _: None)
     assert result.manifest["status"] == "complete"
@@ -216,3 +221,73 @@ def test_empty_tiers_report_missing_metrics_as_dash_end_to_end(tmp_path):
     for row in tiers[1:]:
         assert row["mean_ssim"] is None
         assert row["mean_ciede2000"] is None
+
+
+@pytest.mark.parametrize("backend", ["swinir", "realesrgan", "lanczos_stand_in"])
+def test_backend_provenance_reaches_masters_manifest_and_report(tmp_path, monkeypatch, backend):
+    import numpy as np
+
+    from synthetic_raw_lab import sr_models
+    from synthetic_raw_lab.pipeline import SR_NOTICE
+
+    loaded = []
+
+    class FakeModel:
+        scale, alignment = 4, 1
+        device, precision, architecture = "cpu", "float32", "fake"
+
+        def __call__(self, encoded):
+            return np.repeat(np.repeat(encoded, 4, axis=0), 4, axis=1)
+
+        def describe(self):
+            return {"architecture": self.architecture, "device": self.device, "precision": self.precision}
+
+        def release_cache(self):
+            pass
+
+    def load(name, *args, **kwargs):
+        loaded.append(name)
+        return FakeModel()
+
+    monkeypatch.setattr(sr_models, "available", lambda: True)
+    monkeypatch.setattr(sr_models, "load_model", load)
+    path = tmp_path / "tiny.png"
+    Image.fromarray(np.full((24, 32, 3), 128, np.uint8)).save(path)
+    config = configuration().replace(
+        sr_backend=backend,
+        manual_face_boxes=[],
+        primary_subject_index=None,
+        quick_target_megapixels=0.012288,
+        sr_tile_size=128,
+    )
+    result = run_human_crowd(path, config, tmp_path, log=lambda _: None)
+    manifest = result.manifest
+    report = result.report_path.read_text()
+    provenance = manifest["provenance"]
+    assert manifest["super_resolution"]["backend"] == backend
+    if backend == "lanczos_stand_in":
+        assert not loaded
+        assert manifest["models"] == []
+        assert "Inference" not in provenance["stage_classification"]
+        assert provenance["information"]["inferred"] == "none (no learned models)"
+        assert "stand-in: Lanczos interpolation" in report
+        assert "stand-in" in manifest["comparisons"]["notice"].lower()
+    else:
+        assert manifest["sr_notice"] == SR_NOTICE
+        assert manifest["review"]["notice"] == SR_NOTICE
+        assert manifest["comparisons"]["notice"] == SR_NOTICE
+        assert len(loaded) == len(manifest["models"]) == 2
+        assert "Inference" in provenance["stage_classification"]
+        assert provenance["information"]["inferred"] == SR_NOTICE
+        assert "stand-in" not in report
+        for mode, network in (("conservative", "fidelity"), ("balanced", "perceptual")):
+            weights = sr_models.WEIGHTS[sr_models.BACKENDS[backend][network]].to_dict()
+            summary = manifest["super_resolution"]["modes"][mode]
+            assert summary["model"]["weights"] == weights
+            assert summary["model"] in manifest["models"]
+            assert "passed" in summary["seams"]
+            assert weights["sha256"] in report
+            assert weights["commercial_use"] in report
+    for item in manifest["exports"].values():
+        sidecar = json.loads(Path(item["path"]).with_suffix(Path(item["path"]).suffix + ".json").read_text())
+        assert sidecar["provenance"] == provenance

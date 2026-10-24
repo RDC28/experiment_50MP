@@ -39,7 +39,7 @@ configs/super_resolution_default.yaml  Phase 2 profile: the baselines plus pretr
 configs/sensor_research.yaml   Phase 5 parameters, every key documented in src/sensor_config.py
 configs/human_default.yaml     human profile, documented in src/human_config.py
 docs/models.md                 SR model evaluation, weights, checksums, licences, commercial-use terms
-MODELS.md                      face detector weights, checksums and licences for notebook 01
+MODELS.md                      notebook 01 detector artifacts and pointer to SR weight terms
 notebooks/00_Feasibility_Baselines.ipynb  Phases 0 to 2
 notebooks/05_Synthetic_Sensor_Research.ipynb  Phase 5
 notebooks/01_Human_Crowd_50MP.ipynb
@@ -104,7 +104,7 @@ OpenCV; each run records the versions and the Git commit it actually used.
 Open `notebooks/01_Human_Crowd_50MP.ipynb` and run all cells. The same Colab setup applies.
 Start with `INPUT_MODE="synthetic"` and the default `quick` preset: a 384 x 256 crowd fixture supplies
 manual ground-truth boxes across all three face tiers, with a reduced 0.1536 MP target. For real inputs,
-choose upload or path. Bundled Haar detection runs by default (`FACE_DETECTOR="haar"`); inspect its
+choose upload or path. YuNet detection runs by default (`FACE_DETECTOR="yunet"`); inspect its
 observations and add `MANUAL_FACE_BOXES` in source pixels as needed. Manual boxes win overlaps.
 Use `FACE_DETECTOR="none"` for manual-only observations. Select `PRIMARY_SUBJECT_INDEX` if needed,
 then increase the quick target so it upscales the source on both axes. Standard and research use 50 MP;
@@ -116,8 +116,15 @@ Detector versions, bundled XML hash, confidence semantics and commercial-use ter
 The package API `synthetic_raw_lab.human_run.run_human_crowd` writes TIFF16 and half EXR masters,
 a review JPEG, all PRD 18.3 comparisons, a mask overlay, per-tier identity metrics, crowd review flags,
 and stage timing/memory in `report.md` and `manifest.json`. The notebook archives reports separately.
-Conservative and balanced SR remain Lanczos stand-ins. Identity consistency is not identity proof;
-visual anatomy and unavailable identity checks require human review. Skin smoothing currently accepts only its neutral default; learned SR remains unavailable.
+Notebook 01 defaults to `SR_BACKEND="swinir"`; `realesrgan` and explicit
+`lanczos_stand_in` interpolation are also available. Learned backends install the
+`[sr]` extra and expose device, precision, tile size, overlap and weights-directory controls.
+Conservative uses the Phase 2 fidelity preset and feeds final reconstruction; balanced uses
+the perceptual preset for comparison only. Identity failures fall back locally to source-derived
+Lanczos. Learned outputs are Inference (synthesized detail); the stand-in is Interpolation.
+Missing SR dependencies or unavailable weights fail explicitly with guidance to select the stand-in.
+See [docs/models.md](docs/models.md) for SR weights, checksums, licences and commercial-use caveats.
+Identity consistency is not identity proof; visual anatomy and unavailable identity checks require human review.
 SR blending, skin smoothing, face-excluding sharpening, tonal contrast, colour balance and seeded grain are exposed.
 `skin_texture_smoothing` defaults to 0 (exact no-op), accepts [0, 1], and applies a
 5-pixel bilateral filter (linear colour sigma 0.05, spatial sigma 2 output pixels),
@@ -237,13 +244,13 @@ does not remove their evidence; these samples are not enhancement weights.
 
 Notebook 01 classical controls: `general_sr_strength` defaults to 1 and accepts
 0 to 1, blending the Lanczos baseline with each selected upscaler output. The
-current Lanczos stand-in gives identical candidates at every strength; higher
-values retain more backend artifacts when a distinct backend is available.
+explicit Lanczos stand-in gives identical candidates at every strength; higher
+values retain more synthesized detail and possible artifacts with learned backends.
 `edge_sharpening` defaults to 0 (bit-identical no-op) and accepts 0 to 1. It applies
 a simulated unsharp mask with sigma 1 output pixel and maximum per-channel
 linear change 0.02 times strength, excluding complete observed face boxes before
 identity recovery. High strengths can amplify halos and artifacts. Both controls
-have independent StageRecords; neither recovers source detail.
+have independent StageRecords. Learned SR synthesizes detail; sharpening is Simulation.
 
 The human profile's PRD 11.6 recovery gate includes
 `identity.max_landmark_displacement_normalized` (default `0.05`, to be calibrated

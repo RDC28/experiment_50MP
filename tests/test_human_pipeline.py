@@ -21,7 +21,7 @@ def test_stand_in_matches_baseline_and_records_provenance(mode):
     assert record["classification"] == INTERPOLATION
     assert record["notes"] == [human_pipeline.STAND_IN_DESCRIPTION]
     assert record["parameters"] == {"sr_backend": "lanczos_stand_in", "mode": mode, "width": 31, "height": 25}
-    assert "Phase 2 SR not yet available" in json.dumps(record)
+    assert "no learned inference or recovered detail" in json.dumps(record)
 
 
 @pytest.mark.parametrize(
@@ -199,3 +199,86 @@ def test_skin_smoothing_invalid_strength(value):
         human_pipeline.smooth_skin(
             np.zeros((2, 2, 3), np.float32), value, np.ones((2, 2), np.float32), np.ones((2, 2), np.float32)
         )
+
+
+@pytest.mark.parametrize("backend", ["swinir", "realesrgan"])
+@pytest.mark.parametrize("preserve", [True, False])
+def test_phase2_adapter_presets_cache_projection_and_metadata(monkeypatch, tmp_path, backend, preserve):
+    from types import SimpleNamespace
+
+    from synthetic_raw_lab import sr_models
+    from synthetic_raw_lab import super_resolution as sr
+    from synthetic_raw_lab.human_config import HumanConfig
+
+    loads, projections, releases = [], [], []
+    source = np.full((4, 5, 3), 0.2, np.float32)
+    config = HumanConfig(sr_backend=backend, preserve_source_structure=preserve)
+
+    class FakeModel:
+        scale, alignment = 4, 1
+        device, precision, architecture = "cpu", "float32", "fake"
+
+        def describe(self):
+            return {"architecture": self.architecture, "scale": self.scale}
+
+        def release_cache(self):
+            releases.append(self)
+
+    def load(name, *args, **kwargs):
+        loads.append(name)
+        return FakeModel()
+
+    def resolve(linear, width, height, model, **kwargs):
+        assert kwargs["detail_strength"] == 1
+        assert kwargs["tile_size"] >= 2 * config.sr_tile_overlap
+        return np.full((height, width, 3), 0.4, np.float32), SimpleNamespace(
+            final_device="cpu",
+            boundaries=[],
+            to_dict=lambda: {"overlap_disagreement": {"blend_error_p99_abs_max": 0.5}},
+        )
+
+    def project(output, linear, strength):
+        projections.append(strength)
+        output[:] = 0.3
+        return {"strength": strength}
+
+    monkeypatch.setattr(sr_models, "available", lambda: True)
+    monkeypatch.setattr(sr_models, "load_model", load)
+    monkeypatch.setattr(sr_models, "auto_tile_size", lambda *a, **kw: (256, "fake memory"))
+    monkeypatch.setattr(sr, "super_resolve", resolve)
+    monkeypatch.setattr(sr, "project_to_source", project)
+    monkeypatch.setattr(sr, "seam_scores", lambda *a: {"max_score": 0.1})
+    adapter = human_pipeline.Phase2Upscaler(config, tmp_path, log=lambda _: None)
+    for mode in ("conservative", "balanced", "conservative"):
+        result = adapter(source, 10, 8, mode)
+        metadata = result.stage_record().parameters
+        assert result.classification == "Inference"
+        assert metadata["weights"] == sr_models.BACKENDS[backend][sr.PRESETS[mode].network]
+        assert metadata["preset"] == sr.PRESETS[mode].to_dict()
+        assert metadata["model"]["weights"] == sr_models.WEIGHTS[metadata["weights"]].to_dict()
+        assert metadata["seams"]["passed"] is True
+        assert metadata["tiling"]["tile_basis"] == "fake memory"
+        np.testing.assert_allclose(result.linear, 0.3 if preserve else 0.4)
+    assert loads == list(sr_models.BACKENDS[backend].values())
+    assert projections == ([1.0] * 3 if preserve else [])
+    adapter.close()
+    assert not adapter.loaded and len(releases) == 2
+    np.testing.assert_allclose(source, 0.2)
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_phase2_adapter_setup_failure_is_actionable(monkeypatch, tmp_path, missing):
+    from synthetic_raw_lab import sr_models
+    from synthetic_raw_lab.human_config import HumanConfig
+    from synthetic_raw_lab.pipeline import StageError
+
+    monkeypatch.setattr(sr_models, "available", lambda: not missing)
+
+    def fail(*args, **kwargs):
+        raise OSError("weights unavailable")
+
+    monkeypatch.setattr(sr_models, "load_model", fail)
+    adapter = human_pipeline.Phase2Upscaler(HumanConfig(), tmp_path)
+    with pytest.raises(StageError, match="sr_backend: lanczos_stand_in") as error:
+        adapter(np.zeros((4, 4, 3), np.float32), 8, 8, "conservative")
+    assert ("PyTorch" if missing else "weights unavailable") in str(error.value)

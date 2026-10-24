@@ -1,9 +1,15 @@
 """Execute Notebook 01 as a user would, with a small synthetic crowd."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("SYNTHETIC_RAW_LAB_HEAVY_TESTS") != "1",
+    reason="notebook execution is opt-in: set SYNTHETIC_RAW_LAB_HEAVY_TESTS=1",
+)
 
 nbformat = pytest.importorskip("nbformat")
 nbclient = pytest.importorskip("nbclient")
@@ -16,6 +22,7 @@ def test_human_notebook_synthetic_quick(tmp_path):
     parameters.source += f"""
 INPUT_MODE = "synthetic"
 FACE_DETECTOR = "none"
+SR_BACKEND = "lanczos_stand_in"
 GENERAL_SR_STRENGTH = 0.5
 EDGE_SHARPENING = 0.2
 SKIN_TEXTURE_SMOOTHING = 0.4

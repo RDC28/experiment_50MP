@@ -1,5 +1,20 @@
 # Notebook 01 inference artifacts
 
+## Phase 2 super-resolution weights
+
+Notebook 01 defaults to `swinir`; `realesrgan` is an alternative learned backend.
+Both use the shared Phase 2 registry: conservative selects fidelity weights and
+balanced selects perceptual weights. Conservative feeds final reconstruction;
+balanced remains a comparison candidate. Native x4 inference is resampled with
+Lanczos-3 to the target. These outputs are Inference and synthesize detail.
+
+[docs/models.md](docs/models.md) is authoritative for the selected SR weight files,
+SHA-256 checksums, licences and commercial-use caveats. Runs record model descriptions,
+weight metadata, tiling and seam checks in their manifests and reports.
+The explicit `lanczos_stand_in` backend uses no SR weights and is Interpolation.
+Missing learned dependencies or weights fail the SR stage rather than silently
+substituting interpolation.
+
 ## OpenCV frontal Haar face detector
 
 - Operation: inference only, labelled Inference. No training, fine-tuning or model download.

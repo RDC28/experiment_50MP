@@ -1,8 +1,9 @@
 """Notebook 01 configuration, PRD 18.1 and 22.2.
 
-The profile mirrors the implemented human/crowd subset of PRD 18.1. Lanczos is
-an explicitly labelled SR stand-in. Learned SR tiling, landmark/embedding
-models, optics and sensor simulation are not implemented;
+The profile mirrors the human/crowd subset of PRD 18.1 and inherits Phase 2
+SR device, precision, weights and tiling controls. Lanczos remains an explicitly
+labelled interpolation option. Landmark/embedding models, optics and sensor
+simulation are not implemented;
 no configuration switch claims to enable them. Generative face replacement and
 background-face restoration are prohibited. Region strengths are provisional
 numeric interpretations of the PRD's low/moderate policies.
@@ -37,11 +38,11 @@ class HumanConfig(ExperimentConfig):
     profile: str = _param("human_crowd", "Human profile name.", "human_crowd", "Labels provenance.")
     input_category: str = _param("human", "Human input store.", "human", "Selects human folders.")
     sr_backend: str = _param(
-        "lanczos_stand_in",
+        "swinir",
         "Explicit upscaler backend.",
-        "lanczos_stand_in",
-        "Both SR modes use Lanczos interpolation until learned SR is available.",
-        warning="Interpolation adds no recovered detail; never describe this as pretrained SR.",
+        "swinir | realesrgan | lanczos_stand_in",
+        "Select Phase 2 pretrained SR or explicit Lanczos interpolation for comparison.",
+        warning="Learned SR synthesizes detail; interpolation adds no recovered detail.",
     )
     general_sr_strength: float = _param(
         1.0,
@@ -129,11 +130,16 @@ class HumanConfig(ExperimentConfig):
     )
 
     def __post_init__(self) -> None:
-        ExperimentConfig(**{name: getattr(self, name) for name in _BASE_NAMES})
+        if self.sr_backend not in ("swinir", "realesrgan", "lanczos_stand_in"):
+            raise ValueError("sr_backend must be swinir, realesrgan or lanczos_stand_in")
+        shared = {name: getattr(self, name) for name in _BASE_NAMES}
+        # Only the human profile admits interpolation. Validate every other shared
+        # field through Phase 2 without widening ExperimentConfig's backend choices.
+        if self.sr_backend == "lanczos_stand_in":
+            shared["sr_backend"] = "swinir"
+        ExperimentConfig(**shared)
         if self.profile != "human_crowd" or self.input_category != "human":
             raise ValueError("human profile requires profile=human_crowd and input_category=human")
-        if self.sr_backend != "lanczos_stand_in":
-            raise ValueError("sr_backend must be lanczos_stand_in (interpolation, not learned SR)")
         for name in ("general_sr_strength", "edge_sharpening", "grain", "skin_texture_smoothing"):
             value = getattr(self, name)
             if (
@@ -173,7 +179,7 @@ class HumanConfig(ExperimentConfig):
 
     def to_dict(self) -> dict:
         data = dataclasses.asdict(self)
-        for name in ("baselines", "crops", "manual_face_boxes", "colour_balance"):
+        for name in ("baselines", "sr_modes", "crops", "manual_face_boxes", "colour_balance"):
             data[name] = [list(v) if isinstance(v, tuple) else v for v in data[name]]
         return data
 
@@ -196,12 +202,12 @@ def from_dict(values: dict[str, Any]) -> HumanConfig:
         if not isinstance(value, dict) or set(value) - {f.name for f in dataclasses.fields(cls)}:
             raise ValueError(f"{name} must be a mapping of documented keys")
         normalized[name] = cls(**value)
-    for name in ("baselines", "crops", "manual_face_boxes", "colour_balance"):
+    for name in ("baselines", "sr_modes", "crops", "manual_face_boxes", "colour_balance"):
         if name in normalized:
             value = normalized[name]
             if not isinstance(value, (list, tuple)):
                 raise ValueError(f"{name} must be a list")
-            if name not in ("baselines", "colour_balance"):
+            if name not in ("baselines", "sr_modes", "colour_balance"):
                 if any(not isinstance(v, (list, tuple)) for v in value):
                     raise ValueError(f"{name} entries must be lists")
                 value = [tuple(v) for v in value]

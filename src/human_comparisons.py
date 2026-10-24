@@ -18,6 +18,7 @@ from .exporters import write_review_image
 from .face_preservation import FaceTierConfig, face_tier
 from .human_pipeline import STAND_IN_DESCRIPTION, _validate_image
 from .human_reconstruction import HumanReconstruction
+from .pipeline import SR_NOTICE
 from .region_masks import mask_overlay
 
 _CELL = 320
@@ -114,11 +115,15 @@ def write_human_comparisons(
     crops = []
     small_tiles = []
     face_tiles = {}
+    learned = any(
+        stage.name.startswith("human_upscale_") and stage.classification == "Inference" for stage in result.stages
+    )
+    sr_label = "Inference, synthesized detail" if learned else "stand-in: Lanczos interpolation"
     labels = {
         "original": "Original source face crops",
         "lanczos": "Lanczos interpolated face crops",
-        "conservative": "Conservative SR stand-in crops",
-        "balanced": "Balanced SR stand-in face crops",
+        "conservative": f"Conservative SR face crops ({sr_label})",
+        "balanced": f"Balanced SR face crops ({sr_label})",
         "final": "Final identity-preserving face crops",
     }
 
@@ -179,4 +184,4 @@ def write_human_comparisons(
         _sheet(overlays, "Estimated region masks\nMagenta = weight; not segmentation truth"),
         "Source-scale estimated masks; magenta opacity is proportional to weight",
     )
-    return {"figures": figures, "face_crops": crops, "notice": STAND_IN_DESCRIPTION}
+    return {"figures": figures, "face_crops": crops, "notice": SR_NOTICE if learned else STAND_IN_DESCRIPTION}

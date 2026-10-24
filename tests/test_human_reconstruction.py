@@ -17,7 +17,10 @@ def test_synthetic_crowd_reconstruction_preserves_tiers_and_provenance():
     source = color_management.srgb_to_linear(encoded.astype(np.float32) / 255).astype(np.float32)
     before = source.copy()
     config = HumanConfig(
-        face_detector="haar", manual_face_boxes=tuple(astuple(f) for f in faces), primary_subject_index=0
+        sr_backend="lanczos_stand_in",
+        face_detector="haar",
+        manual_face_boxes=tuple(astuple(f) for f in faces),
+        primary_subject_index=0,
     )
     result = reconstruct_human_crowd(source, 480, 320, config, log=lambda _: None)
     np.testing.assert_array_equal(source, before)
@@ -53,13 +56,17 @@ def test_crowd_check_reuses_configured_detector_at_source_scale(monkeypatch, kin
         face_preservation, "HaarFaceDetector" if kind == "haar" else "YuNetFaceDetector", lambda: detector
     )
     source = np.full((16, 24, 3), 0.2, np.float32)
-    result = reconstruct_human_crowd(source, 48, 32, HumanConfig(face_detector=kind), log=lambda _: None)
+    result = reconstruct_human_crowd(
+        source, 48, 32, HumanConfig(sr_backend="lanczos_stand_in", face_detector=kind), log=lambda _: None
+    )
     assert calls == [source.shape] * 3
     assert result.crowd["new_face_like_detections"][0]["box"] == [16, 4, 8, 8]
     assert "no automatic detector" not in result.crowd["detection_note"]
 
     calls.clear()
-    disabled = reconstruct_human_crowd(source, 48, 32, HumanConfig(face_detector="none"), log=lambda _: None)
+    disabled = reconstruct_human_crowd(
+        source, 48, 32, HumanConfig(sr_backend="lanczos_stand_in", face_detector="none"), log=lambda _: None
+    )
     assert calls == []
     assert disabled.crowd["new_face_like_detections"] is None
     assert "no automatic detector configured" in disabled.crowd["detection_note"]
@@ -67,14 +74,16 @@ def test_crowd_check_reuses_configured_detector_at_source_scale(monkeypatch, kin
 
 def test_empty_annotations_remain_explicit():
     source = np.full((16, 24, 3), 0.2, np.float32)
-    result = reconstruct_human_crowd(source, 24, 16, HumanConfig(face_detector="haar"), log=lambda _: None)
+    result = reconstruct_human_crowd(
+        source, 24, 16, HumanConfig(sr_backend="lanczos_stand_in", face_detector="haar"), log=lambda _: None
+    )
     assert result.identity["faces"] == []
     assert all(row["face_count"] == 0 for row in result.identity["per_tier"])
     assert result.failure_events == []
 
 
 def test_stage_failure_stops_memory_sampler():
-    config = HumanConfig(face_detector="haar", manual_face_boxes=((0, 0, 99, 99),))
+    config = HumanConfig(sr_backend="lanczos_stand_in", face_detector="haar", manual_face_boxes=((0, 0, 99, 99),))
     with pytest.raises(StageError) as error:
         reconstruct_human_crowd(np.zeros((16, 24, 3), np.float32), 24, 16, config, log=lambda _: None)
     assert error.value.stage == "face_observations"
@@ -84,7 +93,12 @@ def test_stage_failure_stops_memory_sampler():
 @pytest.mark.parametrize("width,height", [(12, 16), (24, 8), (True, 16), (24, 16.0)])
 def test_invalid_target_fails_before_processing(width, height):
     with pytest.raises(ValueError):
-        reconstruct_human_crowd(np.zeros((16, 24, 3), np.float32), width, height, HumanConfig(face_detector="haar"))
+        reconstruct_human_crowd(
+            np.zeros((16, 24, 3), np.float32),
+            width,
+            height,
+            HumanConfig(sr_backend="lanczos_stand_in", face_detector="haar"),
+        )
 
 
 def test_altered_face_triggers_configured_recovery(monkeypatch):
@@ -101,6 +115,7 @@ def test_altered_face_triggers_configured_recovery(monkeypatch):
 
     monkeypatch.setattr(crowd_processing, "enhance_regions", altered)
     config = HumanConfig(
+        sr_backend="lanczos_stand_in",
         face_detector="haar",
         manual_face_boxes=((8, 8, 16, 16),),
         primary_subject_index=0,
@@ -115,7 +130,9 @@ def test_altered_face_triggers_configured_recovery(monkeypatch):
 def test_unset_primary_receives_primary_mask_and_leaves_background_faces():
     encoded, faces = test_images.make_crowd_test_image()
     source = color_management.srgb_to_linear(encoded.astype(np.float32) / 255).astype(np.float32)
-    config = HumanConfig(face_detector="haar", manual_face_boxes=tuple(astuple(f) for f in faces))
+    config = HumanConfig(
+        sr_backend="lanczos_stand_in", face_detector="haar", manual_face_boxes=tuple(astuple(f) for f in faces)
+    )
     result = reconstruct_human_crowd(source, 384, 256, config, log=lambda _: None)
     assert result.detections.primary_index == 0
     face = faces[0]
@@ -129,6 +146,7 @@ def test_nonzero_sharpening_protects_complete_observed_box():
 
     source = np.random.default_rng(12).uniform(0.1, 0.6, (24, 32, 3)).astype(np.float32)
     config = HumanConfig(
+        sr_backend="lanczos_stand_in",
         face_detector="none",
         manual_face_boxes=((8, 6, 12, 12),),
         regions=RegionDetailConfig(max_detail=0),
@@ -148,6 +166,7 @@ def test_colour_shift_unavailable_without_skin_and_recovery_checks_tone():
 
     source = np.full((16, 24, 3), 0.4, np.float32)
     config = HumanConfig(
+        sr_backend="lanczos_stand_in",
         face_detector="none",
         manual_face_boxes=((4, 4, 8, 8),),
         tonal_contrast=0.5,
@@ -191,6 +210,7 @@ def test_smoothing_uses_facial_skin_samples_with_complete_box_caps(monkeypatch):
         64,
         48,
         HumanConfig(
+            sr_backend="lanczos_stand_in",
             face_detector="none",
             manual_face_boxes=((4, 4, 8, 8), (20, 4, 6, 6)),
             skin_texture_smoothing=1,
@@ -218,7 +238,7 @@ def test_yunet_reconstruction_reports_landmarks_without_network(monkeypatch):
 
     monkeypatch.setattr(fp, "YuNetLandmarkEstimator", lambda: landmarks)
     source = np.full((32, 40, 3), 0.2, np.float32)
-    config = HumanConfig(face_detector="yunet", manual_face_boxes=((4, 4, 24, 24, 1.0),))
+    config = HumanConfig(sr_backend="lanczos_stand_in", face_detector="yunet", manual_face_boxes=((4, 4, 24, 24, 1.0),))
     result = reconstruct_human_crowd(source, 80, 64, config, log=lambda _: None)
     assert crops and all(shape == (24, 24, 3) for shape in crops)
     assert result.identity["faces"][0]["landmark_displacement_px"] == {"mean": 0.0, "max": 0.0}
@@ -232,6 +252,7 @@ def test_small_crowd_pixels_match_before_intermediate_release():
     encoded, faces = test_images.make_crowd_test_image()
     source = color_management.srgb_to_linear(encoded.astype(np.float32) / 255).astype(np.float32)
     config = HumanConfig(
+        sr_backend="lanczos_stand_in",
         face_detector="none",
         manual_face_boxes=tuple(astuple(f) for f in faces),
         skin_texture_smoothing=0.2,
@@ -244,3 +265,80 @@ def test_small_crowd_pixels_match_before_intermediate_release():
     assert hashlib.sha256(result.final.tobytes()).hexdigest() == (
         "93e0aba531727ebbdb4f497e8109f1e609a483d543fdac816e5eb331e6459388"
     )
+
+
+@pytest.mark.parametrize("fail_balanced", [False, True])
+def test_learned_reconstruction_uses_conservative_and_releases_models(monkeypatch, tmp_path, fail_balanced):
+    import weakref
+    from types import SimpleNamespace
+
+    from synthetic_raw_lab import crowd_processing, sr_models
+    from synthetic_raw_lab import super_resolution as sr
+
+    loads, releases, selected = [], [], []
+    raw_outputs = []
+
+    class FakeModel:
+        scale, alignment = 4, 1
+        device, precision, architecture = "cpu", "float32", "fake"
+
+        def __init__(self, name):
+            self.name = name
+
+        def describe(self):
+            return {"architecture": self.architecture, "scale": self.scale}
+
+        def release_cache(self):
+            releases.append(self.name)
+
+    def load(name, weights_dir, **kwargs):
+        assert weights_dir == tmp_path
+        loads.append(name)
+        return FakeModel(name)
+
+    def resolve(linear, width, height, model, **kwargs):
+        assert all(reference() is None for reference in raw_outputs)
+        conservative = model.name == sr_models.BACKENDS["swinir"]["fidelity"]
+        if fail_balanced and not conservative:
+            raise RuntimeError("fake balanced failure")
+        output = np.full((height, width, 3), 0.21 if conservative else 0.7, np.float32)
+        raw_outputs.append(weakref.ref(output))
+        return output, SimpleNamespace(
+            final_device="cpu",
+            boundaries=[],
+            to_dict=lambda: {"overlap_disagreement": {"blend_error_p99_abs_max": 0}},
+        )
+
+    enhance = crowd_processing.enhance_regions
+
+    def capture(linear, *args):
+        selected.append(linear.copy())
+        return enhance(linear, *args)
+
+    monkeypatch.setattr(sr_models, "available", lambda: True)
+    monkeypatch.setattr(sr_models, "load_model", load)
+    monkeypatch.setattr(sr, "super_resolve", resolve)
+    monkeypatch.setattr(crowd_processing, "enhance_regions", capture)
+    source = np.full((16, 24, 3), 0.2, np.float32)
+    config = HumanConfig(
+        face_detector="none",
+        manual_face_boxes=((4, 4, 8, 8),),
+        sr_weights_dir=str(tmp_path),
+        sr_tile_size=256,
+        preserve_source_structure=False,
+    )
+    if fail_balanced:
+        with pytest.raises(StageError, match="fake balanced failure"):
+            reconstruct_human_crowd(source, 48, 32, config, log=lambda _: None)
+        assert not selected
+    else:
+        result = reconstruct_human_crowd(source, 48, 32, config, log=lambda _: None)
+        np.testing.assert_allclose(selected[0], 0.21)
+        np.testing.assert_allclose(result.candidates["balanced"], 0.7)
+        np.testing.assert_allclose(result.final[8:24, 8:24], 0.21)
+        records = [s for s in result.stages if s.name.startswith("human_upscale_")]
+        assert len(records) == 2 and all(s.classification == "Inference" for s in records)
+        assert all(s.parameters["seams"]["passed"] for s in records)
+    assert loads == list(sr_models.BACKENDS["swinir"].values())
+    assert sorted(releases) == sorted(loads)
+    assert not any(t.name == "memory-monitor" for t in threading.enumerate())

@@ -1,11 +1,12 @@
 # PRD 18.1 implemented human/crowd profile. Every leaf is documented by
 # synthetic_raw_lab.human_config.parameter_table(), including inherited defaults.
-# No learned SR, generative face replacement, background-face restoration,
-# optics or synthetic sensor processing is enabled.
+# Generative face replacement and background-face restoration are prohibited.
+# Shared SR tiling, device, precision and weights defaults come from Phase 2.
 profile: human_crowd
 input_category: human
 target_megapixels: 50.0
-sr_backend: lanczos_stand_in # labelled interpolation, not pretrained SR
+sr_backend: swinir # swinir | realesrgan | lanczos_stand_in (explicit interpolation)
+sr_modes: [conservative, balanced] # conservative final; balanced comparison (PRD 18.1)
 general_sr_strength: 1.0 # [0, 1]: Lanczos to selected output; high values retain backend artifacts
 edge_sharpening: 0.0 # [0, 1]: bounded unsharp, observed faces excluded; high values risk halos
 skin_texture_smoothing: 0.0 # [0, 1]: bounded bilateral skin smoothing, capped by face strengths

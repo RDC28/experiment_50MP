@@ -1,12 +1,13 @@
 """In-memory human reconstruction used by Notebook 01 run orchestration.
 
 Candidates are retained for mandatory comparisons. Callers should release this
-result after packaging figures and masters. No learned SR or identity proof is
-provided. File ingestion, target planning and packaging belong to the run layer.
+result after packaging figures and masters. Learned SR synthesizes detail;
+source consistency is not identity proof. File ingestion, target planning and packaging belong to the run layer.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -15,6 +16,7 @@ from . import baselines, crowd_processing, environment, face_preservation, quali
 from .human_config import HumanConfig
 from .human_pipeline import (
     STAND_IN_DESCRIPTION,
+    Phase2Upscaler,
     _validate_image,
     add_grain,
     adjust_tonal_contrast,
@@ -24,7 +26,7 @@ from .human_pipeline import (
     sharpen_edges,
     smooth_skin,
 )
-from .pipeline import INTERPOLATION, MEASUREMENT, StageRecord, _stage
+from .pipeline import INFERENCE, INTERPOLATION, MEASUREMENT, SR_NOTICE, StageRecord, _stage
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,7 @@ def reconstruct_human_crowd(
     config: HumanConfig,
     *,
     log: Callable[[str], None] = print,
+    project_root: str | Path = ".",
 ) -> HumanReconstruction:
     """Connect configured protection stages, retaining source-scale annotations.
 
@@ -60,6 +63,8 @@ def reconstruct_human_crowd(
     if width < source.shape[1] or height < source.shape[0]:
         raise ValueError("target must be at least source size on both axes")
     stages = []
+    learned = config.sr_backend != "lanczos_stand_in"
+    sr_notice = SR_NOTICE if learned else STAND_IN_DESCRIPTION
     with environment.MemoryMonitor() as monitor:
 
         def stage(record):
@@ -99,27 +104,28 @@ def reconstruct_human_crowd(
             )
         ):
             candidates["lanczos"] = baselines.resample(source, width, height, "lanczos")
-        upscaler = get_upscaler(config.sr_backend)
-        for mode in ("conservative", "balanced"):
-            with stage(StageRecord(f"human_upscale_{mode}", INTERPOLATION)) as record:
-                result = upscaler(source, width, height, mode)
-                record.__dict__.update(result.stage_record().__dict__)
-                candidates[mode] = result.linear
-                del result
+        upscaler = Phase2Upscaler(config, project_root, log=log) if learned else get_upscaler(config.sr_backend)
         with stage(
             StageRecord(
                 "general_sr_strength",
-                INTERPOLATION,
+                INFERENCE if learned else INTERPOLATION,
                 {"strength": config.general_sr_strength, "modes": ["conservative", "balanced"]},
                 "float32 linear",
                 "float32 linear",
-                notes=[
-                    "Blend Lanczos baseline with selected upscaler; stand-in outputs coincide. No recovered detail."
-                ],
+                notes=["Blend Lanczos baseline with selected upscaler. " + sr_notice],
             )
         ):
-            for mode in ("conservative", "balanced"):
-                candidates[mode] = blend_upscale(candidates["lanczos"], candidates[mode], config.general_sr_strength)
+            try:
+                for mode in ("conservative", "balanced"):
+                    with stage(StageRecord(f"human_upscale_{mode}", INFERENCE if learned else INTERPOLATION)) as record:
+                        result = upscaler(source, width, height, mode)
+                        record.__dict__.update(result.stage_record().__dict__)
+                    # Blend and release the raw SR buffer before generating the next mode.
+                    candidates[mode] = blend_upscale(candidates["lanczos"], result.linear, config.general_sr_strength)
+                    del result
+            finally:
+                if learned:
+                    upscaler.close()
         with stage(StageRecord("region_detail", "Simulation")) as record:
             # Conservative is the default face-preserving starting point.
             enhanced = crowd_processing.enhance_regions(candidates["conservative"], masks, config.regions)
@@ -278,7 +284,7 @@ def reconstruct_human_crowd(
                 {"tiers": tiers},
                 "float32 linear",
                 "source-scale warning metrics",
-                notes=[STAND_IN_DESCRIPTION, "Unavailable anatomy checks require human review."],
+                notes=[sr_notice, "Unavailable anatomy checks require human review."],
             )
         ):
             crowd = crowd_processing.evaluate_crowd_consistency(
