@@ -136,14 +136,14 @@ def scene_statistics(
 def face_summary(detections: faces.FaceDetections, width: int, height: int, thresholds: SceneThresholds) -> dict:
     """Faces counted for classification: observations at or above ``min_face_confidence``."""
     counted = [f for f in detections.faces if f.confidence >= thresholds.min_face_confidence]
-    largest = max(counted, key=lambda f: f.width * f.height, default=None)
+    largest = max(counted, key=lambda f: (f.source_size, f.width * f.height), default=None)
     return {
         "method": detections.method,
         "observed": len(detections.faces),
         "counted": len(counted),
         "min_confidence": thresholds.min_face_confidence,
         "crowd_faces": sum(f.source_size >= thresholds.crowd_min_face_px for f in counted),
-        "largest_face_px": max((f.source_size for f in counted), default=0),
+        "largest_face_px": largest.source_size if largest else 0,
         "largest_face_box": [largest.x, largest.y, largest.width, largest.height] if largest else None,
         "largest_face_area_fraction": largest.width * largest.height / (width * height) if largest else 0.0,
         "total_face_area_fraction": sum(f.width * f.height for f in counted) / (width * height),

@@ -51,6 +51,9 @@ def test_human_cue_uses_the_longest_shortest_side_not_the_largest_area():
     result = scene_analysis.classify(statistics(0.45, 0.1, (100, 100, 400, 80), (600, 100, 150, 150)))
     assert result["category"] == "human"
     assert result["cues"]["human"][0]["value"] == 150.0
+    faces = statistics(0.45, 0.1, (100, 100, 400, 80), (600, 100, 150, 150))["faces"]
+    assert faces["largest_face_box"] == [600, 100, 150, 150]
+    assert faces["largest_face_area_fraction"] == pytest.approx(150 * 150 / (2000 * 1000))
 
 
 def test_human_dominant_night_scene_goes_to_the_human_pipeline():
