@@ -15,12 +15,14 @@ inferred, simulated and encoded information apart.
 | Phase 0: feasibility and environment | Implemented |
 | Phase 1: classical baselines | Implemented |
 | Phase 2: pretrained super-resolution | Implemented |
-| Phases 3 to 6: specialised notebooks, universal notebook, sensor simulation, evaluation | Not started |
+| Phases 3, 4 and 6: specialised notebooks, universal notebook, evaluation | Not started |
+| Phase 5: synthetic sensor research | Implemented |
 
 Phase 0 exit criterion: a valid 50 MP master created and exported from a 4K input by classical
 interpolation. Phase 1 exit criterion: baselines that are reproducible and measurable. Phase 2 exit criterion:
 full-resolution SR runs successfully and produces no major seams. The report of every standard or research run
-states whether its run met them.
+states whether its run met them. Phase 5 exit criterion: synthetic data is correctly labelled and any DNG output
+passes validation; every Phase 5 report states whether its run met it.
 
 ## Repository layout
 
@@ -33,8 +35,10 @@ requirements.txt               exact versions the tests were run with
 pyproject.toml                 package metadata (minimum versions) and tool settings
 configs/baseline_default.yaml  Phase 0/1 parameters, every key documented in src/config.py
 configs/super_resolution_default.yaml  Phase 2 profile: the baselines plus pretrained SR
+configs/sensor_research.yaml   Phase 5 parameters, every key documented in src/sensor_config.py
 docs/models.md                 SR model evaluation, weights, checksums, licences, commercial-use terms
 notebooks/00_Feasibility_Baselines.ipynb  Phases 0 to 2
+notebooks/05_Synthetic_Sensor_Research.ipynb  Phase 5
 src/                           the shared package, imported as synthetic_raw_lab
   config.py                    parameters with defaults, accepted values, effects and warnings (PRD 6, 22.2)
   resolution.py                exact 50 MP target dimensions (PRD 3.5, 25.3)
@@ -50,6 +54,12 @@ src/                           the shared package, imported as synthetic_raw_lab
   environment.py               runtime inspection, memory benchmark, storage estimate (PRD 21, 28.1)
   report_builder.py            Markdown report and figures (PRD 27)
   pipeline.py                  the Phase 0 to 2 run with per-stage logging (PRD 5.2, 22.3)
+  sensor_simulation.py         synthetic sensor model, CFA sampling, noise, quantisation, demosaic (PRD 14)
+  synthetic_dng.py             research DNG and mosaic TIFF writers with structural and LibRaw validation (PRD 14.6)
+  bit_depth_study.py           bit-depth representations and the E01 information test (PRD 14.5, 24)
+  sensor_config.py             Phase 5 parameters (PRD 14.4, 22.2)
+  sensor_research.py           the Phase 5 run: simulation, exports, E08 round trip, bit-depth study
+  sensor_report.py             Phase 5 Markdown report
   test_images.py               deterministic synthetic test image
 tests/                         pytest suite; notebook execution and real-network tests are opt-in
 inputs/{human,night}/          read-only copies of ingested sources (not in Git)
@@ -84,7 +94,7 @@ python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -e .     # includes PyTorch and spandrel for super-resolution
 
 python -m pytest                          # unit tests, light enough for a laptop
-SYNTHETIC_RAW_LAB_HEAVY_TESTS=1 python -m pytest   # also executes the notebook and, with cached weights, the SR networks
+SYNTHETIC_RAW_LAB_HEAVY_TESTS=1 python -m pytest   # also executes the notebooks and, with cached weights, the SR networks
 ruff check . && ruff format --check .
 ```
 
@@ -141,3 +151,28 @@ SR job on its own: it holds about 1 to 2 GB of device memory plus the 600 MB out
 8. **Compare and report.** Saves identical crops from every baseline and SR mode (centre plus the most detailed
    regions) next to the source and an amplified difference, previews, delta E maps, and writes
    `reports/<run>/report.md` plus `manifest.json` with the provenance record of PRD 6.2.
+
+## Phase 5: synthetic sensor research
+
+`notebooks/05_Synthetic_Sensor_Research.ipynb` starts from a processed linear master (a Phase 0/1 Lanczos EXR,
+or a source image it first turns into one) and runs `sensor_research.run`:
+
+1. **Simulate** (Simulation). The assumed camera colour transformation (`color_matrix`, the inverse of an
+   illustrative crosstalk, and `white_balance_multipliers`), synthetic exposure scaling, CFA sampling (RGGB,
+   BGGR, GRBG or GBRG), optional Poisson shot and Gaussian read noise of a stated hypothetical sensor, and
+   quantisation to a 10 to 16-bit ADC with black and white levels (PRD 14.2, 14.4).
+2. **Export** (Packaging). The mosaic as a labelled 16-bit TIFF and, with `export_synthetic_dng`, a DNG 1.4
+   file (preview in IFD 0, CFA image in a SubIFD, ColorMatrix1 for D65, AsShotNeutral). The DNG is accepted
+   only after every tag is re-read and matched, LibRaw (rawpy) reads back the same pattern, levels, white
+   balance, colour matrix and a bit-identical mosaic, and ExifTool `-validate` passes when ExifTool is
+   installed (PRD 14.6).
+3. **E08 round trip** (Interpolation, Measurement). Bilinear and Malvar-He-Cutler demosaicing, plus LibRaw's
+   AHD from the DNG, develop the mosaic back to linear Rec.709; full-frame PSNR and the Phase 1 metrics on
+   full-resolution tiles measure the loss against the master.
+4. **Bit depth** (Measurement). 8-bit and 16-bit sRGB integers, half and float linear: quantisation error,
+   headroom, shadow levels after an identical push, drift through repeated transforms, real file sizes, the
+   mosaic's ADC quantisation and, for a source image, E01: whether expanding its bit depth adds information.
+
+Every mosaic, DNG, sidecar, manifest and report carries the PRD 14.3 label: the data is simulated from
+processed RGB, never camera RAW or sensor measurement. Adobe's `dng_validate` is not run; see the report's
+conclusions.

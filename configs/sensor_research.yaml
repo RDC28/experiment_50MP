@@ -1,0 +1,49 @@
+# Phase 5 synthetic sensor research defaults (PRD 14, 24 E01/E08, 30 Phase 5).
+# Every key is documented in src/sensor_config.py; the notebook's configuration table
+# (sensor_config.parameter_table) shows the accepted values, effects and warnings. Unknown keys are rejected.
+# All sensor values describe a hypothetical sensor: they are stated assumptions, not a real camera.
+profile: sensor_research
+input_category: universal        # human | night | universal
+
+# Synthetic sensor (PRD 14.4)
+cfa_pattern: RGGB                # RGGB | BGGR | GRBG | GBRG
+adc_bit_depth: 14                # 10 | 12 | 14 | 16
+black_level:                     # empty: 2^(bits-5), 512 at 14 bits
+white_level:                     # empty: 2^bits - 1
+analog_gain: 1.0                 # ISO multiplier over base gain
+exposure_scale: 0.8              # working white on a channel with WB multiplier 1, as a fraction of the ADC range
+full_well_electrons: 45000
+shot_noise_enabled: false        # PRD 14.4 default
+read_noise_enabled: false        # PRD 14.4 default
+read_noise_std: 2.5              # electrons RMS
+color_matrix:                    # assumed camera-to-reference (white-balanced camera RGB -> linear Rec.709)
+  - [1.4946, -0.4404, -0.0542]
+  - [-0.1901, 1.4248, -0.2347]
+  - [-0.0096, -0.5608, 1.5704]
+white_balance_multipliers: [2.0, 1.0, 1.6]
+synthetic_raw_label: "SYNTHETIC MOSAIC: simulated CFA sampling of processed RGB through an assumed camera model. Not camera RAW and not sensor measurements (PRD 14.3)."
+
+# E08 round trip and exports (PRD 14.6)
+demosaic_methods: [bilinear, malvar]
+libraw_roundtrip: true
+export_synthetic_dng: true       # research DNG; it must pass structural and LibRaw validation
+export_mosaic_tiff: true
+
+# Bit-depth experiments (PRD 14.5, E01)
+bit_depth_study: true
+bit_depth_write_files: true
+edit_stops: 3.0
+transform_cycles: 5
+
+# Evaluation
+metric_tile_size: 1024
+metric_tile_grid: 3
+crop_size: 256
+crop_count: 3
+review_max_edge: 2048
+
+random_seed: 42
+
+# Storage; empty means <project>/outputs and <project>/reports
+output_root: ""
+reports_root: ""

@@ -45,6 +45,7 @@ _PACKAGES = (
     "PyYAML",
     "psutil",
     "matplotlib",
+    "rawpy",
     "torch",
     "torchvision",
     "spandrel",
