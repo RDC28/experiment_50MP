@@ -41,8 +41,8 @@ configs/human_default.yaml     human profile, documented in src/human_config.py
 docs/models.md                 SR model evaluation, weights, checksums, licences, commercial-use terms
 MODELS.md                      notebook 01 detector artifacts and pointer to SR weight terms
 notebooks/00_Feasibility_Baselines.ipynb  Phases 0 to 2
+notebooks/01_Human_Crowd_50MP.ipynb  Phase 3 human and crowd
 notebooks/05_Synthetic_Sensor_Research.ipynb  Phase 5
-notebooks/01_Human_Crowd_50MP.ipynb
 src/                           the shared package, imported as synthetic_raw_lab
   config.py                    parameters with defaults, accepted values, effects and warnings (PRD 6, 22.2)
   resolution.py                exact 50 MP target dimensions (PRD 3.5, 25.3)
