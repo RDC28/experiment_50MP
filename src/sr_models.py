@@ -175,21 +175,26 @@ def ensure_weights(
         path.unlink()
     if not download:
         raise WeightsError(f"{spec.filename} is not in {weights_dir} and downloading is disabled")
+    log(f"downloading {spec.url} ({spec.size_bytes / 1e6:.0f} MB)")
+    return fetch_verified(spec.url, spec.sha256, path)
+
+
+def fetch_verified(url: str, sha256: str, path: Path, *, timeout: float = 60) -> Path:
+    """Download ``url`` to ``path`` through a partial file, published only when its SHA-256 matches."""
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_name(path.name + ".part")
-    log(f"downloading {spec.url} ({spec.size_bytes / 1e6:.0f} MB)")
     digest = hashlib.sha256()
     try:
-        with urllib.request.urlopen(spec.url, timeout=60) as response, partial.open("wb") as out:
+        with urllib.request.urlopen(url, timeout=timeout) as response, partial.open("wb") as out:
             while chunk := response.read(1 << 20):
                 digest.update(chunk)
                 out.write(chunk)
     except OSError as error:
         partial.unlink(missing_ok=True)
-        raise WeightsError(f"could not download {spec.url}: {error}") from error
-    if digest.hexdigest() != spec.sha256:
+        raise WeightsError(f"could not download {url}: {error}") from error
+    if digest.hexdigest() != sha256:
         partial.unlink(missing_ok=True)
-        raise WeightsError(f"{spec.filename}: SHA-256 {digest.hexdigest()} does not match the recorded {spec.sha256}")
+        raise WeightsError(f"{path.name}: SHA-256 {digest.hexdigest()} does not match the recorded {sha256}")
     os.replace(partial, path)
     return path
 

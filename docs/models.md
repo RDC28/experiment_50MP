@@ -15,7 +15,7 @@ sidecar.
 | Modes B and C, balanced and aggressive | SwinIR-M x4 real-world GAN (perceptual network) |
 | Faster alternative (`sr_backend: realesrgan`) | RealESRNet_x4plus (fidelity), RealESRGAN_x4plus (perceptual) |
 | Loader | [spandrel](https://github.com/chaiNNer-org/spandrel) 0.4.2 (MIT, maintained) builds the architecture from the state dict |
-| Native scale | x4 for every network, then Lanczos-3 in linear light to the exact target size |
+| Native scale | x4 for every network, then Lanczos-3 with anti-ringing in linear light to the exact target size |
 | Tiles | automatic size, at least 256 px, starts on the 8 px attention-window grid; overlap 64 px (PRD 6.1), not less |
 
 SwinIR was chosen because it was the more faithful family on every measure below, and it changed the
@@ -156,6 +156,43 @@ Two gates are reported for every SR mode (provisional, PRD 25.3). Both are in sR
 
 An earlier, ratio-based hard-seam score flagged a chart edge that happened to lie on a boundary and was
 dominated by tiny steps in smooth gradients; the height above replaced it.
+
+## Resampling range and the low-frequency correction
+
+The first two full Colab runs (L4, 10852 x 4604, commits `c3c1abb` and `9d3765f`) left the balanced masters
+with linear minimums of -0.170 and -0.359, which the TIFF clips to black: dark rims around bright detail, and
+bright rims from the matching overshoot. The network output itself is clamped to [0, 1], so both came from the
+pipeline. With a stand-in network that draws crisp edges and spreads a glow around lights (no real model;
+`tests/test_super_resolution.py`), the Lanczos-3 resample from x4 alone reached -0.166, and the additive
+low-frequency correction then took the same pixels to -0.358, because it subtracts the glow's excess equally
+from the dark pixels around a light.
+
+Both steps changed. Every resampled sample is clamped to the range of the network pixels within one output
+pixel of its centre, where the kernel's main lobe lies (anti-ringing); values outside that range come only
+from the negative lobes. The correction became a gain, `(source + e) / (area-reduced output + e)` with
+`e = 0.001`, upsampled in log space with Keys bicubic: the excess is taken in proportion to where the energy is,
+and no non-negative sample can go below zero. On the stand-in the minimum went from -0.358 to +0.0003 and the
+pixels around lights that clipped to black from 3.7% to none; on a smooth scene the gain fits the source as
+closely as the additive form did (mean residual 0.00019 for both). Each SR summary records the range before and
+after the clamp (`tiling.resample_range`) and after the correction (`source_projection.min_linear_after`).
+Sharpening and texture the network draws itself are not changed; the seam gate and the final-output rule deal
+with a mode that overdoes them.
+
+## Face detection for subject framing
+
+Evaluation crops and the automatic final-output rule start from the main subject (`src/subjects.py`). Faces are
+found with OpenCV's YuNet (`cv2.FaceDetectorYN`, present in OpenCV 4.8 and later, including the 5.0 that Colab
+ships). Its model is not part of opencv-python, so it is downloaded once into the weights folder and checked
+before every use:
+
+| Model | File (source) | Size | SHA-256 | Licence |
+|---|---|---:|---|---|
+| YuNet, March 2023 | [`face_detection_yunet_2023mar.onnx`](https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet) (opencv_zoo `48b10fa`) | 232,589 B | `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4` | MIT (Copyright (c) 2020 Shiqi Yu); commercial use permitted with the notice kept |
+
+Detections need a score of at least 0.9 (the opencv_zoo default, uncalibrated). Without YuNet, the frontal-face
+Haar cascade bundled with opencv-python 4.x is used (OpenCV 5 dropped it), and without any face, a
+spectral-residual saliency peak weighted by a centre prior. Detection produces no image data and is never
+identity evidence. Not verified on Colab yet: the download from Colab and detection on the first run's portrait.
 
 ## Verification status
 

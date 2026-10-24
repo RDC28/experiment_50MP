@@ -62,15 +62,28 @@ def test_quick_run_produces_validated_masters_and_report(source, project):
     ):
         assert heading in report
     assert "Phase 0 exit criterion not assessed" in report
+    subject_crop = manifest["crops"][0]
+    assert subject_crop["name"] in {"face", "face_eyes", "subject", "center"} and subject_crop["label"]
+    assert manifest["subject"]["detector"] and "classification" in manifest["subject"]
     for figure in (
         "source_histograms.png",
         "source_preview.jpg",
         "lanczos_preview.jpg",
         "delta_e_bicubic.png",
-        "crop_center.png",
+        f"crop_{subject_crop['name']}.png",
         "crop_detail_1.png",
+        "final_preview.jpg",
     ):
         assert (result.reports_dir / "figures" / figure).exists()
+    final = manifest["final_output"]
+    assert final["method"] == "lanczos" and final["rule"] == "auto"
+    lanczos = manifest["baselines"]["lanczos"]["exports"]
+    for kind in ("tiff16", "exr"):
+        path = Path(final["files"][kind]["path"])
+        assert path.parent == result.masters_dir / "final" and path.name.startswith("final_")
+        assert final["files"][kind]["file_sha256"] == lanczos[kind]["file_sha256"]
+    assert "### Final 50 MP image" in report and "![Final image](figures/final_preview.jpg)" in report
+    assert "Final 50 MP image: lanczos" in report
     assert set(manifest["output_checksums"]) == {Path(p).name for p in _export_paths(manifest)}
     assert (project / "inputs" / "universal").is_dir()
 
@@ -178,8 +191,49 @@ def test_installed_package_records_the_project_commit(source, project, monkeypat
     assert manifest["package"]["git"] == {"commit": head.strip(), "dirty": False}
 
 
+def test_storage_counts_the_hard_linked_final_image_once(source, project):
+    manifest = pipeline.run(source, small_config(baselines=("bicubic",)), project, log=lambda _: None).manifest
+    final = manifest["final_output"]["files"]["tiff16"]
+    if final["how"] != "hard link":
+        pytest.skip("this file system does not support hard links")
+    masters = Path(final["path"]).parent.parent
+    files = {f.stat().st_ino: f.stat().st_size for f in masters.rglob("*") if f.is_file()}
+    reports = Path(manifest["crop_panels"][0]["path"]).parent.parent
+    files.update({f.stat().st_ino: f.stat().st_size for f in reports.rglob("*") if f.is_file()})
+    assert manifest["storage_used_bytes"] <= sum(files.values())
+
+
+def test_a_detected_face_frames_the_first_crops(source, project, monkeypatch):
+    from synthetic_raw_lab import subjects
+
+    face = subjects.Face(100, 20, 120, 150)
+    monkeypatch.setattr(
+        subjects, "analyse", lambda *args: subjects.SubjectAnalysis(320, 180, (face,), "test", "one test face")
+    )
+    manifest = pipeline.run(source, small_config(crop_count=3), project, log=lambda _: None).manifest
+    assert [c["name"] for c in manifest["crops"]] == ["face_eyes", "face_nose_mouth", "detail_1"]
+    assert manifest["subject"]["primary_face"] == face.to_dict() and manifest["subject"]["high_information_face"]
+    stage = next(s for s in manifest["stages"] if s["name"] == "subject_analysis")
+    assert stage["classification"] == pipeline.MEASUREMENT and "one test face" in stage["notes"]
+
+
+def test_manual_crops_keep_their_place_and_the_subject_is_still_analysed(source, project):
+    config = small_config(crops=((0, 0, 32, 32),))
+    manifest = pipeline.run(source, config, project, log=lambda _: None).manifest
+    assert [c["name"] for c in manifest["crops"]] == ["manual_1"]
+    assert "subject" in manifest and manifest["final_output"]["method"] == "lanczos"
+
+
+def test_final_output_override_picks_that_output(source, project):
+    manifest = pipeline.run(source, small_config(final_output="bicubic"), project, log=lambda _: None).manifest
+    final = manifest["final_output"]
+    assert (final["method"], final["rule"]) == ("bicubic", "override")
+    assert Path(final["files"]["tiff16"]["path"]).name.startswith("final_scene_bicubic_")
+
+
 def _export_paths(manifest):
     paths = [item["path"] for item in manifest.get("intermediates", [])]
     for summary in manifest["baselines"].values():
         paths += [export["path"] for export in summary["exports"].values()]
+    paths += [item["path"] for item in manifest["final_output"]["files"].values()]
     return paths

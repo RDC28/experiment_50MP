@@ -1,4 +1,4 @@
-"""Phase 0 and Phase 1 run: ingest, plan, interpolate, export, measure, report.
+"""Phase 0 to 2 run: ingest, plan, interpolate, super-resolve, export, measure, choose the final image, report.
 
 Every stage is logged with its PRD 5.2 classification, parameters, duration,
 precision and resident-memory peak. Baselines run one at a time and each 50 MP
@@ -29,10 +29,12 @@ from . import (
     comparison,
     environment,
     exporters,
+    final_output,
     ingestion,
     quality_metrics,
     report_builder,
     sr_models,
+    subjects,
 )
 from . import color_management as cm
 from . import super_resolution as sr
@@ -261,10 +263,28 @@ def run(
         )
 
         source_encoded16, _ = cm.encode_srgb_uint16(source.linear)
-        source_display = cm.linear_to_srgb(np.clip(source.linear, 0, 1))
-        crops = comparison.select_crops(source_display, config.crop_size, config.crop_count, config.crops)
-        del source_display
+        with stage(
+            StageRecord(
+                "subject_analysis",
+                MEASUREMENT,
+                {
+                    "face_detector": "YuNet, else Haar cascade, else saliency",
+                    "crops": len(config.crops) or config.crop_count,
+                },
+                "sRGB-encoded source",
+                "face boxes, centre of interest, crop boxes",
+            )
+        ) as record:
+            source_display = cm.linear_to_srgb(np.clip(source.linear, 0, 1))
+            subject = subjects.analyse(source_display, model_cache_dir(config, project_root))
+            crops = comparison.select_crops(
+                source_display, config.crop_size, config.crop_count, config.crops, subjects=subject
+            )
+            del source_display
+            record.notes = [n for n in (subject.note, subject.interest_basis) if n]
+        manifest["subject"] = subject.to_dict()
         manifest["crops"] = [c.to_dict() for c in crops]
+        log(f"subject: {subject.note}; crops: {', '.join(c.name for c in crops)}")
         crop_tiles: dict[str, dict[str, np.ndarray]] = {c.name: {} for c in crops}
         crop_stats: dict[str, dict[str, dict]] = {c.name: {} for c in crops}
 
@@ -350,6 +370,22 @@ def run(
                 )
                 panels.append({"crop": crop.name, "path": str(path), "methods": crop_stats[crop.name]})
             manifest["crop_panels"] = panels
+
+        with stage(
+            StageRecord(
+                "final_output",
+                PACKAGING,
+                {"final_output": config.final_output},
+                "validated masters",
+                "final 16-bit TIFF and EXR (same bytes)",
+            )
+        ) as record:
+            decision = final_output.select(manifest, config.final_output)
+            manifest["final_output"] = final_output.write_final(
+                decision, manifest, masters_dir, figures_dir if config.export_review else None
+            )
+            record.notes = [decision["reason"], *decision["notes"]]
+        log(f"final image: {decision['reason']}")
 
         manifest["status"] = "complete"
     except StageError as error:
@@ -618,7 +654,8 @@ def sr_run_record(config: ExperimentConfig, target: TargetResolution) -> dict:
     """The manifest ``super_resolution`` record; it says why SR is skipped when the target is no enlargement."""
     record = {
         "backend": config.sr_backend,
-        "scale_handling": "network at its native x4, then Lanczos-3 in linear light to the exact target size",
+        "scale_handling": "network at its native x4, then Lanczos-3 with anti-ringing in linear light to the exact "
+        "target size",
         "modes": {},
     }
     if target.scale_x <= 1 or target.scale_y <= 1:
@@ -633,6 +670,11 @@ def sr_setup(config: ExperimentConfig, project_root: Path) -> Path:
     """Check that PyTorch and spandrel are installed and return the weights cache folder."""
     if not sr_models.available():
         raise RuntimeError(SR_INSTALL_HINT)
+    return model_cache_dir(config, project_root)
+
+
+def model_cache_dir(config: ExperimentConfig, project_root: Path) -> Path:
+    """Model cache for SR weights and the face detector: ``sr_weights_dir``, else ``<project>/weights``."""
     return Path(config.sr_weights_dir) if config.sr_weights_dir else sr_models.default_weights_dir(project_root)
 
 
@@ -702,7 +744,7 @@ def run_sr_mode(
             {
                 "weights": weights,
                 "native_scale": model.scale,
-                "then": f"Lanczos-3 x{resample:.4f} ({'downscale' if resample < 1 else 'upscale'})",
+                "then": f"Lanczos-3 x{resample:.4f} ({'downscale' if resample < 1 else 'upscale'}), anti-ringing",
                 "tile": f"{tile} ({tile_basis})",
                 "overlap": config.sr_tile_overlap,
                 "strength": config.sr_strength,
@@ -725,7 +767,11 @@ def run_sr_mode(
         )
         summary["tiling"] = tiling.to_dict()
         summary["tiling"]["tile_basis"] = tile_basis
-        summary["final_resample"] = {"filter": "Lanczos-3, linear light", "factor": resample}
+        summary["final_resample"] = {
+            "filter": "Lanczos-3, linear light, anti-ringing",
+            "factor": resample,
+            "range": summary["tiling"]["resample_range"],
+        }
         record_stage.notes = [f["message"] for f in tiling.fallbacks]
         model = loaded[weights] = _current_model(model, tiling)
         summary["model"] = model.describe()
@@ -737,7 +783,12 @@ def run_sr_mode(
             StageRecord(
                 f"source_projection_{mode}",
                 INTERPOLATION,
-                {"strength": consistency, "reduction": "area average", "upsampling": "Keys bicubic"},
+                {
+                    "strength": consistency,
+                    "form": "gain in offset linear light",
+                    "reduction": "area average",
+                    "upsampling": "Keys bicubic (log gain)",
+                },
                 "float32 linear",
                 "float32 linear",
             )
@@ -835,8 +886,7 @@ def _finish(manifest: dict, stages: list[StageRecord], monitor, started: float, 
     if "reports" not in paths:
         log("run failed before an output folder existed; nothing written")
         return None
-    storage = sum(f.stat().st_size for d in (paths["masters"], paths["reports"]) for f in d.rglob("*") if f.is_file())
-    manifest["storage_used_bytes"] = storage
+    manifest["storage_used_bytes"] = final_output.storage_bytes(paths["masters"], paths["reports"])
     manifest["output_checksums"] = _checksums(manifest)
     manifest_path = paths["reports"] / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
@@ -854,6 +904,8 @@ def _checksums(manifest: dict) -> dict:
     for summary in reconstructions:
         for export in summary.get("exports", {}).values():
             sums[Path(export["path"]).name] = export["file_sha256"]
+    for item in (manifest.get("final_output") or {}).get("files", {}).values():
+        sums[Path(item["path"]).name] = item["file_sha256"]
     return sums
 
 

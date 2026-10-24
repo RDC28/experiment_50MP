@@ -55,6 +55,18 @@ def test_human_run_packages_real_masters_and_tier_report(tmp_path):
     assert not any(t.name == "memory-monitor" for t in threading.enumerate())
 
 
+def test_human_run_ends_with_the_master_as_its_final_image(tmp_path):
+    result = run_human_crowd(source_file(tmp_path), configuration(), tmp_path, log=lambda _: None)
+    final = result.manifest["final_output"]
+    assert final["method"] == "human_crowd" and "notebook 01 makes one master" in final["reason"]
+    for kind, export in result.manifest["exports"].items():
+        path = Path(final["files"][kind]["path"])
+        assert path.parent == result.masters_dir / "final" and path.name == Path(export["path"]).name
+        assert path.read_bytes() == Path(export["path"]).read_bytes() and final["files"][kind]["verified"]
+    assert (result.reports_dir / "figures" / "final_preview.jpg").exists()
+    assert "## Final 50 MP image" in result.report_path.read_text()
+
+
 def test_export_failure_preserves_completed_master_and_report(tmp_path, monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("test TIFF writer failure")

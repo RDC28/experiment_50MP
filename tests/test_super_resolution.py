@@ -95,7 +95,7 @@ def source():
 def untiled(source, model, width=OUT_W, height=OUT_H):
     native = cm.srgb_to_linear(model(cm.linear_to_srgb(np.clip(source, 0, 1))))
     box = (0.0, 0.0, float(native.shape[1]), float(native.shape[0]))
-    return sr.resample_box(native, width, height, box, Image.Resampling.LANCZOS)
+    return sr.resample_antiring(native, width, height, box)
 
 
 def run(source, model, **kwargs):
@@ -312,3 +312,68 @@ def test_presets_order_from_conservative_to_aggressive():
     assert [p.network for p in modes] == ["fidelity", "perceptual", "perceptual"]
     assert [p.consistency_strength for p in modes] == sorted((p.consistency_strength for p in modes), reverse=True)
     assert modes[2].warning and not modes[0].warning and not modes[1].warning
+
+
+# --------------------------------------------------------------------------- range and dark halos
+
+
+class GlowModel(LocalModel):
+    """Like a perceptual network: crisp edges with no ringing of its own, and a glow spread around bright lights."""
+
+    def __call__(self, encoded):
+        h, w = encoded.shape[:2]
+        up = cv2.resize(encoded, (w * 4, h * 4), interpolation=cv2.INTER_NEAREST)
+        glow = cv2.GaussianBlur(np.clip(up - 0.8, 0, None), (0, 0), 6.0) * 1.5
+        return np.clip(up + glow, 0, 1)
+
+
+@pytest.fixture(scope="module")
+def lights():
+    """Small bright lights on a dark backdrop, the case of the dark halos in the first Colab balanced run."""
+    rng = np.random.default_rng(0)
+    image = np.full((SRC_H, SRC_W, 3), 0.012, dtype=np.float32)
+    yy, xx = np.mgrid[:SRC_H, :SRC_W]
+    centres = []
+    for _ in range(25):
+        cx, cy, r = rng.uniform(10, SRC_W - 10), rng.uniform(10, SRC_H - 10), rng.uniform(1.0, 2.5)
+        image[(xx - cx) ** 2 + (yy - cy) ** 2 <= r * r] = 0.95
+        centres.append((cx, cy, r))
+    return image, centres
+
+
+def test_lanczos_ringing_is_recorded_and_removed(lights):
+    image, _ = lights
+    out, report = run(image, GlowModel())
+    record = report.to_dict()["resample_range"]
+    assert record["min_linear_before"] < -0.05 and record["below_zero_fraction_before"] > 0  # Lanczos rang
+    assert record["min_linear_after"] >= 0.012 - 1e-6 and record["max_linear_after"] <= 1 + 1e-6
+    assert out.min() >= 0.012 - 1e-6  # never darker than the darkest network pixel
+
+
+def test_resample_antiring_keeps_samples_within_the_local_input_range():
+    step = np.zeros((40, 400, 1), dtype=np.float32)
+    step[:, 200:] = 1.0
+    box = (0.0, 0.0, 400.0, 40.0)
+    plain = sr.resample_box(step, 171, 17, box, Image.Resampling.LANCZOS)
+    clamped = sr.resample_antiring(step, 171, 17, box)
+    assert plain.min() < -0.05 and plain.max() > 1.05
+    assert clamped.min() == 0.0 and clamped.max() == 1.0
+    away = np.r_[0:80, 92:171]  # far from the edge the kernel sees one level, so nothing changes
+    assert np.array_equal(clamped[:, away], plain[:, away].clip(0, 1))
+
+
+def test_correction_does_not_darken_the_glow_around_lights_into_halos(lights):
+    """The first balanced Colab master reached -0.17 linear; an additive correction pushes the pixels next to a
+    light whose glow the network spread below zero, and the TIFF clips them to black."""
+    image, centres = lights
+    out, _ = run(image, GlowModel())
+    stats = sr.project_to_source(out, image, 1.0)
+    assert stats["mean_abs_residual_linear_after"] < 0.8 * stats["mean_abs_residual_linear_before"]
+    assert out.min() >= 0 and stats["min_linear_after"] >= 0
+    yy, xx = np.mgrid[:OUT_H, :OUT_W]
+    ring = np.zeros((OUT_H, OUT_W), dtype=bool)
+    for cx, cy, r in centres:
+        distance = np.hypot((xx + 0.5) * SRC_W / OUT_W - cx, (yy + 0.5) * SRC_H / OUT_H - cy)
+        ring |= (distance > r + 1) & (distance < r + 4)
+    assert out[ring].min() > 0  # nothing next to a light clips to black
+    assert np.mean(out[ring].mean(axis=1) < 0.5 * 0.012) < 0.03  # the additive correction left 5% this dark

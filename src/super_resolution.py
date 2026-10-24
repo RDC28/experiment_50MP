@@ -26,6 +26,15 @@ a tile, that tile is split into smaller overlapping sub-tiles and later tiles
 use the smaller size; below the minimum tile the model moves to the CPU. Every
 event is recorded.
 
+Anti-ringing (PRD 25.2: no halos, no clipping caused by the pipeline). The
+network output is clamped to [0, 1], yet Lanczos-3 rings on the crisp edges
+and fine texture a perceptual network draws: the first Colab balanced run went
+down to -0.17 linear, which the integer TIFF clips to black (dark halos around
+bright detail). Each resampled sample is therefore held within the range of the
+network-output pixels under the main lobe of the kernel (``resample_antiring``),
+the anti-ringing clamp video scalers use. Ringing goes, edges stay as sharp as
+Lanczos makes them, and the range before and after is recorded.
+
 Hallucination controls (PRD 10.5). ``detail_strength`` blends the network
 output with the Lanczos interpolation of the source, and ``project_to_source``
 corrects low-frequency drift so that the area-reduced output agrees with the
@@ -40,6 +49,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+import cv2
 import numpy as np
 from PIL import Image
 from scipy import ndimage
@@ -50,6 +60,9 @@ from .sr_models import MIN_TILE, DeviceOutOfMemory
 
 MODES = ("conservative", "balanced", "aggressive")
 MIN_OVERLAP = 16
+# Offset of the gain-form low-frequency correction, in linear light (about sRGB code 8 of 255 is 0.0024):
+# below it the correction acts additively, above it in proportion to the signal.
+PROJECTION_OFFSET = 1e-3
 
 
 @dataclass(frozen=True)
@@ -192,6 +205,7 @@ class TilingReport:
     fallbacks: list[dict] = field(default_factory=list)
     boundaries: list[dict] = field(default_factory=list)
     final_device: str = ""
+    resample_range: dict = field(default_factory=lambda: new_range_record())
 
     def to_dict(self) -> dict:
         disagreements = [b["mean_abs_8bit"] for b in self.boundaries]
@@ -206,6 +220,7 @@ class TilingReport:
             "inference_seconds": round(self.inference_seconds, 3),
             "fallbacks": self.fallbacks,
             "final_device": self.final_device,
+            "resample_range": _range_summary(self.resample_range),
             "overlap_disagreement": {
                 "unit": "sRGB 8-bit code values, inside the crossfade zones",
                 "low_frequency": "difference smoothed with a Gaussian of 2 source pixels",
@@ -379,7 +394,7 @@ def super_resolve(
         for start in range(0, native.shape[0], 128):  # decode in place, in row blocks, to bound temporaries
             native[start : start + 128] = cm.srgb_to_linear(native[start : start + 128])
         box = (0.0, (j0 * step_y - y0) * scale, float(src_w * scale), (j1 * step_y - y0) * scale)
-        strip = resample_box(native, width, j1 - j0, box, Image.Resampling.LANCZOS)
+        strip = resample_antiring(native, width, j1 - j0, box, report.resample_range, wy[index, j0:j1] > 0)
         del native
         if detail_strength < 1:
             lanczos_box = (0.0, j0 * step_y - y0, float(src_w), j1 * step_y - y0)
@@ -395,6 +410,21 @@ def super_resolve(
     return out, report
 
 
+def _range_summary(record: dict) -> dict:
+    samples = record["samples"]
+    return {
+        "stage": "network output (clamped to [0, 1]) resampled with Lanczos-3 to the target",
+        "min_linear_before": round(record["min"], 6) if samples else None,
+        "max_linear_before": round(record["max"], 6) if samples else None,
+        "below_zero_fraction_before": round(record["below_zero"] / samples, 8) if samples else None,
+        "min_linear_after": round(record["min_after"], 6) if samples else None,
+        "max_linear_after": round(record["max_after"], 6) if samples else None,
+        "changed_fraction": round(record["changed"] / samples, 8) if samples else None,
+        "bound": "anti-ringing: each sample clamped to the range of the network-output pixels under the main lobe "
+        "of the kernel",
+    }
+
+
 def _strip_disagreement(previous, strip: np.ndarray, j0: int, wy: np.ndarray, index: int, step_y: float) -> dict:
     prev_strip, prev_j0 = previous
     hi = prev_j0 + prev_strip.shape[0]
@@ -405,6 +435,72 @@ def _strip_disagreement(previous, strip: np.ndarray, j0: int, wy: np.ndarray, in
     mix = np.minimum(wy[index - 1, rows], wy[index, rows])[:, None, None]
     position = (rows.mean() + 0.5) * step_y if rows.size else j0 * step_y
     return _difference_stats("y", position, (a - b) * 255, 2.0 / step_y, mix)
+
+
+def new_range_record() -> dict:
+    """Accumulator for ``resample_antiring``: range before and after the clamp, over all strips."""
+    return {
+        "min": float("inf"),
+        "max": float("-inf"),
+        "min_after": float("inf"),
+        "max_after": float("-inf"),
+        "below_zero": 0,
+        "changed": 0,
+        "samples": 0,
+    }
+
+
+def resample_antiring(
+    image: np.ndarray,
+    width: int,
+    height: int,
+    box: tuple,
+    record: dict | None = None,
+    rows_used: np.ndarray | None = None,
+    block_rows: int = 256,
+) -> np.ndarray:
+    """Lanczos-3 resize of ``box`` of a float32 (H, W, C) image without ringing.
+
+    Each output sample is clamped to the minimum and maximum of the input pixels within one output pixel of
+    its centre, which is where the main (positive) lobe of the stretched kernel lies; values beyond that
+    range come only from the negative lobes. ``record`` accumulates the range before and after, over the
+    output rows flagged in ``rows_used`` (all rows by default).
+    """
+    out = resample_box(image, width, height, box, Image.Resampling.LANCZOS)
+    in_h, in_w = image.shape[:2]
+    x0, y0, x1, y1 = box
+    step_x, step_y = (x1 - x0) / width, (y1 - y0) / height
+    cols = np.clip(np.floor(x0 + (np.arange(width) + 0.5) * step_x).astype(np.int64), 0, in_w - 1)
+    rows = np.clip(np.floor(y0 + (np.arange(height) + 0.5) * step_y).astype(np.int64), 0, in_h - 1)
+    reach_x, reach_y = int(np.ceil(max(step_x, 1.0))), int(np.ceil(max(step_y, 1.0)))
+    vertical = np.ones((2 * reach_y + 1, 1), np.uint8)
+    horizontal = np.ones((1, 2 * reach_x + 1), np.uint8)
+    used = np.ones(height, dtype=bool) if rows_used is None else np.asarray(rows_used, dtype=bool)
+    for start in range(0, height, block_rows):
+        sampled = rows[start : start + block_rows]
+        lo, hi = max(0, int(sampled[0]) - reach_y), min(in_h, int(sampled[-1]) + reach_y + 1)
+        block = out[start : start + block_rows]
+        mask = used[start : start + block_rows]
+        if record is not None and mask.any():
+            before = block[mask]  # boolean indexing copies
+            record["min"] = min(record["min"], float(before.min()))
+            record["max"] = max(record["max"], float(before.max()))
+            record["below_zero"] += int(np.count_nonzero(before < 0))
+            record["samples"] += before.size
+        for channel in range(image.shape[2]):
+            band = np.ascontiguousarray(image[lo:hi, :, channel])
+            # cv2's default morphology border never wins a minimum or maximum, so image edges are neutral.
+            low = cv2.erode(cv2.erode(band, vertical)[sampled - lo], horizontal)[:, cols]
+            high = cv2.dilate(cv2.dilate(band, vertical)[sampled - lo], horizontal)[:, cols]
+            np.clip(block[..., channel], low, high, out=block[..., channel])
+            del band, low, high
+        if record is not None and mask.any():
+            values = block[mask]
+            record["min_after"] = min(record["min_after"], float(values.min()))
+            record["max_after"] = max(record["max_after"], float(values.max()))
+            record["changed"] += int(np.count_nonzero(values != before))
+            del before
+    return out
 
 
 def resample_box(image: np.ndarray, width: int, height: int, box: tuple, resampling) -> np.ndarray:
@@ -425,12 +521,17 @@ def resample_box(image: np.ndarray, width: int, height: int, box: tuple, resampl
 
 
 def project_to_source(output_linear: np.ndarray, source_linear: np.ndarray, strength: float) -> dict:
-    """Low-frequency consistency correction, in place: ``out += strength * up(source - area_down(out))``.
+    """Low-frequency consistency correction, in place, applied as a gain so it never darkens to below zero.
 
-    The residual between the source and the area-reduced output is upsampled with Keys bicubic and
-    added back, which removes colour and tone drift at the source scale without touching detail
-    above it. The area reduction is the one the source-consistency metrics use, so this step makes
-    those metrics partly true by construction; the report says so.
+    Per source pixel the gain is ``(source + e) / (area_down(out) + e)`` with ``e = PROJECTION_OFFSET``. Its
+    logarithm, times ``strength``, is upsampled with Keys bicubic and the output becomes
+    ``(out + e) * gain - e``. The area-reduced result then matches the source as closely as an additive
+    residual would, which removes colour and tone drift at the source scale without touching detail above it.
+    Unlike an additive residual, the excess energy is taken from where the energy is: near a bright light whose
+    glow the network spread, an additive correction subtracts the same amount from the dark pixels around it
+    and drives them below zero (black halos once clipped), while the gain keeps every non-negative sample above
+    ``-e`` (results are bounded at 0). The area reduction is the one the source-consistency metrics use, so this
+    step makes those metrics partly true by construction; the report says so.
     """
     from .baselines import downsample_area
 
@@ -438,29 +539,44 @@ def project_to_source(output_linear: np.ndarray, source_linear: np.ndarray, stre
         raise ValueError(f"strength must be in [0, 1], got {strength}")
     height, width = output_linear.shape[:2]
     src_h, src_w = source_linear.shape[:2]
-    before, after = [], []
+    offset = np.float32(PROJECTION_OFFSET)
+    before, after, gains = [], [], []
+    minimum = float(output_linear.min())
     for channel in range(3):
-        plane = np.ascontiguousarray(output_linear[..., channel])[..., None]
-        residual = source_linear[..., channel] - downsample_area(plane, src_w, src_h)[..., 0]
-        before.append(float(np.abs(residual).mean()))
+        plane = output_linear[..., channel]
         if strength > 0:
-            correction = Image.fromarray(np.ascontiguousarray(residual)).resize(
+            np.maximum(plane, 0, out=plane)
+        reduced = downsample_area(np.ascontiguousarray(plane)[..., None], src_w, src_h)[..., 0]
+        before.append(float(np.abs(source_linear[..., channel] - reduced).mean()))
+        if strength > 0:
+            target = np.maximum(source_linear[..., channel], 0) + offset
+            log_gain = np.float32(strength) * np.log(target / (reduced + offset)).astype(np.float32)
+            gains += [float(log_gain.min()), float(log_gain.max())]
+            upsampled = Image.fromarray(np.ascontiguousarray(log_gain)).resize(
                 (width, height), Image.Resampling.BICUBIC
             )
-            output_linear[..., channel] += np.float32(strength) * np.asarray(correction, dtype=np.float32)
-            del correction
-            plane = np.ascontiguousarray(output_linear[..., channel])[..., None]
-            after.append(
-                float(np.abs(source_linear[..., channel] - downsample_area(plane, src_w, src_h)[..., 0]).mean())
-            )
+            gain = np.exp(np.asarray(upsampled, dtype=np.float32))
+            del upsampled
+            plane += offset
+            plane *= gain
+            plane -= offset
+            np.maximum(plane, 0, out=plane)
+            del gain
+            reduced = downsample_area(np.ascontiguousarray(plane)[..., None], src_w, src_h)[..., 0]
+            after.append(float(np.abs(source_linear[..., channel] - reduced).mean()))
         else:
             after.append(before[-1])
-        del plane, residual
+        del plane, reduced
     return {
         "strength": strength,
-        "operator": "residual at source size (area reduction), upsampled with Keys bicubic, linear light",
+        "operator": "gain (source + e) / (area-reduced output + e) per source pixel, e = "
+        f"{PROJECTION_OFFSET}, upsampled in log space with Keys bicubic, applied as (out + e) * gain - e in "
+        "linear light; results bounded at 0",
         "mean_abs_residual_linear_before": round(float(np.mean(before)), 6),
         "mean_abs_residual_linear_after": round(float(np.mean(after)), 6),
+        "gain_range": [round(float(np.exp(min(gains))), 4), round(float(np.exp(max(gains))), 4)] if gains else None,
+        "min_linear_before": round(minimum, 6),
+        "min_linear_after": round(float(output_linear.min()), 6),
     }
 
 

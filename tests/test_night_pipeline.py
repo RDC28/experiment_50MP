@@ -90,6 +90,15 @@ def test_run_completes_with_validated_night_masters(run):
         assert provenance["information"] == manifest["night"]["information"]
         assert set(provenance["stage_provenance"].values()) <= set(night.PROVENANCE_LABELS)
     assert set(manifest["output_checksums"]) >= {Path(e["path"]).name for e in exports.values()}
+    final = manifest["final_output"]
+    assert final["method"] == night_pipeline.FINAL and "Layer 5B night processing" in final["reason"]
+    for kind, export in exports.items():
+        path = Path(final["files"][kind]["path"])
+        assert path.parent == result.masters_dir / "final" and path.name == "final_" + Path(export["path"]).name
+        assert (
+            final["files"][kind]["file_sha256"] == export["file_sha256"] and path.name in manifest["output_checksums"]
+        )
+    assert "Final 50 MP image: final_night" in result.report_path.read_text()
     assert json.loads(result.manifest_path.read_text())["run_id"] == result.run_id
     assert all(stage["error"] is None for stage in manifest["stages"])
 

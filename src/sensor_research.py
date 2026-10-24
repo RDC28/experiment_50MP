@@ -505,7 +505,7 @@ def _select_crops(linear: np.ndarray, config: SensorResearchConfig) -> list[comp
     small = baselines.downsample_area(linear, *small_size) if scale < 1 else linear
     display = cm.linear_to_srgb(np.clip(small, 0, 1))
     size = max(8, round(min(config.crop_size, width, height) * scale))
-    chosen = comparison.select_crops(display, size, config.crop_count)
+    chosen = comparison.select_crops(display, size, config.crop_count, subject_first=False)
     crops = []
     for crop in chosen:
         x0, y0, _, _ = crop.output_box(small_size, (width, height))

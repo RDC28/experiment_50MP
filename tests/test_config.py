@@ -47,6 +47,10 @@ def test_overrides_and_quick_preset(tmp_path):
         {"crops": [[0, 0, 10]]},
         {"crops": [[0, 0, 0, 10]]},
         {"profile": " "},
+        {"final_output": "best"},
+        {"final_output": "sr_balanced"},  # super-resolution is off by default
+        {"final_output": "bicubic", "baselines": ["lanczos"]},
+        {"final_output": "sr_aggressive", "enable_super_resolution": True},  # not in sr_modes
     ],
 )
 def test_invalid_values_are_rejected(overrides):
@@ -88,3 +92,10 @@ def test_load_profile_splits_sections_and_applies_precedence(tmp_path):
     assert layers == {"layer": {"a": 1, "b": 5}, "other": {}}
     with pytest.raises(ValueError):
         load_profile(path)
+
+
+def test_final_output_accepts_any_output_the_run_produces():
+    assert ExperimentConfig().final_output == "auto"
+    assert load_config(final_output="bicubic").final_output == "bicubic"
+    config = load_config(ROOT / "configs" / "super_resolution_default.yaml", final_output="sr_conservative")
+    assert config.final_output == "sr_conservative"
