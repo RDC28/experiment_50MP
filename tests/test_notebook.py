@@ -1,13 +1,26 @@
-"""Execute the Phase 0/1 notebook end to end on a small synthetic input (outside Colab)."""
+"""Execute notebook 00 end to end on a small synthetic input (outside Colab).
 
+Opt-in: these run only with SYNTHETIC_RAW_LAB_HEAVY_TESTS=1, because executing the notebook (and, with cached
+weights, the real networks) is too heavy for a small laptop. Colab is the place to run them.
+"""
+
+import os
 from pathlib import Path
 
 import pytest
 
+from synthetic_raw_lab import sr_models
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("SYNTHETIC_RAW_LAB_HEAVY_TESTS") != "1",
+    reason="notebook execution is opt-in: set SYNTHETIC_RAW_LAB_HEAVY_TESTS=1",
+)
 nbformat = pytest.importorskip("nbformat")
 nbclient = pytest.importorskip("nbclient")
 
-NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "00_Feasibility_Baselines.ipynb"
+ROOT = Path(__file__).resolve().parents[1]
+NOTEBOOK = ROOT / "notebooks" / "00_Feasibility_Baselines.ipynb"
+WEIGHTS_DIR = Path(os.environ.get("SYNTHETIC_RAW_LAB_WEIGHTS") or sr_models.default_weights_dir(ROOT))
 
 
 def run_notebook(parameters_source: str):
@@ -29,6 +42,7 @@ INPUT_MODE = "synthetic"
 SYNTHETIC_SIZE = "320x180"
 RUNTIME_PRESET = "quick"
 RUN_MEMORY_BENCHMARK = False
+ENABLE_SUPER_RESOLUTION = False
 OUTPUT_ROOT = "{tmp_path / "outputs"}"
 REPORTS_ROOT = "{tmp_path / "reports"}"
 INPUTS_ROOT = "{tmp_path / "inputs"}"
@@ -57,9 +71,38 @@ INPUT_MODE = "synthetic"
 SYNTHETIC_SIZE = "320x180"
 RUNTIME_PRESET = "quick"
 RUN_MEMORY_BENCHMARK = False
+ENABLE_SUPER_RESOLUTION = False
 """)
 
     assert "Display P3 (P3 primaries, D65, sRGB transfer) (user_override)" in outputs
     assert list((tmp_path / "sources" / "universal").glob("*_synthetic_320x180.png"))
     assert list((tmp_path / "masters" / "universal").glob("*/*_srgb16.tif"))
     assert list((tmp_path / "run_reports").glob("*/report.md"))
+
+
+def test_notebook_runs_super_resolution_with_cached_weights(tmp_path):
+    """Section 10 with the real networks; skips unless the SwinIR weights are cached (it never downloads)."""
+    if not sr_models.available():
+        pytest.skip("PyTorch and spandrel are not installed (pip install .[sr])")
+    needed = sr_models.BACKENDS["swinir"].values()
+    if not all(sr_models.cached(name, WEIGHTS_DIR) for name in needed):
+        pytest.skip(f"SwinIR weights are not cached in {WEIGHTS_DIR}")
+    outputs = run_notebook(f"""
+INPUT_MODE = "synthetic"
+SYNTHETIC_SIZE = "320x180"
+RUNTIME_PRESET = "quick"
+RUN_MEMORY_BENCHMARK = False
+BASELINES = "lanczos"
+ENABLE_SUPER_RESOLUTION = True
+WEIGHTS_DIR = "{WEIGHTS_DIR}"
+OUTPUT_ROOT = "{tmp_path / "outputs"}"
+REPORTS_ROOT = "{tmp_path / "reports"}"
+INPUTS_ROOT = "{tmp_path / "inputs"}"
+""")
+
+    assert ": complete in" in outputs
+    assert "Mode A, conservative" in outputs and "Mode B, balanced" in outputs
+    masters = list((tmp_path / "outputs" / "universal").glob("*/*_sr_*_srgb16.tif"))
+    assert {p.name.split("_sr_")[1].split("_")[0] for p in masters} == {"conservative", "balanced"}
+    report = next((tmp_path / "reports").glob("*/report.md")).read_text()
+    assert "Pretrained super-resolution (PRD 10, experiment E02)" in report

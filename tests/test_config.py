@@ -68,3 +68,11 @@ def test_every_parameter_is_documented():
         assert row["description"] and row["accepted"] and row["effect"]
     preset = next(row for row in rows if row["parameter"] == "runtime_preset")
     assert (preset["default"], preset["current"]) == ("standard", "quick")
+
+
+def test_super_resolution_profile():
+    config = load_config(ROOT / "configs" / "super_resolution_default.yaml")
+    assert config.enable_super_resolution and config.preserve_source_structure
+    assert config.sr_backend == "swinir" and config.sr_modes == ("conservative", "balanced")
+    assert (config.sr_tile_size, config.sr_tile_overlap, config.sr_strength) == (0, 64, 1.0)
+    assert config.replace(enable_super_resolution=False, profile="baselines") == ExperimentConfig()

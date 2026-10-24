@@ -17,6 +17,10 @@ import yaml
 
 from .color_management import SOURCE_COLOR_SPACES, WORKING_SPACE
 from .resolution import RESOLUTION_MODES
+from .sr_models import BACKENDS as SR_BACKENDS
+from .sr_models import DEVICES as SR_DEVICES
+from .sr_models import PRECISIONS as SR_PRECISIONS
+from .super_resolution import MODES as SR_MODES
 
 BASELINE_METHODS = ("lanczos", "bicubic")
 INPUT_CATEGORIES = ("human", "night", "universal")
@@ -154,6 +158,81 @@ class ExperimentConfig:
         "Each baseline produces its own masters, metrics and crops.",
         choices=BASELINE_METHODS,
     )
+    enable_super_resolution: bool = _param(
+        False,
+        "Run inference-only pretrained super-resolution (PRD 6.1, 10; Phase 2).",
+        "true | false",
+        "Adds one 50 MP master per sr_modes entry, measured and exported like the baselines.",
+        warning="Downloads about 135 MB of weights on first use; full 50 MP SR takes minutes on a GPU, longer on "
+        "Apple MPS or the CPU.",
+    )
+    sr_backend: str = _param(
+        "swinir",
+        "Pretrained model family (PRD 10.1; evaluation in docs/models.md).",
+        "swinir | realesrgan",
+        "swinir: SwinIR-M classical (fidelity) and real-world GAN (perceptual), the evaluated default; "
+        "realesrgan: about 2.5x faster, smooths fine texture and alters faces more.",
+        choices=tuple(SR_BACKENDS),
+    )
+    sr_modes: tuple = _param(
+        ("conservative", "balanced"),
+        "PRD 10.2 operating modes to run.",
+        "any of conservative, balanced, aggressive",
+        "conservative: fidelity network, preferred for faces; balanced: perceptual network with low-frequency "
+        "correction; aggressive: perceptual network unconstrained.",
+        warning="aggressive is experimental, invents the most and must not be used for identity-critical regions.",
+        choices=SR_MODES,
+    )
+    sr_tile_size: int = _param(
+        0,
+        "SR tile side in source pixels (PRD 10.4).",
+        "0 (auto: memory-aware) or 64 to 2048",
+        "Larger tiles mean fewer overlaps (less work) but more device and host memory.",
+        warning="Too large a tile is caught as out-of-memory and split automatically, which costs time.",
+        bounds=(0, 2048),
+    )
+    sr_tile_overlap: int = _param(
+        64,
+        "Overlap between neighbouring SR tiles in source pixels (PRD 6.1, 10.4).",
+        "64 to 512, at most half the tile size",
+        "The outer quarter next to each tile edge is discarded and the middle half crossfaded, hiding seams.",
+        warning="Below 64 the networks' border artefacts (measured up to 16 px deep for SwinIR) reach the image.",
+        bounds=(64, 512),
+    )
+    sr_strength: float = _param(
+        1.0,
+        "General SR strength (PRD 18.2): share of the network output against Lanczos interpolation.",
+        "0 to 1",
+        "1 uses the network output as is; lower values blend towards the Lanczos baseline.",
+        bounds=(0.0, 1.0),
+    )
+    preserve_source_structure: bool = _param(
+        True,
+        "Restrict hallucination with the low-frequency source-consistency correction (PRD 6.1, 10.5).",
+        "true | false",
+        "Applies each mode's correction strength; false disables the correction for every mode.",
+        warning="false lets colour and tone drift away from the source.",
+    )
+    sr_device: str = _param(
+        "auto",
+        "Inference device.",
+        "auto | cuda | mps | cpu",
+        "auto prefers CUDA (Colab), then Apple MPS, then the CPU. Out-of-memory tiles fall back to the CPU.",
+        choices=SR_DEVICES,
+    )
+    sr_precision: str = _param(
+        "auto",
+        "Inference precision (PRD 21.4).",
+        "auto | float32 | float16",
+        "auto uses float16 on CUDA when the network supports it, float32 otherwise.",
+        choices=SR_PRECISIONS,
+    )
+    sr_weights_dir: str = _param(
+        "",
+        "Cache folder for downloaded model weights.",
+        "path; empty means <project>/weights",
+        "Weights are checksum-verified after download and before every load; point this at Drive to reuse them.",
+    )
     export_tiff16: bool = _param(
         True,
         "Write the 16-bit sRGB TIFF display master (PRD 17.1 A).",
@@ -230,7 +309,8 @@ class ExperimentConfig:
         42,
         "Seed for every random process in the run.",
         "any integer",
-        "Recorded for reproducibility; Phase 0 and 1 processing is deterministic.",
+        "Recorded for reproducibility; Phase 0 and 1 processing is deterministic. Super-resolution passes it to "
+        "torch.manual_seed before inference.",
     )
     output_root: str = _param(
         "",
@@ -265,6 +345,10 @@ class ExperimentConfig:
                 raise ValueError(f"{f.name} must be between {bounds[0]} and {bounds[1]}, got {value!r}")
         if not self.profile.strip():
             raise ValueError("profile must not be empty")
+        if self.sr_tile_size and self.sr_tile_size < 64:
+            raise ValueError(f"sr_tile_size must be 0 (auto) or at least 64, got {self.sr_tile_size}")
+        if self.sr_tile_size and self.sr_tile_overlap * 2 > self.sr_tile_size:
+            raise ValueError("sr_tile_overlap must be at most half of sr_tile_size")
         for crop in self.crops:
             if len(crop) != 4 or any(int(v) != v or v < 0 for v in crop) or crop[2] < 1 or crop[3] < 1:
                 raise ValueError(f"each crop must be [x, y, width, height] with non-negative integers, got {crop!r}")
@@ -279,6 +363,7 @@ class ExperimentConfig:
     def to_dict(self) -> dict:
         data = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
         data["baselines"] = list(self.baselines)
+        data["sr_modes"] = list(self.sr_modes)
         data["crops"] = [list(crop) for crop in self.crops]
         return data
 
@@ -303,14 +388,21 @@ def from_dict(values: dict[str, Any]) -> ExperimentConfig:
     if unknown:
         raise ValueError(f"unknown configuration keys: {', '.join(unknown)}")
     normalized = dict(values)
-    if "baselines" in normalized:
-        normalized["baselines"] = tuple(normalized["baselines"])
+    for name in ("baselines", "sr_modes"):
+        if name in normalized:
+            normalized[name] = tuple(normalized[name])
     if "crops" in normalized:
         normalized["crops"] = tuple(tuple(c) for c in normalized["crops"] or ())
-    for name in ("target_megapixels", "quick_target_megapixels", "pixel_count_tolerance", "max_aspect_ratio_error"):
+    for name in (
+        "target_megapixels",
+        "quick_target_megapixels",
+        "pixel_count_tolerance",
+        "max_aspect_ratio_error",
+        "sr_strength",
+    ):
         if isinstance(normalized.get(name), int) and not isinstance(normalized.get(name), bool):
             normalized[name] = float(normalized[name])
-    for name in ("output_root", "reports_root", "inputs_root"):
+    for name in ("output_root", "reports_root", "inputs_root", "sr_weights_dir"):
         if normalized.get(name) is None:
             normalized[name] = ""
     return ExperimentConfig(**normalized)
