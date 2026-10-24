@@ -63,6 +63,7 @@ RUN_NOTICE_SR = (
 PHASE_01 = "Phase 0 (feasibility) and Phase 1 (baselines)"
 PHASE_SR = f"{PHASE_01} and Phase 2 (pretrained super-resolution)"
 SEEDS_UNUSED = "nothing (Phase 0/1 is deterministic)"
+SR_INSTALL_HINT = "super-resolution needs PyTorch and spandrel: pip install 'synthetic-raw-50mp-lab[sr]'"
 SEEDS_SR = "torch.manual_seed before SR inference (inference itself draws no random numbers)"
 LOW_MEMORY_HEADROOM_GB = 1.0
 # Provisional Phase 2 gates for major seams, calibrated on the measurements in docs/models.md (PRD 25.3).
@@ -573,137 +574,19 @@ def _run_super_resolution(
     log,
 ) -> None:
     """Phase 2: one pretrained-SR master per configured mode, measured and exported like the baselines."""
-    networks = sr_models.BACKENDS[config.sr_backend]
-    record = manifest["super_resolution"] = {
-        "backend": config.sr_backend,
-        "scale_handling": "network at its native x4, then Lanczos-3 in linear light to the exact target size",
-        "modes": {},
-    }
-    if target.scale_x <= 1 or target.scale_y <= 1:
-        record["skipped"] = (
-            f"target scale {target.scale_x:.3f} x {target.scale_y:.3f} is not an enlargement; super-resolution "
-            "cannot add anything (use the standard preset for the full target)"
-        )
+    record = manifest["super_resolution"] = sr_run_record(config, target)
+    if "skipped" in record:
         log(f"super-resolution skipped: {record['skipped']}")
         return
     with stage(StageRecord("super_resolution_setup", SETUP, {"backend": config.sr_backend}, "-", "-")):
-        if not sr_models.available():
-            raise RuntimeError("super-resolution needs PyTorch and spandrel: pip install 'synthetic-raw-50mp-lab[sr]'")
-        weights_dir = (
-            Path(config.sr_weights_dir) if config.sr_weights_dir else sr_models.default_weights_dir(project_root)
-        )
+        weights_dir = sr_setup(config, project_root)
     loaded: dict[str, sr_models.TorchModel] = {}
     for index, mode in enumerate(config.sr_modes):
-        preset = sr.PRESETS[mode]
+        output = run_sr_mode(
+            mode, source.linear, target, config, weights_dir, loaded, manifest, figures_dir, stage, log
+        )
         name = f"sr_{mode}"
-        weights = networks[preset.network]
-        consistency = preset.consistency_strength if config.preserve_source_structure else 0.0
-        summary = record["modes"][mode] = {
-            "preset": preset.to_dict(),
-            "classification": INFERENCE,
-            "weights": weights,
-            "strength": config.sr_strength,
-            "consistency_strength": consistency,
-            "exports": {},
-        }
-        if weights not in loaded:
-            with stage(
-                StageRecord(
-                    f"load_model_{weights}",
-                    SETUP,
-                    {"weights": weights, "device": config.sr_device, "precision": config.sr_precision},
-                    "weights file",
-                    "network",
-                )
-            ):
-                loaded[weights] = sr_models.load_model(
-                    weights,
-                    weights_dir,
-                    device=config.sr_device,
-                    precision=config.sr_precision,
-                    seed=config.random_seed,
-                    log=log,
-                )
-        model = loaded[weights]
-        tile = config.sr_tile_size
-        tile_basis = "configured"
-        if not tile:
-            tile, tile_basis = sr_models.auto_tile_size(
-                model.device, model.precision, model.architecture, source_width=source.width, scale=model.scale
-            )
-        tile = max(tile, 2 * config.sr_tile_overlap)
-        resample = target.scale_x / model.scale
-        with stage(
-            StageRecord(
-                f"super_resolution_{mode}",
-                INFERENCE,
-                {
-                    "weights": weights,
-                    "native_scale": model.scale,
-                    "then": f"Lanczos-3 x{resample:.4f} ({'downscale' if resample < 1 else 'upscale'})",
-                    "tile": f"{tile} ({tile_basis})",
-                    "overlap": config.sr_tile_overlap,
-                    "strength": config.sr_strength,
-                    "device": model.device,
-                    "precision": model.precision,
-                },
-                "float32 linear (sRGB-encoded for the network)",
-                "float32 linear",
-            )
-        ) as record_stage:
-            output, tiling = sr.super_resolve(
-                source.linear,
-                target.width,
-                target.height,
-                model,
-                tile_size=tile,
-                tile_overlap=config.sr_tile_overlap,
-                detail_strength=config.sr_strength,
-                log=lambda _: None,
-            )
-            summary["tiling"] = tiling.to_dict()
-            summary["tiling"]["tile_basis"] = tile_basis
-            summary["final_resample"] = {"filter": "Lanczos-3, linear light", "factor": resample}
-            record_stage.notes = [f["message"] for f in tiling.fallbacks]
-            model = loaded[weights] = _current_model(model, tiling)
-            summary["model"] = model.describe()
-            manifest["models"] = [m["model"] for m in record["modes"].values() if "model" in m]
-        log(f"{name}: {tiling.tiles} tiles of {tile} px on {tiling.final_device}, {tiling.inference_seconds:.0f} s")
-
-        if consistency > 0:
-            with stage(
-                StageRecord(
-                    f"source_projection_{mode}",
-                    INTERPOLATION,
-                    {"strength": consistency, "reduction": "area average", "upsampling": "Keys bicubic"},
-                    "float32 linear",
-                    "float32 linear",
-                )
-            ):
-                summary["source_projection"] = sr.project_to_source(output, source.linear, consistency)
-
-        with stage(StageRecord(f"seam_check_{mode}", MEASUREMENT, {"boundaries": len(tiling.boundaries)}, "-", "-")):
-            seams = sr.seam_scores(output, tiling.boundaries, source.linear)
-            disagreement = summary["tiling"]["overlap_disagreement"]
-            seams["passed"] = (seams["max_score"] or 0) <= SEAM_SCORE_LIMIT and (
-                disagreement["blend_error_p99_abs_max"] or 0
-            ) <= SEAM_BLEND_ERROR_LIMIT
-            seams["limits"] = {"max_score": SEAM_SCORE_LIMIT, "blend_error_p99_abs_8bit": SEAM_BLEND_ERROR_LIMIT}
-            summary["seams"] = seams
-
-        with stage(StageRecord(f"interpolation_difference_{mode}", MEASUREMENT, {"reference": "Lanczos-3"}, "-", "-")):
-            difference, summary["interpolation_difference"] = sr.interpolation_difference(output, source.linear)
-            report_builder.heatmap_figure(
-                _reduce_map(difference, config.review_max_edge),
-                figures_dir / f"sr_difference_{mode}.png",
-                f"|{name} - Lanczos|, sRGB luma (synthesised detail and drift)",
-                config.review_max_edge,
-                label="8-bit code values",
-            )
-            del difference
-            summary["working_pixel_sha256"] = ingestion.pixel_sha256(output)
-            summary["statistics"] = quality_metrics.image_statistics(output)
-
+        summary = record["modes"][mode]
         buffer = [output]
         del output
         try:
@@ -727,10 +610,170 @@ def _run_super_resolution(
             if summary["exports"]:
                 manifest["phase"], manifest["notice"] = PHASE_SR, RUN_NOTICE_SR
                 manifest["random_seeds"]["used_by"] = SEEDS_SR
-        remaining = {networks[sr.PRESETS[m].network] for m in config.sr_modes[index + 1 :]}
-        for unused in set(loaded) - remaining:
-            loaded.pop(unused).release_cache()
+        release_sr_models(loaded, config, config.sr_modes[index + 1 :])
         gc.collect()
+
+
+def sr_run_record(config: ExperimentConfig, target: TargetResolution) -> dict:
+    """The manifest ``super_resolution`` record; it says why SR is skipped when the target is no enlargement."""
+    record = {
+        "backend": config.sr_backend,
+        "scale_handling": "network at its native x4, then Lanczos-3 in linear light to the exact target size",
+        "modes": {},
+    }
+    if target.scale_x <= 1 or target.scale_y <= 1:
+        record["skipped"] = (
+            f"target scale {target.scale_x:.3f} x {target.scale_y:.3f} is not an enlargement; super-resolution "
+            "cannot add anything (use the standard preset for the full target)"
+        )
+    return record
+
+
+def sr_setup(config: ExperimentConfig, project_root: Path) -> Path:
+    """Check that PyTorch and spandrel are installed and return the weights cache folder."""
+    if not sr_models.available():
+        raise RuntimeError(SR_INSTALL_HINT)
+    return Path(config.sr_weights_dir) if config.sr_weights_dir else sr_models.default_weights_dir(project_root)
+
+
+def run_sr_mode(
+    mode: str,
+    source_linear: np.ndarray,
+    target: TargetResolution,
+    config: ExperimentConfig,
+    weights_dir: Path,
+    loaded: dict,
+    manifest: dict,
+    figures_dir: Path,
+    stage,
+    log,
+) -> np.ndarray:
+    """One PRD 10.2 mode: tiled SR, source projection, seam check and difference map, each a logged stage.
+
+    The mode's network is loaded into ``loaded`` unless it is already there. The summary goes to
+    ``manifest["super_resolution"]["modes"][mode]`` and the model records to ``manifest["models"]``.
+    Returns the float32 linear output at the target size.
+    """
+    record = manifest["super_resolution"]
+    networks = sr_models.BACKENDS[config.sr_backend]
+    preset = sr.PRESETS[mode]
+    name = f"sr_{mode}"
+    weights = networks[preset.network]
+    consistency = preset.consistency_strength if config.preserve_source_structure else 0.0
+    summary = record["modes"][mode] = {
+        "preset": preset.to_dict(),
+        "classification": INFERENCE,
+        "weights": weights,
+        "strength": config.sr_strength,
+        "consistency_strength": consistency,
+        "exports": {},
+    }
+    if weights not in loaded:
+        with stage(
+            StageRecord(
+                f"load_model_{weights}",
+                SETUP,
+                {"weights": weights, "device": config.sr_device, "precision": config.sr_precision},
+                "weights file",
+                "network",
+            )
+        ):
+            loaded[weights] = sr_models.load_model(
+                weights,
+                weights_dir,
+                device=config.sr_device,
+                precision=config.sr_precision,
+                seed=config.random_seed,
+                log=log,
+            )
+    model = loaded[weights]
+    tile = config.sr_tile_size
+    tile_basis = "configured"
+    if not tile:
+        tile, tile_basis = sr_models.auto_tile_size(
+            model.device, model.precision, model.architecture, source_width=source_linear.shape[1], scale=model.scale
+        )
+    tile = max(tile, 2 * config.sr_tile_overlap)
+    resample = target.scale_x / model.scale
+    with stage(
+        StageRecord(
+            f"super_resolution_{mode}",
+            INFERENCE,
+            {
+                "weights": weights,
+                "native_scale": model.scale,
+                "then": f"Lanczos-3 x{resample:.4f} ({'downscale' if resample < 1 else 'upscale'})",
+                "tile": f"{tile} ({tile_basis})",
+                "overlap": config.sr_tile_overlap,
+                "strength": config.sr_strength,
+                "device": model.device,
+                "precision": model.precision,
+            },
+            "float32 linear (sRGB-encoded for the network)",
+            "float32 linear",
+        )
+    ) as record_stage:
+        output, tiling = sr.super_resolve(
+            source_linear,
+            target.width,
+            target.height,
+            model,
+            tile_size=tile,
+            tile_overlap=config.sr_tile_overlap,
+            detail_strength=config.sr_strength,
+            log=lambda _: None,
+        )
+        summary["tiling"] = tiling.to_dict()
+        summary["tiling"]["tile_basis"] = tile_basis
+        summary["final_resample"] = {"filter": "Lanczos-3, linear light", "factor": resample}
+        record_stage.notes = [f["message"] for f in tiling.fallbacks]
+        model = loaded[weights] = _current_model(model, tiling)
+        summary["model"] = model.describe()
+        manifest["models"] = [m["model"] for m in record["modes"].values() if "model" in m]
+    log(f"{name}: {tiling.tiles} tiles of {tile} px on {tiling.final_device}, {tiling.inference_seconds:.0f} s")
+
+    if consistency > 0:
+        with stage(
+            StageRecord(
+                f"source_projection_{mode}",
+                INTERPOLATION,
+                {"strength": consistency, "reduction": "area average", "upsampling": "Keys bicubic"},
+                "float32 linear",
+                "float32 linear",
+            )
+        ):
+            summary["source_projection"] = sr.project_to_source(output, source_linear, consistency)
+
+    with stage(StageRecord(f"seam_check_{mode}", MEASUREMENT, {"boundaries": len(tiling.boundaries)}, "-", "-")):
+        seams = sr.seam_scores(output, tiling.boundaries, source_linear)
+        disagreement = summary["tiling"]["overlap_disagreement"]
+        seams["passed"] = (seams["max_score"] or 0) <= SEAM_SCORE_LIMIT and (
+            disagreement["blend_error_p99_abs_max"] or 0
+        ) <= SEAM_BLEND_ERROR_LIMIT
+        seams["limits"] = {"max_score": SEAM_SCORE_LIMIT, "blend_error_p99_abs_8bit": SEAM_BLEND_ERROR_LIMIT}
+        summary["seams"] = seams
+
+    with stage(StageRecord(f"interpolation_difference_{mode}", MEASUREMENT, {"reference": "Lanczos-3"}, "-", "-")):
+        difference, summary["interpolation_difference"] = sr.interpolation_difference(output, source_linear)
+        report_builder.heatmap_figure(
+            _reduce_map(difference, config.review_max_edge),
+            figures_dir / f"sr_difference_{mode}.png",
+            f"|{name} - Lanczos|, sRGB luma (synthesised detail and drift)",
+            config.review_max_edge,
+            label="8-bit code values",
+        )
+        del difference
+        summary["working_pixel_sha256"] = ingestion.pixel_sha256(output)
+        summary["statistics"] = quality_metrics.image_statistics(output)
+    return output
+
+
+def release_sr_models(loaded: dict, config: ExperimentConfig, remaining_modes) -> None:
+    """Release every loaded network that none of ``remaining_modes`` needs."""
+    networks = sr_models.BACKENDS[config.sr_backend]
+    remaining = {networks[sr.PRESETS[m].network] for m in remaining_modes}
+    for unused in set(loaded) - remaining:
+        loaded.pop(unused).release_cache()
 
 
 def _current_model(model, tiling):

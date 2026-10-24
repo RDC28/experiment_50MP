@@ -4,9 +4,10 @@ import numpy as np
 import pytest
 import yaml
 
-from synthetic_raw_lab import baselines
+from synthetic_raw_lab import baselines, sr_models
 from synthetic_raw_lab import color_management as cm
 from synthetic_raw_lab import night_processing as night
+from synthetic_raw_lab import super_resolution as sr
 
 ROOT = Path(__file__).resolve().parents[1]
 NIGHT_YAML = ROOT / "configs" / "night_default.yaml"
@@ -25,7 +26,7 @@ def scene():
     encoded = night.make_night_scene(*SOURCE_SIZE)
     source = cm.srgb_to_linear(encoded.astype(np.float32) / 255)
     regions = night.segment_regions(source)
-    upscale = night.sr_slot("balanced")(source, *OUTPUT_SIZE)
+    upscale = night.BaselineUpscaler("lanczos")(source, *OUTPUT_SIZE)
     return encoded, source, regions, upscale
 
 
@@ -75,6 +76,15 @@ def test_parameters_round_trip_and_accept_levels_or_numbers():
         {"super_resolution": {"mode": "aggressive"}},
         {"super_resolution": {"tile_size": 32}},
         {"super_resolution": {"tile_size": "large"}},
+        {"super_resolution": {"tile_size": 4096}},
+        {"super_resolution": {"tile_size": 96, "tile_overlap": 64}},
+        {"super_resolution": {"tile_overlap": 32}},
+        {"super_resolution": {"backend": "esrgan"}},
+        {"super_resolution": {"strength": 1.5}},
+        {"super_resolution": {"device": "tpu"}},
+        {"super_resolution": {"precision": "bfloat16"}},
+        {"super_resolution": {"weights_dir": 5}},
+        {"super_resolution": {"preserve_source_structure": "yes"}},
     ],
 )
 def test_invalid_parameters_are_rejected(values):
@@ -131,6 +141,46 @@ def test_night_yaml_matches_code_defaults_and_the_prd_profile(tmp_path):
     assert config.experiment.export_tiff16 and config.experiment.export_exr
     assert config.experiment.exr_precision == "half"
     assert config.night.super_resolution.tile_size == "auto"
+    sr = config.night.super_resolution
+    assert (sr.enabled, sr.mode, sr.backend, sr.tile_overlap) == (True, "balanced", "swinir", 64)
+    assert (sr.strength, sr.preserve_source_structure, sr.device, sr.precision, sr.weights_dir) == (
+        1.0,
+        True,
+        "auto",
+        "auto",
+        "",
+    )
+
+
+def test_super_resolution_section_drives_the_phase_2_settings(tmp_path):
+    """The night section is the one place SR is configured; the shared experiment keys follow it."""
+    experiment = night.load_night_config(NIGHT_YAML).experiment
+    assert experiment.enable_super_resolution and experiment.sr_modes == ("conservative", "balanced")
+    assert (experiment.sr_backend, experiment.sr_tile_size, experiment.sr_tile_overlap) == ("swinir", 0, 64)
+    custom = night.load_night_config(
+        NIGHT_YAML,
+        super_resolution={
+            "backend": "realesrgan",
+            "tile_size": 256,
+            "tile_overlap": 96,
+            "strength": 0.5,
+            "preserve_source_structure": False,
+            "device": "cpu",
+            "precision": "float32",
+            "weights_dir": str(tmp_path / "w"),
+        },
+    ).experiment
+    assert (custom.sr_backend, custom.sr_tile_size, custom.sr_tile_overlap, custom.sr_strength) == (
+        "realesrgan",
+        256,
+        96,
+        0.5,
+    )
+    assert not custom.preserve_source_structure
+    assert (custom.sr_device, custom.sr_precision, custom.sr_weights_dir) == ("cpu", "float32", str(tmp_path / "w"))
+    disabled = night.load_night_config(NIGHT_YAML, super_resolution={"enabled": False})
+    assert not disabled.experiment.enable_super_resolution
+    assert not disabled.to_dict()["enable_super_resolution"] and not disabled.to_dict()["super_resolution"]["enabled"]
 
 
 def test_night_yaml_lists_every_control():
@@ -334,18 +384,38 @@ def test_gamut_map_preserves_hue_and_leaves_in_gamut_colours():
 # --------------------------------------------------------------------------- upscaler interface
 
 
-def test_sr_slots_are_labelled_lanczos_stand_ins(scene):
+def test_pretrained_upscaler_reports_the_phase_2_mode_as_inference(scene):
     _, source, _, _ = scene
-    for mode in ("conservative", "balanced"):
-        result = night.sr_slot(mode)(source, *OUTPUT_SIZE)
-        assert "Lanczos stand-in" in result.label and "Phase 2" in result.label
-        assert mode.capitalize() in result.label
-        assert result.provenance == night.ESTIMATED and result.stand_in_for
-        assert np.array_equal(result.image, baselines.resample(source, *OUTPUT_SIZE, "lanczos"))
-    plain = night.BaselineUpscaler("bicubic", "bicubic")(source, *OUTPUT_SIZE)
-    assert plain.label == "Bicubic baseline" and plain.stand_in_for is None
+    calls = []
+
+    def run(mode, linear, width, height):
+        calls.append((mode, linear.shape, width, height))
+        weights = sr_models.BACKENDS["swinir"][sr.PRESETS[mode].network]
+        summary = {"weights": weights, "strength": 1.0, "consistency_strength": 1.0}
+        return baselines.resample(linear, width, height, "lanczos"), summary
+
+    for mode, weights in (("conservative", "swinir_m_x4_classical"), ("balanced", "swinir_m_x4_realsr_gan")):
+        result = night.PretrainedUpscaler(f"{mode}_sr", mode, run)(source, *OUTPUT_SIZE)
+        assert result.provenance == night.SYNTHESIZED and result.classification == night.INFERENCE
+        assert result.label == f"{sr.PRESETS[mode].label} SR, {weights} (inferred, synthesised detail)"
+        assert sr.PRESETS[mode].label in result.method and "x4 then Lanczos-3" in result.method
+        described = result.describe()
+        assert (described["mode"], described["weights"]) == (mode, weights)
+        assert described["weights_sha256"] == sr_models.WEIGHTS[weights].sha256
+        assert described["license"] == sr_models.WEIGHTS[weights].license
+    assert calls == [(m, source.shape, *OUTPUT_SIZE) for m in ("conservative", "balanced")]
     with pytest.raises(ValueError):
-        night.sr_slot("aggressive")
+        night.PretrainedUpscaler("aggressive_sr", "aggressive", run)(source, *OUTPUT_SIZE)
+
+
+def test_baseline_upscaler_labels_say_why_it_is_used(scene):
+    _, source, _, _ = scene
+    plain = night.BaselineUpscaler("bicubic", "bicubic")(source, *OUTPUT_SIZE)
+    assert plain.label == "Bicubic baseline" and plain.provenance == night.ESTIMATED
+    assert "note" not in plain.describe()
+    noted = night.BaselineUpscaler("lanczos", "lanczos", "super-resolution disabled, no SR applied")(source, 64, 36)
+    assert noted.label == "Lanczos baseline (super-resolution disabled, no SR applied)"
+    assert noted.describe()["note"] == "super-resolution disabled, no SR applied"
 
 
 # --------------------------------------------------------------------------- processing and metrics
@@ -395,7 +465,7 @@ def test_stages_carry_provenance_labels(default_result):
     stages = {s["name"]: s for s in default_result.stages}
     assert all(s["provenance"] in night.PROVENANCE_LABELS for s in stages.values())
     assert stages["upscale"]["provenance"] == night.ESTIMATED
-    assert "stand-in" in stages["upscale"]["parameters"]["label"]
+    assert stages["upscale"]["parameters"]["label"] == "Lanczos baseline"
     assert stages["dither"]["provenance"] == night.SIMULATED and stages["dither"]["enabled"]
     assert not stages["grain"]["enabled"] and not stages["bloom"]["enabled"]
     assert "not recovered" in stages["highlight_rolloff"]["note"]
@@ -473,7 +543,7 @@ def test_debanding_smooths_quantised_ramps_without_flattening_texture_into_plate
     encoded[:, width // 2 :] = np.round(rows[:, width // 2 :] + noise) / 255
     source = np.repeat(cm.srgb_to_linear(encoded)[..., None], 3, axis=2)
     regions = night.RegionMap(np.full((height, width), night.REGION_NAMES.index("sky_atmosphere")))
-    upscale = night.sr_slot("balanced")(source, 393, 295)
+    upscale = night.BaselineUpscaler("lanczos")(source, 393, 295)
     result = night.process_night(upscale.image, regions, source, night.NightParams.from_dict({"shadows": NO_DITHER}))
     assert result.fallbacks == []
 

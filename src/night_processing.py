@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -36,9 +37,10 @@ import cv2
 import numpy as np
 from scipy import ndimage
 
-from . import baselines
+from . import baselines, sr_models
 from . import color_management as cm
 from . import config as lab_config
+from . import super_resolution as sr
 from .quality_metrics import LUMA_WEIGHTS, luma
 
 # --------------------------------------------------------------------------- provenance
@@ -109,6 +111,8 @@ _DEBAND_RESIDUAL_CODES = 0.5
 # A halo pixel lies more than this many codes outside the luma range of the source samples it sits between.
 _HALO_CODES = 2.0
 _MOOD_CAP = 0.15
+# The PRD 19.3 SR comparisons; both run the Phase 2 backend, and either can be the night input.
+SR_COMPARISON_MODES = ("conservative", "balanced")
 
 
 class _Section:
@@ -155,35 +159,105 @@ def _level(value: str | float, levels: dict[str, float]) -> float:
 
 @dataclass(frozen=True)
 class SuperResolutionParams(_Section):
+    """The Phase 2 pretrained-SR backend settings (PRD 10, 19.1), validated like ``config.ExperimentConfig``."""
+
     section = "super_resolution"
     enabled: bool = _param(
         True,
-        "Run the SR slots before night processing (PRD 10).",
+        "Run the conservative and balanced SR comparisons and upscale the night input with the Phase 2 "
+        "pretrained-SR backend (PRD 10, 19.3).",
         "true | false",
-        "false starts night processing from the Lanczos baseline.",
+        "false skips both SR comparisons and starts night processing from the Lanczos baseline (no SR applied).",
+        warning="Needs the sr extra (PyTorch and spandrel) and downloads about 135 MB of weights on first use.",
     )
     mode: str = _param(
         "balanced",
         "SR operating mode used as the night-processing input (PRD 10.2).",
         "conservative | balanced",
-        "Until the Phase 2 backend lands both modes are Lanczos stand-ins and give identical images.",
-        choices=("conservative", "balanced"),
+        "conservative: fidelity network, least invented texture; balanced: perceptual network with "
+        "low-frequency correction, sharper edges and inferred texture.",
+        choices=SR_COMPARISON_MODES,
+    )
+    backend: str = _param(
+        "swinir",
+        "Pretrained model family (PRD 10.1; evaluation in docs/models.md).",
+        "swinir | realesrgan",
+        "swinir: SwinIR-M classical (fidelity) and real-world GAN (perceptual), the evaluated default; "
+        "realesrgan: about 2.5x faster, smooths fine texture.",
+        choices=tuple(sr_models.BACKENDS),
     )
     tile_size: str | int = _param(
         "auto",
-        "SR tile side in pixels (PRD 6.1, 10.4).",
-        "auto, or 64 to 8192",
-        "Recorded for the Phase 2 backend; the Lanczos stand-in does not tile.",
+        "SR tile side in source pixels (PRD 10.4).",
+        "auto (memory-aware), or 64 to 2048",
+        "Larger tiles mean fewer overlaps (less work) but more device and host memory.",
+        warning="Too large a tile is caught as out-of-memory and split automatically, which costs time.",
         levels={"auto": 0.0},
-        bounds=(64, 8192),
+        bounds=(64, 2048),
     )
     tile_overlap: int = _param(
         64,
-        "SR tile overlap in pixels (PRD 6.1).",
-        "0 to 512",
-        "Recorded for the Phase 2 backend; the Lanczos stand-in does not tile.",
-        bounds=(0, 512),
+        "Overlap between neighbouring SR tiles in source pixels (PRD 6.1, 10.4).",
+        "64 to 512, at most half the tile size",
+        "The outer quarter next to each tile edge is discarded and the middle half crossfaded, hiding seams.",
+        bounds=(64, 512),
     )
+    strength: float = _param(
+        1.0,
+        "SR strength: share of the network output against Lanczos interpolation.",
+        "0 to 1",
+        "1 uses the network output as is; lower values blend towards the Lanczos baseline.",
+        bounds=(0.0, 1.0),
+    )
+    preserve_source_structure: bool = _param(
+        True,
+        "Apply each mode's low-frequency source-consistency correction (PRD 10.5).",
+        "true | false",
+        "false disables the correction for both modes.",
+        warning="false lets colour and tone drift away from the source.",
+    )
+    device: str = _param(
+        "auto",
+        "Inference device.",
+        "auto | cuda | mps | cpu",
+        "auto prefers CUDA (Colab), then Apple MPS, then the CPU. Out-of-memory tiles fall back to the CPU.",
+        choices=sr_models.DEVICES,
+    )
+    precision: str = _param(
+        "auto",
+        "Inference precision (PRD 21.4).",
+        "auto | float32 | float16",
+        "auto uses float16 on CUDA when the network supports it, float32 otherwise.",
+        choices=sr_models.PRECISIONS,
+    )
+    weights_dir: str = _param(
+        "",
+        "Cache folder for downloaded model weights.",
+        "path; empty means <project>/weights",
+        "Weights are checksum-verified after download and before every load; point this at Drive to reuse them.",
+    )
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not isinstance(self.weights_dir, str):
+            raise ValueError(f"super_resolution.weights_dir must be a path string, got {self.weights_dir!r}")
+        if self.tile_size != "auto" and self.tile_overlap * 2 > self.tile_size:
+            raise ValueError("super_resolution.tile_overlap must be at most half of super_resolution.tile_size")
+
+    def experiment_settings(self) -> dict[str, Any]:
+        """The same settings as Phase 2 ``config.ExperimentConfig`` keys, for ``pipeline.run_sr_mode``."""
+        return {
+            "enable_super_resolution": self.enabled,
+            "sr_backend": self.backend,
+            "sr_modes": SR_COMPARISON_MODES,
+            "sr_tile_size": 0 if self.tile_size == "auto" else int(self.tile_size),
+            "sr_tile_overlap": self.tile_overlap,
+            "sr_strength": float(self.strength),
+            "preserve_source_structure": self.preserve_source_structure,
+            "sr_device": self.device,
+            "sr_precision": self.precision,
+            "sr_weights_dir": self.weights_dir,
+        }
 
 
 @dataclass(frozen=True)
@@ -623,6 +697,13 @@ class NightConfig:
     )
     night: NightParams = field(default_factory=NightParams)
 
+    def __post_init__(self) -> None:
+        # The super_resolution section is the one place the SR backend is set; the shared experiment keys
+        # follow it so that the manifest and pipeline.run_sr_mode see the same values.
+        settings = self.night.super_resolution.experiment_settings()
+        if any(getattr(self.experiment, key) != value for key, value in settings.items()):
+            object.__setattr__(self, "experiment", self.experiment.replace(**settings))
+
     def to_dict(self) -> dict:
         return {**self.experiment.to_dict(), **self.night.to_dict()}
 
@@ -649,7 +730,7 @@ class UpscaleResult:
     label: str
     provenance: str
     classification: str
-    stand_in_for: str | None = None
+    details: dict = field(default_factory=dict)
 
     def describe(self) -> dict:
         return {
@@ -657,16 +738,12 @@ class UpscaleResult:
             "label": self.label,
             "provenance": self.provenance,
             "classification": self.classification,
-            "stand_in_for": self.stand_in_for,
+            **self.details,
         }
 
 
 class Upscaler(Protocol):
-    """Anything that resizes a linear float32 (H, W, 3) image to (height, width, 3).
-
-    A Phase 2 SR backend plugs in by implementing this call and returning
-    ``provenance=SYNTHESIZED`` and ``classification=INFERENCE``.
-    """
+    """Anything that resizes a linear float32 (H, W, 3) image to (height, width, 3)."""
 
     name: str
 
@@ -675,31 +752,58 @@ class Upscaler(Protocol):
 
 @dataclass(frozen=True)
 class BaselineUpscaler:
-    """A classical baseline from :mod:`baselines`, optionally standing in for an SR slot."""
+    """A classical baseline from :mod:`baselines`; ``note`` says why it is used, e.g. that SR is disabled."""
 
     name: str
     method: str = "lanczos"
-    stand_in_for: str | None = None
+    note: str = ""
 
     def __call__(self, linear: np.ndarray, width: int, height: int) -> UpscaleResult:
         image = baselines.resample(linear, width, height, self.method)
-        if self.stand_in_for:
-            label = f"{self.method.capitalize()} stand-in for {self.stand_in_for} (Phase 2 SR backend not merged)"
-        else:
-            label = f"{self.method.capitalize()} baseline"
-        return UpscaleResult(
-            image, baselines.METHODS[self.method].description, label, ESTIMATED, SPATIAL, self.stand_in_for
-        )
+        label = f"{self.method.capitalize()} baseline" + (f" ({self.note})" if self.note else "")
+        details = {"note": self.note} if self.note else {}
+        return UpscaleResult(image, baselines.METHODS[self.method].description, label, ESTIMATED, SPATIAL, details)
 
 
-def sr_slot(mode: str) -> Upscaler:
-    """The upscaler filling the PRD 19.3 SR comparison slot for ``mode``.
+# run(mode, linear, width, height) -> (image, Phase 2 mode summary); see PretrainedUpscaler.
+SRRunner = Callable[[str, np.ndarray, int, int], tuple[np.ndarray, dict]]
 
-    Phase 2's SR backend is not merged, so both slots are Lanczos stand-ins.
+
+@dataclass(frozen=True)
+class PretrainedUpscaler:
+    """One PRD 10.2 mode of the Phase 2 pretrained-SR backend, filling a PRD 19.3 SR slot.
+
+    ``run`` is Phase 2's per-mode path (``pipeline.run_sr_mode`` bound to the run's stage log): the
+    preset's network at its native x4, Lanczos-3 to the target, the preset's source projection, the
+    seam check and the difference map. The result is inferred detail (PRD 5.2 Inference).
     """
-    if mode not in ("conservative", "balanced"):
-        raise ValueError(f"unknown SR mode {mode!r}")
-    return BaselineUpscaler(f"{mode}_sr", "lanczos", f"{mode.capitalize()} SR")
+
+    name: str
+    mode: str
+    run: SRRunner
+
+    def __call__(self, linear: np.ndarray, width: int, height: int) -> UpscaleResult:
+        if self.mode not in SR_COMPARISON_MODES:
+            raise ValueError(f"unknown SR mode {self.mode!r}")
+        image, summary = self.run(self.mode, linear, width, height)
+        weights = sr_models.WEIGHTS[summary["weights"]]
+        preset = sr.PRESETS[self.mode]
+        details = {
+            "mode": self.mode,
+            "weights": weights.name,
+            "weights_sha256": weights.sha256,
+            "license": weights.license,
+            "strength": summary["strength"],
+            "consistency_strength": summary["consistency_strength"],
+        }
+        return UpscaleResult(
+            image,
+            f"{preset.label}: {weights.name} ({weights.architecture}), x4 then Lanczos-3",
+            f"{preset.label} SR, {weights.name} (inferred, synthesised detail)",
+            SYNTHESIZED,
+            INFERENCE,
+            details,
+        )
 
 
 # --------------------------------------------------------------------------- region segmentation

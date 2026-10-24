@@ -12,11 +12,17 @@ target_megapixels: 50.0
 baselines: [lanczos, bicubic]    # PRD 19.3 bicubic/Lanczos comparisons
 random_seed: 42                  # seeds the simulated dither, grain and bloom
 
-super_resolution:
-  enabled: true
-  mode: balanced                 # conservative | balanced; both are Lanczos stand-ins until the Phase 2 SR backend lands
-  tile_size: auto                # auto | 64 to 8192 (recorded for the Phase 2 backend)
-  tile_overlap: 64
+super_resolution:                # Phase 2 pretrained-SR backend (PRD 10; weights and licences in docs/models.md)
+  enabled: true                  # false: no SR comparisons, night input is the Lanczos baseline (no SR applied)
+  mode: balanced                 # night input: conservative (fidelity network) | balanced (perceptual network)
+  backend: swinir                # swinir | realesrgan
+  tile_size: auto                # auto (memory-aware) | 64 to 2048 source pixels
+  tile_overlap: 64               # 64 to 512, at most half the tile size
+  strength: 1.0                  # 0 to 1; share of the network output against Lanczos
+  preserve_source_structure: true  # each mode's low-frequency source-consistency correction
+  device: auto                   # auto | cuda | mps | cpu
+  precision: auto                # auto | float32 | float16
+  weights_dir: ""                # empty: <project>/weights; point at Drive to reuse downloads
 
 shadows:
   lift_strength: low             # [19.2 shadow lift] none | low | medium | high | 0 to 1

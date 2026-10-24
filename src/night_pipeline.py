@@ -8,11 +8,14 @@ resolution, exporters) and adds the Layer 5B night processing of
 2. Segment the PRD 8.3 luminance regions on the source, apply manual
    overrides and write the region-mask figure.
 3. Build every PRD 19.3 comparison image one at a time (bicubic and Lanczos
-   baselines, then the conservative and balanced SR slots, which are Lanczos
-   stand-ins until the Phase 2 SR backend lands), measure the PRD 23.5 night
+   baselines, then the conservative and balanced SR slots, which run the
+   Phase 2 pretrained-SR backend through ``pipeline.run_sr_mode``: one network
+   loaded at a time and released after its slot), measure the PRD 23.5 night
    metrics and source consistency on each, keep the crops and release it.
-4. Upscale with the configured SR slot and apply Layer 5B in place, so a
-   50 MP run holds one full-size float buffer.
+   The slot that feeds Layer 5B (the configured SR mode, or Lanczos when SR is
+   disabled or cannot enlarge) runs last and is kept, so no mode runs twice.
+4. Apply Layer 5B in place on that kept image, so a 50 MP run holds one
+   full-size float buffer.
 5. Export the final master as 16-bit TIFF and OpenEXR (half by default),
    validate both, and write the crop panels, banding diagnostics, halo
    comparisons, failure-rule fallback map, manifest and report.
@@ -35,13 +38,24 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from . import __version__, baselines, comparison, environment, exporters, ingestion, quality_metrics, report_builder
+from . import (
+    __version__,
+    baselines,
+    comparison,
+    environment,
+    exporters,
+    ingestion,
+    quality_metrics,
+    report_builder,
+)
 from . import color_management as cm
 from . import night_processing as night
 from .pipeline import (
     MEASUREMENT,
     PACKAGING,
     PRESERVATION,
+    SEEDS_SR,
+    SETUP,
     StageError,
     StageRecord,
     _exr_attributes,
@@ -49,15 +63,36 @@ from .pipeline import (
     _stem,
     _without_histograms,
     make_run_id,
+    release_sr_models,
     resolve_roots,
+    run_sr_mode,
+    sr_run_record,
+    sr_setup,
 )
-from .report_builder import _bytes, _dims, _num, _short_params, _table, _validation_rows, _version
+from .report_builder import (
+    _bytes,
+    _dims,
+    _models_text,
+    _num,
+    _short_params,
+    _sr_section,
+    _table,
+    _validation_rows,
+    _version,
+)
 from .resolution import compute_target_resolution
 
 SCHEMA = "synthetic_raw_lab.phase3_night.manifest/1"
 NOTICE = (
     "Synthetic camera-grade night master reconstructed from an AI-generated source by classical interpolation "
     "and night-specific tone, colour and noise processing. It is not a camera capture or camera RAW file: "
+    "shadow lift redistributes existing tones, the highlight shoulder rolls off clipped values without "
+    "recovering radiance, and dither, grain and bloom are simulated."
+)
+NOTICE_SR = (
+    "Synthetic camera-grade night master reconstructed from an AI-generated source by pretrained "
+    "super-resolution and night-specific tone, colour and noise processing. Detail above the source sampling "
+    "limit was synthesised by a learned model, not recovered. It is not a camera capture or camera RAW file: "
     "shadow lift redistributes existing tones, the highlight shoulder rolls off clipped values without "
     "recovering radiance, and dither, grain and bloom are simulated."
 )
@@ -71,11 +106,7 @@ CROP_CATEGORIES = {
     "reflection": ("specular_reflection",),
     "gradient": ("sky_atmosphere", "smooth_gradient"),
 }
-_PANEL_LABELS = {
-    "conservative_sr": "Lanczos as cons. SR",
-    "balanced_sr": "Lanczos as bal. SR",
-    FINAL: "final night",
-}
+_PANEL_LABELS = {FINAL: "final night"}
 # Crops whose panel adds a display-gain row (stops of linear gain): near-black tones are unreadable at 100%.
 DISPLAY_GAIN_EV = {"shadow": 3.0}
 _GUTTER = 8
@@ -101,24 +132,49 @@ class Slot:
     key: str
     upscaler: night.Upscaler
 
-    @property
-    def panel_label(self) -> str:
-        return _PANEL_LABELS.get(self.key, self.key)
+    def panel_label(self, backend: str = "") -> str:
+        return _label(self.key, backend)
 
 
-def comparison_slots(config: night.NightConfig) -> list[Slot]:
-    """The bicubic/Lanczos baselines and the conservative and balanced SR slots, in report order."""
+def comparison_slots(config: night.NightConfig, sr_runner: night.SRRunner | None = None) -> list[Slot]:
+    """The bicubic/Lanczos baselines and, given the Phase 2 runner, the conservative and balanced SR slots.
+
+    Report order; without a runner (SR disabled or skipped) there are no SR slots.
+    """
     slots = [Slot(m, night.BaselineUpscaler(m, m)) for m in config.experiment.baselines]
-    slots += [Slot(f"{mode}_sr", night.sr_slot(mode)) for mode in ("conservative", "balanced")]
+    if sr_runner is not None:
+        slots += [
+            Slot(f"{mode}_sr", night.PretrainedUpscaler(f"{mode}_sr", mode, sr_runner))
+            for mode in night.SR_COMPARISON_MODES
+        ]
     return slots
 
 
-def night_input(config: night.NightConfig) -> tuple[str, night.Upscaler]:
-    """The slot whose output Layer 5B processes: the configured SR mode, or Lanczos when SR is disabled."""
+def night_input(config: night.NightConfig, sr_skipped: str = "") -> tuple[str, str]:
+    """Key of the slot whose output Layer 5B processes, and why it is not SR (empty when it is).
+
+    The configured SR mode; the Lanczos baseline when super-resolution is disabled or ``sr_skipped``
+    gives the reason it cannot run.
+    """
     sr = config.night.super_resolution
-    if sr.enabled:
-        return f"{sr.mode}_sr", night.sr_slot(sr.mode)
-    return "lanczos", night.BaselineUpscaler("lanczos", "lanczos")
+    if not sr.enabled:
+        return "lanczos", "super-resolution disabled, no SR applied"
+    if sr_skipped:
+        return "lanczos", f"super-resolution skipped, no SR applied: {sr_skipped}"
+    return f"{sr.mode}_sr", ""
+
+
+def execution_order(slots: list[Slot], input_key: str, input_note: str = "") -> list[Slot]:
+    """Slots in the order they run: the night input last, so its image is kept for Layer 5B and never rebuilt.
+
+    The input slot is added (as a Lanczos baseline carrying ``input_note``) when it is not a comparison slot.
+    """
+    by_key = {slot.key: slot for slot in slots}
+    if input_key in by_key and not input_note:
+        last = by_key[input_key]
+    else:
+        last = Slot(input_key, night.BaselineUpscaler(input_key, input_key, input_note))
+    return [slot for slot in slots if slot.key != input_key] + [last]
 
 
 def select_night_crops(
@@ -341,18 +397,38 @@ def run_night(
                 source_encoded16, figures_dir / "source_preview.jpg", experiment.review_max_edge
             )
 
-        input_key, input_upscaler = night_input(config)
-        for slot in comparison_slots(config):
-            summary = manifest["comparisons"][slot.key] = {}
+        sr_runner = None
+        if params.super_resolution.enabled:
+            sr_record = manifest["super_resolution"] = sr_run_record(experiment, target)
+            if "skipped" in sr_record:
+                log(f"super-resolution skipped: {sr_record['skipped']}")
+            else:
+                sr_runner = _sr_runner(experiment, target, project_root, manifest, figures_dir, stage, log)
+        else:
+            manifest["super_resolution"] = {"enabled": False, "modes": {}}
+        input_key, input_note = night_input(config, manifest["super_resolution"].get("skipped", ""))
+        slots = comparison_slots(config, sr_runner)
+        for slot in slots:  # report order, whatever order the slots run in
+            manifest["comparisons"][slot.key] = {}
+        for slot in execution_order(slots, input_key, input_note):
+            summary = manifest["comparisons"].setdefault(slot.key, {})
+            learned = isinstance(slot.upscaler, night.PretrainedUpscaler)
+            if learned:  # Phase 2 logs its own load, inference, projection and measurement stages
+                upscaled = slot.upscaler(source.linear, *size)
             with stage(
                 StageRecord(
                     f"compare_{slot.key}", MEASUREMENT, {"size": f"{size[0]}x{size[1]}"}, "float32 linear", "metrics"
                 )
             ):
-                upscaled = slot.upscaler(source.linear, *size)
+                if not learned:
+                    upscaled = slot.upscaler(source.linear, *size)
                 summary.update(upscaled.describe())
-                summary["working_pixel_sha256"] = ingestion.pixel_sha256(upscaled.image)
-                summary["statistics"] = quality_metrics.image_statistics(upscaled.image)
+                # Phase 2 already measured the SR images; baselines are measured here.
+                measured = manifest["super_resolution"]["modes"][slot.upscaler.mode] if learned else {}
+                summary["working_pixel_sha256"] = measured.get("working_pixel_sha256") or ingestion.pixel_sha256(
+                    upscaled.image
+                )
+                summary["statistics"] = measured.get("statistics") or quality_metrics.image_statistics(upscaled.image)
                 summary["night_metrics"] = night.night_metrics(upscaled.image, regions, source.linear)
                 _measure(summary, slot.key, upscaled.image, source, boxes, tiles, profiles)
                 if experiment.export_review and slot.key == "lanczos":
@@ -361,21 +437,11 @@ def run_night(
                         encoded, figures_dir / "lanczos_preview.jpg", experiment.review_max_edge
                     )
                     del encoded
-                del upscaled
             log(f"{slot.key}: {summary['label']}")
-            gc.collect()
-
-        with stage(
-            StageRecord(
-                f"upscale_{input_key}",
-                night.SPATIAL,
-                {"slot": input_key, "width": size[0], "height": size[1]},
-                "float32 linear",
-                "float32 linear",
-            )
-        ):
-            upscaled = input_upscaler(source.linear, *size)
-            image = upscaled.image
+            if slot.key != input_key:
+                del upscaled
+                gc.collect()
+        image = upscaled.image  # the night input, built once in the comparison pass
 
         with stage(
             StageRecord("night_processing", NIGHT_PROCESSING, params.to_dict(), "float32 linear", "float32 linear")
@@ -409,6 +475,9 @@ def run_night(
         final["working_pixel_sha256"] = ingestion.pixel_sha256(image)
         final["statistics"] = quality_metrics.image_statistics(image)
         provenance = _provenance(run_id, source, size, manifest["night"])
+        if manifest["night"]["input"]["provenance"] == night.SYNTHESIZED:
+            manifest["notice"] = NOTICE_SR
+            manifest["random_seeds"]["used_by"] = f"{manifest['random_seeds']['used_by']}; {SEEDS_SR}"
         label = f"{target.width}x{target.height}"
         if experiment.export_exr:
             with stage(
@@ -482,16 +551,19 @@ def run_night(
             StageRecord("night_comparisons", MEASUREMENT, {"crops": len(crops)}, "uint16 sRGB", "review PNG figures")
         ):
             slot_order = [*manifest["comparisons"], FINAL]
+            backend = _backend(manifest)
             panels = []
             for crop in crops:
                 source_tile = cm.srgb_uint16_to_uint8(
                     source_encoded16[crop.y : crop.y + crop.height, crop.x : crop.x + crop.width]
                 )
-                labelled = {_label(k): tiles[crop.name][k] for k in slot_order if k in tiles[crop.name]}
+                labelled = {_label(k, backend): tiles[crop.name][k] for k in slot_order if k in tiles[crop.name]}
                 gain = DISPLAY_GAIN_EV.get(crop.name)
                 path = exporters.write_review_image(
                     figures_dir / f"crop_{crop.name}.png",
-                    crop_panel(source_tile, labelled, (_label(input_key), _label(FINAL)), display_gain_ev=gain),
+                    crop_panel(
+                        source_tile, labelled, (_label(input_key, backend), _label(FINAL)), display_gain_ev=gain
+                    ),
                 )
                 panels.append({"crop": crop.name, "path": str(path), "box": list(boxes[crop.name])})
                 if gain:
@@ -499,10 +571,12 @@ def run_night(
             manifest["crop_panels"] = panels
             if "gradient" in boxes:
                 manifest["figures"]["banding"] = str(
-                    banding_figure(profiles, input_key, figures_dir / "banding_diagnostics.png")
+                    banding_figure(profiles, input_key, figures_dir / "banding_diagnostics.png", backend)
                 )
             if "highlight" in boxes:
-                manifest["figures"]["halo"] = str(halo_figure(profiles, slot_order, figures_dir / "halo_profile.png"))
+                manifest["figures"]["halo"] = str(
+                    halo_figure(profiles, slot_order, figures_dir / "halo_profile.png", backend)
+                )
 
         manifest["status"] = "complete"
     except StageError as error:
@@ -523,8 +597,41 @@ def run_night(
     )
 
 
-def _label(key: str) -> str:
+def _sr_runner(experiment, target, project_root: Path, manifest: dict, figures_dir: Path, stage, log) -> night.SRRunner:
+    """Phase 2's per-mode SR path bound to this run: one network loaded at a time, released after its slot.
+
+    Fails the ``super_resolution_setup`` stage with Phase 2's install hint when PyTorch or spandrel is missing.
+    """
+    with stage(StageRecord("super_resolution_setup", SETUP, {"backend": experiment.sr_backend}, "-", "-")):
+        weights_dir = sr_setup(experiment, project_root)
+    loaded: dict = {}
+
+    def run(mode: str, linear: np.ndarray, width: int, height: int) -> tuple[np.ndarray, dict]:
+        if (width, height) != (target.width, target.height):
+            raise ValueError(f"SR slots render the run target {target.width}x{target.height}, not {width}x{height}")
+        try:
+            image = run_sr_mode(
+                mode, linear, target, experiment, weights_dir, loaded, manifest, figures_dir, stage, log
+            )
+        finally:
+            release_sr_models(loaded, experiment, ())
+            gc.collect()
+        return image, manifest["super_resolution"]["modes"][mode]
+
+    return run
+
+
+def _label(key: str, backend: str = "") -> str:
+    """Short label of a slot for panels, figures and tables; SR slots name their mode and backend."""
+    if key.endswith("_sr"):
+        return f"{key.removesuffix('_sr')} SR" + (f" ({backend})" if backend else "")
     return _PANEL_LABELS.get(key, key)
+
+
+def _backend(manifest: dict) -> str:
+    """The SR backend when SR slots ran in this run, else empty."""
+    record = manifest.get("super_resolution", {})
+    return record.get("backend", "") if record.get("modes") else ""
 
 
 def _measure(summary: dict, key, image, source, boxes, tiles, profiles, *, measure_consistency: bool = True) -> None:
@@ -771,7 +878,7 @@ def region_figure(regions: night.RegionMap, source_linear: np.ndarray, path: Pat
     return path
 
 
-def banding_figure(profiles: _ProfileLines, input_key: str, path: Path) -> Path:
+def banding_figure(profiles: _ProfileLines, input_key: str, path: Path, backend: str = "") -> Path:
     """Gradient and banding diagnostics: banding maps before and after Layer 5B, and a luma profile."""
     import matplotlib
 
@@ -789,11 +896,13 @@ def banding_figure(profiles: _ProfileLines, input_key: str, path: Path) -> Path:
     for ax, key in zip(axes[:2], (input_key, FINAL), strict=True):
         canvas, share = overlay(profiles.banding[key])
         ax.imshow(canvas, interpolation="nearest")
-        ax.set_title(f"{_label(key)}: flat share of ramp pixels {share:.2f}", fontsize=10)
+        ax.set_title(f"{_label(key, backend)}: flat share of ramp pixels {share:.2f}", fontsize=10)
         ax.axis("off")
     lines = profiles.lines["gradient"]
     for key, style in (("source", "steps-mid"), (input_key, "default"), (FINAL, "default")):
-        axes[2].plot(lines[key], drawstyle=style, linewidth=1.2, label=_label(key) if key != "source" else "source")
+        axes[2].plot(
+            lines[key], drawstyle=style, linewidth=1.2, label=_label(key, backend) if key != "source" else "source"
+        )
     axes[2].set_title("Luma along the crop's centre column", fontsize=10)
     axes[2].set_xlabel("output row in crop")
     axes[2].set_ylabel("8-bit code value")
@@ -805,7 +914,7 @@ def banding_figure(profiles: _ProfileLines, input_key: str, path: Path) -> Path:
     return path
 
 
-def halo_figure(profiles: _ProfileLines, keys: list[str], path: Path) -> Path:
+def halo_figure(profiles: _ProfileLines, keys: list[str], path: Path, backend: str = "") -> Path:
     """Light-source halo comparison: luma through the widest clipped light for the source, every slot and the result."""
     import matplotlib
 
@@ -821,9 +930,9 @@ def halo_figure(profiles: _ProfileLines, keys: list[str], path: Path) -> Path:
     ax.plot(lines["source_adjacent"], drawstyle="steps-mid", color="0.6", linestyle=":", linewidth=1.2, label=adjacent)
     for key in keys:
         if key in lines:
-            # The SR stand-ins equal the Lanczos baseline; dashes keep the overlapping lines visible.
+            # Dashed SR curves stay visible where they overlap the baselines.
             style = "--" if key.endswith("_sr") else "-"
-            ax.plot(lines[key], style, linewidth=1.8 if key == FINAL else 1.0, label=_label(key))
+            ax.plot(lines[key], style, linewidth=1.8 if key == FINAL else 1.0, label=_label(key, backend))
     ax.set_title("Light-source halo comparison: luma through the widest clipped light (undershoot = dark halo)")
     ax.set_xlabel(
         f"output column in the highlight crop (output row {rows['output_row']} = source y {rows['source_y']:.2f}; "
@@ -838,8 +947,11 @@ def halo_figure(profiles: _ProfileLines, keys: list[str], path: Path) -> Path:
 
 
 def _provenance(run_id: str, source, size: tuple[int, int], night_record: dict) -> dict:
+    upscale = night_record["input"]
+    sr_input = upscale["provenance"] == night.SYNTHESIZED
+    model = {"model_weights_sha256": upscale["weights_sha256"], "model_license": upscale["license"]} if sr_input else {}
     return {
-        "notice": NOTICE,
+        "notice": NOTICE_SR if sr_input else NOTICE,
         "run_id": run_id,
         "source_name": source.original_path.name,
         "source_sha256": source.sha256,
@@ -849,6 +961,7 @@ def _provenance(run_id: str, source, size: tuple[int, int], night_record: dict) 
         "stage_provenance": {s["name"]: s["provenance"] for s in night_record["stages"] if s["enabled"]},
         "information": night_record["information"],
         "failure_rule_fallbacks": len(night_record["fallbacks"]),
+        **model,
         "package_version": __version__,
     }
 
@@ -899,7 +1012,8 @@ METRIC_ROWS = (
 def metrics_table(manifest: dict) -> tuple[list[str], list[tuple]]:
     """Header and rows of the before/after PRD 23.5 table: source, every comparison slot, the final result."""
     columns = [("source", manifest.get("source_night_metrics"))]
-    columns += [(_label(k), s.get("night_metrics")) for k, s in manifest.get("comparisons", {}).items()]
+    backend = _backend(manifest)
+    columns += [(_label(k, backend), s.get("night_metrics")) for k, s in manifest.get("comparisons", {}).items()]
     record = manifest.get("night")
     if record:
         columns += [
@@ -944,7 +1058,7 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
                 ),
                 ("Pipeline version", _version(manifest)),
                 ("Notebook version", manifest.get("notebook_version") or "- (run outside a notebook)"),
-                ("Models", "none (the SR slots are Lanczos stand-ins until the Phase 2 SR backend lands)"),
+                ("Models", _models_text(manifest)),
                 ("GPU", f"{gpu['name']} ({gpu['memory_total_gb']} GB)" if gpu else "none detected (CPU only)"),
                 ("Platform", f"{runtime.get('platform', '-')}, Python {runtime.get('python', '-')}"),
                 ("Total runtime", f"{manifest.get('total_seconds', 0):.1f} s"),
@@ -960,10 +1074,7 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
         "radiance. Night processing redistributes and filters existing values; it recovers no shadow "
         "measurements and no clipped highlight radiance."
     )
-    add(
-        "- The conservative and balanced SR slots are **Lanczos stand-ins** (the Phase 2 SR backend is not "
-        "merged), so they add no learned detail and give identical images."
-    )
+    add(_sr_limitation(manifest.get("super_resolution", {})))
     add("- Dither, grain and bloom are simulated effects, not recovered low-light sensor measurements.")
     add("- 16-bit and floating-point encodings add numerical precision, not dynamic range or detail.\n")
 
@@ -1079,7 +1190,10 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
         add(
             _table(
                 ["Panel label", "Image", "Provenance"],
-                [(_label(k), s.get("label", "-"), s.get("provenance", "-")) for k, s in slots.items()]
+                [
+                    (_label(k, _backend(manifest)), s.get("label", "-"), s.get("provenance", "-"))
+                    for k, s in slots.items()
+                ]
                 + ([(_label(FINAL), "Layer 5B night processing of the night input", "see section 6")] if final else []),
             )
         )
@@ -1100,6 +1214,17 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
             "Difference map, night master reduced to source resolution vs source:\n\n"
             "![delta E](figures/delta_e_night.png)\n"
         )
+
+    sr_record = manifest.get("super_resolution", {})
+    if sr_record.get("modes") or sr_record.get("skipped"):
+        # Phase 2's own section: weights, device, tiling, seam check, projection and difference to Lanczos.
+        add(_sr_section(sr_record).replace("## 8b.", "## 7b.", 1))
+        for mode in sr_record.get("modes", {}):
+            if (figures / f"sr_difference_{mode}.png").exists():
+                add(
+                    f"|{mode} SR - Lanczos| (synthesised detail and drift):\n\n"
+                    f"![{mode} SR difference](figures/sr_difference_{mode}.png)\n"
+                )
 
     add("## 8. Quantitative results (PRD 23.5, 27.4)\n")
     header, rows = metrics_table(manifest)
@@ -1142,7 +1267,7 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
         add("Source consistency (reduced to source size; night processing changes tone by design):\n")
         add(
             _table(
-                ["Metric", *(_label(k) for k, _ in consistency)],
+                ["Metric", *(_label(k, _backend(manifest)) for k, _ in consistency)],
                 [
                     ("PSNR (dB)", *(_num(m["psnr_db"], 2) for _, m in consistency)),
                     ("SSIM", *(_num(m["ssim"], 5) for _, m in consistency)),
@@ -1195,7 +1320,7 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
                 ("Source SHA-256", f"`{source.get('sha256', '-')}`"),
                 ("Decoded pixel SHA-256", f"`{source.get('pixel_sha256', '-')}`"),
                 ("Package", _version(manifest)),
-                ("Models and weight hashes", "none"),
+                ("Models and weight hashes", _models_text(manifest, hashes=True)),
                 ("Random seeds", json.dumps(manifest.get("random_seeds", {}))),
             ],
         )
@@ -1205,6 +1330,33 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
     add("Configuration:\n")
     add("```json\n" + json.dumps(manifest.get("config", {}), indent=2) + "\n```\n")
     return "\n".join(out)
+
+
+def _sr_limitation(sr_record: dict) -> str:
+    if sr_record.get("modes"):
+        return (
+            "- The conservative and balanced SR slots run the Phase 2 pretrained networks (backend "
+            f"`{sr_record['backend']}`). They predict detail above the source sampling limit from priors learned on "
+            "other photographs; that detail is synthesised, not recovered, and may be wrong even when it looks "
+            "plausible (PRD 10.5)."
+        )
+    reason = sr_record.get("skipped") or "super_resolution.enabled is false"
+    return f"- No super-resolution ran ({reason}): every upscale is classical interpolation and adds no learned detail."
+
+
+def _sr_conclusion(manifest: dict) -> str:
+    sr_record = manifest.get("super_resolution", {})
+    modes = sr_record.get("modes", {})
+    night_input = (manifest.get("night") or {}).get("input", {})
+    if not modes:
+        reason = sr_record.get("skipped") or "super_resolution.enabled is false"
+        return f"No SR comparison ran ({reason}); the night input is the Lanczos baseline."
+    seams = [f"{m} {'passed' if s['seams']['passed'] else 'FAILED'}" for m, s in modes.items() if "seams" in s]
+    text = f"SR comparisons ran with the {sr_record['backend']} backend ({', '.join(modes)})"
+    text += f"; seam checks: {', '.join(seams)}" if seams else ""
+    if night_input.get("mode"):
+        text += f"; the night input is the {night_input['mode']} SR result, built once and reused"
+    return text + "."
 
 
 _ADVICE = {
@@ -1272,10 +1424,7 @@ def night_conclusions(manifest: dict) -> list[str]:
             "Night metric criteria (banding, halos, clipping, shadow chroma noise and black crush not increased): "
             + ("met." if not worse else "not met.")
         )
-    lines.append(
-        "The conservative and balanced SR comparisons are Lanczos stand-ins; rerun once the Phase 2 SR backend "
-        "is merged to compare learned SR."
-    )
+    lines.append(_sr_conclusion(manifest))
     lines.append(
         "Visual acceptance (halos, banding, invented texture, light colour) needs human review of the crop "
         "panels at 100% and 200%."

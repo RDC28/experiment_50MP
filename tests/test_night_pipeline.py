@@ -1,37 +1,78 @@
-"""Phase 3 night run (night_pipeline) end to end on a small synthetic night scene."""
+"""Phase 3 night run (night_pipeline) end to end on a small synthetic night scene.
+
+The SR slots run Phase 2's real per-mode path with ``sr_models.load_model`` replaced by the small numpy
+``FakeNetwork`` of ``test_pipeline_sr.py``, so these tests need neither PyTorch nor weights.
+"""
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from test_pipeline_sr import FakeNetwork
 
-from synthetic_raw_lab import baselines, night_pipeline, pipeline
+from synthetic_raw_lab import baselines, night_pipeline, pipeline, sr_models
 from synthetic_raw_lab import color_management as cm
 from synthetic_raw_lab import night_processing as night
+from synthetic_raw_lab import super_resolution as sr
 
 ROOT = Path(__file__).resolve().parents[1]
 SMALL = {"runtime_preset": "quick", "quick_target_megapixels": 0.25, "crop_size": 40, "review_max_edge": 256}
+# Automatic tile sizing asks PyTorch for device memory, so the tests fix the tile size.
+SMALL_SR = {"tile_size": 128}
+FIDELITY, PERCEPTUAL = "swinir_m_x4_classical", "swinir_m_x4_realsr_gan"
 
 
 def small_config(**overrides) -> night.NightConfig:
-    return night.load_night_config(ROOT / "configs" / "night_default.yaml", **{**SMALL, **overrides})
+    sr_settings = {**SMALL_SR, **overrides.pop("super_resolution", {})}
+    return night.load_night_config(
+        ROOT / "configs" / "night_default.yaml", **{**SMALL, **overrides}, super_resolution=sr_settings
+    )
+
+
+@contextmanager
+def fake_backend(available: bool = True):
+    """Phase 2 with FakeNetwork in place of the pretrained networks; records loads and inference passes."""
+    calls = SimpleNamespace(loads=[], inferences=[], releases=[])
+    real_super_resolve = sr.super_resolve
+
+    class Network(FakeNetwork):
+        def release_cache(self):
+            calls.releases.append(self.name)
+
+    def load_model(name, weights_dir, **kwargs):
+        calls.loads.append({"name": name, "weights_dir": Path(weights_dir), **kwargs})
+        return Network(name)
+
+    def super_resolve(source_linear, width, height, model, **kwargs):
+        calls.inferences.append(model.name)
+        return real_super_resolve(source_linear, width, height, model, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sr_models, "load_model", load_model)
+        patch.setattr(sr_models, "available", lambda: available)
+        patch.setattr(sr, "super_resolve", super_resolve)
+        yield calls
+
+
+def run_small(project: Path, config: night.NightConfig, size=(192, 108), **kwargs):
+    source = night.write_night_scene(project / "staging" / "night_scene.png", *size)
+    return night_pipeline.run_night(source, config, project, log=lambda _: None, **kwargs)
 
 
 @pytest.fixture(scope="module")
 def run(tmp_path_factory):
     project = tmp_path_factory.mktemp("night_project")
-    source = night.write_night_scene(project / "staging" / "night_scene.png", 192, 108)
     overrides = [{"region": "sky_atmosphere", "boxes": [[0, 0, 16, 4]], "note": "test override"}]
-    result = night_pipeline.run_night(
-        source, small_config(), project, region_overrides=overrides, notebook_version="test", log=lambda _: None
-    )
-    return project, result
+    with fake_backend() as calls:
+        result = run_small(project, small_config(), region_overrides=overrides, notebook_version="test")
+    return project, result, calls
 
 
 def test_run_completes_with_validated_night_masters(run):
-    project, result = run
+    project, result, _ = run
     manifest = result.manifest
     assert manifest["status"] == "complete"
     assert manifest["schema"] == night_pipeline.SCHEMA
@@ -52,21 +93,114 @@ def test_run_completes_with_validated_night_masters(run):
     assert all(stage["error"] is None for stage in manifest["stages"])
 
 
-def test_comparison_slots_are_labelled_lanczos_stand_ins(run):
-    _, result = run
-    slots = result.manifest["comparisons"]
+def test_sr_slots_run_the_phase_2_backend_with_their_presets(run):
+    project, result, calls = run
+    manifest = result.manifest
+    slots = manifest["comparisons"]
     assert list(slots) == ["lanczos", "bicubic", "conservative_sr", "balanced_sr"]
+    # One network loaded at a time, each released after its slot; each mode inferred exactly once.
+    assert [c["name"] for c in calls.loads] == [FIDELITY, PERCEPTUAL]
+    assert calls.inferences == [FIDELITY, PERCEPTUAL] and calls.releases == [FIDELITY, PERCEPTUAL]
+    assert {c["device"] for c in calls.loads} == {"auto"} and {c["precision"] for c in calls.loads} == {"auto"}
+    assert {c["seed"] for c in calls.loads} == {42} and calls.loads[0]["weights_dir"] == project / "weights"
+    record = manifest["super_resolution"]
+    assert record["backend"] == "swinir" and list(record["modes"]) == ["conservative", "balanced"]
+    for mode, weights in (("conservative", FIDELITY), ("balanced", PERCEPTUAL)):
+        slot, summary = slots[f"{mode}_sr"], record["modes"][mode]
+        assert summary["preset"] == sr.PRESETS[mode].to_dict() and summary["weights"] == weights
+        assert summary["consistency_strength"] == sr.PRESETS[mode].consistency_strength
+        assert summary["source_projection"]["strength"] == 1.0
+        assert summary["tiling"]["tile_size"] == 128 and summary["tiling"]["tile_overlap"] == 64
+        assert "passed" in summary["seams"] and summary["interpolation_difference"]["mean"] > 0
+        assert summary["model"]["weights"]["sha256"] == sr_models.WEIGHTS[weights].sha256
+        assert slot["label"] == f"{sr.PRESETS[mode].label} SR, {weights} (inferred, synthesised detail)"
+        assert slot["provenance"] == night.SYNTHESIZED and slot["classification"] == night.INFERENCE
+        assert (slot["mode"], slot["weights"], slot["license"]) == (mode, weights, sr_models.WEIGHTS[weights].license)
+        assert slot["working_pixel_sha256"] == summary["working_pixel_sha256"]
+        assert slot["working_pixel_sha256"] != slots["lanczos"]["working_pixel_sha256"]
+        assert (result.reports_dir / "figures" / f"sr_difference_{mode}.png").exists()
+    assert slots["conservative_sr"]["working_pixel_sha256"] != slots["balanced_sr"]["working_pixel_sha256"]
+    assert [m["weights"]["name"] for m in manifest["models"]] == [FIDELITY, PERCEPTUAL]
+    stages = [s["name"] for s in manifest["stages"]]
     for mode in ("conservative", "balanced"):
-        slot = slots[f"{mode}_sr"]
-        assert slot["label"] == f"Lanczos stand-in for {mode.capitalize()} SR (Phase 2 SR backend not merged)"
-        assert slot["stand_in_for"] == f"{mode.capitalize()} SR"
-        assert slot["working_pixel_sha256"] == slots["lanczos"]["working_pixel_sha256"]
-    assert slots["bicubic"]["working_pixel_sha256"] != slots["lanczos"]["working_pixel_sha256"]
-    assert result.manifest["night"]["input"]["slot"] == "balanced_sr"
+        assert stages.count(f"super_resolution_{mode}") == 1
+        assert {f"source_projection_{mode}", f"seam_check_{mode}", f"interpolation_difference_{mode}"} <= set(stages)
+    assert stages.index("super_resolution_setup") < stages.index("load_model_swinir_m_x4_classical")
+    assert not any(s.startswith("upscale_") for s in stages)
+    assert {s["classification"] for s in manifest["stages"] if s["name"].startswith("super_resolution_")} >= {
+        pipeline.INFERENCE
+    }
+
+
+def test_night_input_reuses_the_configured_mode_result(run):
+    _, result, _ = run
+    manifest = result.manifest
+    night_input = manifest["night"]["input"]
+    assert night_input["slot"] == "balanced_sr" and night_input["mode"] == "balanced"
+    assert night_input["provenance"] == night.SYNTHESIZED and night_input["weights"] == PERCEPTUAL
+    upscale = {s["name"]: s for s in manifest["night"]["stages"]}["upscale"]
+    assert upscale["provenance"] == night.SYNTHESIZED and upscale["classification"] == night.INFERENCE
+    assert "upscale" in manifest["night"]["information"]["inferred"]
+    for export in manifest["final"]["exports"].values():
+        provenance = json.loads(Path(export["path"] + ".json").read_text())["provenance"]
+        assert provenance["notice"] == night_pipeline.NOTICE_SR
+        assert provenance["model_weights_sha256"] == sr_models.WEIGHTS[PERCEPTUAL].sha256
+        assert provenance["model_license"] == sr_models.WEIGHTS[PERCEPTUAL].license
+        assert "Mode B, balanced" in provenance["method"]
+    assert manifest["notice"] == night_pipeline.NOTICE_SR
+    assert pipeline.SEEDS_SR in manifest["random_seeds"]["used_by"]
+
+
+def test_conservative_input_runs_last_and_each_mode_once(tmp_path):
+    with fake_backend() as calls:
+        result = run_small(tmp_path, small_config(super_resolution={"mode": "conservative"}))
+    manifest = result.manifest
+    assert manifest["status"] == "complete"
+    assert calls.inferences == [PERCEPTUAL, FIDELITY]  # the input slot runs last so its image is kept
+    assert list(manifest["comparisons"]) == ["lanczos", "bicubic", "conservative_sr", "balanced_sr"]
+    assert manifest["night"]["input"]["slot"] == "conservative_sr"
+    assert manifest["night"]["input"]["weights"] == FIDELITY
+
+
+def test_disabled_sr_starts_from_lanczos_and_claims_no_sr(tmp_path):
+    with fake_backend() as calls:
+        result = run_small(tmp_path, small_config(super_resolution={"enabled": False}))
+    manifest = result.manifest
+    assert manifest["status"] == "complete" and not calls.loads and not calls.inferences
+    assert list(manifest["comparisons"]) == ["lanczos", "bicubic"]
+    label = "Lanczos baseline (super-resolution disabled, no SR applied)"
+    assert manifest["comparisons"]["lanczos"]["label"] == label
+    assert manifest["night"]["input"]["label"] == label and manifest["night"]["input"]["provenance"] == night.ESTIMATED
+    assert manifest["models"] == [] and manifest["notice"] == night_pipeline.NOTICE
+    assert manifest["night"]["information"]["inferred"] == "none (no learned models)"
+    assert not any("super_resolution" in s["name"] for s in manifest["stages"])
+    report = result.report_path.read_text()
+    assert "No super-resolution ran (super_resolution.enabled is false)" in report
+    assert "SR (" not in report and "synthesised detail" not in report
+
+
+def test_sr_is_skipped_with_a_reason_when_the_target_is_not_an_enlargement(tmp_path):
+    with fake_backend() as calls:
+        result = run_small(tmp_path, small_config(quick_target_megapixels=0.01, pixel_count_tolerance=0.01))
+    manifest = result.manifest
+    assert manifest["status"] == "complete" and not calls.loads
+    assert "not an enlargement" in manifest["super_resolution"]["skipped"]
+    assert list(manifest["comparisons"]) == ["lanczos", "bicubic"]
+    assert manifest["night"]["input"]["label"].startswith("Lanczos baseline (super-resolution skipped, no SR applied")
+
+
+def test_sr_without_torch_fails_with_the_phase_2_install_hint(tmp_path):
+    with fake_backend(available=False) as calls, pytest.raises(pipeline.StageError, match=r"\[sr\]") as failure:
+        run_small(tmp_path, small_config())
+    assert failure.value.stage == "super_resolution_setup" and not calls.loads
+    assert pipeline.SR_INSTALL_HINT in str(failure.value)
+    manifest = json.loads(failure.value.manifest_path.read_text())
+    assert manifest["status"] == "failed in stage super_resolution_setup"
+    assert "night" not in manifest and "final" not in manifest
 
 
 def test_night_metrics_are_reported_before_and_after(run):
-    _, result = run
+    _, result, _ = run
     manifest = result.manifest
     record = manifest["night"]
     before, after = record["metrics_before"], record["metrics_after"]
@@ -86,8 +220,8 @@ def test_night_metrics_are_reported_before_and_after(run):
         "source",
         "lanczos",
         "bicubic",
-        "Lanczos as cons. SR",
-        "Lanczos as bal. SR",
+        "conservative SR (swinir)",
+        "balanced SR (swinir)",
         "night input (before)",
         "final night (after)",
     ]
@@ -98,7 +232,7 @@ def test_night_metrics_are_reported_before_and_after(run):
 
 
 def test_section_19_3_figures_are_written(run):
-    _, result = run
+    _, result, _ = run
     figures = result.reports_dir / "figures"
     names = {p.name for p in figures.iterdir()}
     assert {"regions.png", "fallback_map.png", "banding_diagnostics.png", "halo_profile.png"} <= names
@@ -109,7 +243,7 @@ def test_section_19_3_figures_are_written(run):
 
 
 def test_report_has_every_section_and_the_metrics_table(run):
-    _, result = run
+    _, result, _ = run
     report = result.report_path.read_text()
     for heading in (
         "Run summary",
@@ -126,7 +260,12 @@ def test_report_has_every_section_and_the_metrics_table(run):
         assert heading in report
     assert "Night metrics before and after night processing" in report
     assert "| Gradient banding score |" in report and "| final night (after) |" in report
-    assert "Lanczos stand-in for Balanced SR" in report
+    assert "Mode B, balanced SR, swinir_m_x4_realsr_gan (inferred, synthesised detail)" in report
+    assert "Pretrained super-resolution (PRD 10, experiment E02)" in report
+    assert "(figures/sr_difference_balanced.png)" in report
+    assert f"`{sr_models.WEIGHTS[FIDELITY].sha256}`" in report  # models and weight hashes
+    assert "synthesised, not recovered" in report and "seam checks:" in report
+    assert "stand-in" not in report and "not merged" not in report
     assert "Failure rule (PRD 12.6)" in report
     assert "sky_atmosphere at boxes [[0, 0, 16, 4]] (64 px) test override" in report
     for figure in ("regions.png", "banding_diagnostics.png", "halo_profile.png", "crop_shadow.png"):
@@ -135,7 +274,7 @@ def test_report_has_every_section_and_the_metrics_table(run):
 
 
 def test_region_overrides_are_recorded(run):
-    _, result = run
+    _, result, _ = run
     overrides = result.manifest["regions"]["overrides"]
     assert overrides == [
         {"region": "sky_atmosphere", "where": "boxes [[0, 0, 16, 4]]", "pixels": 64, "note": "test override"}
@@ -150,7 +289,7 @@ def test_failed_stage_keeps_outputs_and_names_the_stage(tmp_path, monkeypatch):
         raise RuntimeError("simulated failure")
 
     monkeypatch.setattr(night, "process_night", broken)
-    with pytest.raises(pipeline.StageError) as error:
+    with fake_backend(), pytest.raises(pipeline.StageError) as error:
         night_pipeline.run_night(source, small_config(), tmp_path, log=lambda _: None)
     assert error.value.stage == "night_processing"
     manifest = json.loads(error.value.manifest_path.read_text())
@@ -209,11 +348,29 @@ def test_night_crops_cover_each_category_and_manual_crops_replace_them():
 
 
 def test_night_input_follows_the_super_resolution_settings():
-    assert night_pipeline.night_input(small_config())[0] == "balanced_sr"
+    assert night_pipeline.night_input(small_config()) == ("balanced_sr", "")
     conservative = small_config(super_resolution={"mode": "conservative"})
-    assert night_pipeline.night_input(conservative)[0] == "conservative_sr"
-    key, upscaler = night_pipeline.night_input(small_config(super_resolution={"enabled": False}))
-    assert key == "lanczos" and upscaler.stand_in_for is None
+    assert night_pipeline.night_input(conservative) == ("conservative_sr", "")
+    disabled = night_pipeline.night_input(small_config(super_resolution={"enabled": False}))
+    assert disabled == ("lanczos", "super-resolution disabled, no SR applied")
+    key, note = night_pipeline.night_input(small_config(), "too small")
+    assert key == "lanczos" and note.endswith("no SR applied: too small")
+
+
+def test_execution_order_runs_the_night_input_last():
+    config = small_config()
+    slots = night_pipeline.comparison_slots(config, lambda *args: None)
+    assert [s.key for s in slots] == ["lanczos", "bicubic", "conservative_sr", "balanced_sr"]
+    assert [s.key for s in night_pipeline.execution_order(slots, "conservative_sr")] == [
+        "lanczos",
+        "bicubic",
+        "balanced_sr",
+        "conservative_sr",
+    ]
+    assert [s.key for s in night_pipeline.comparison_slots(config)] == ["lanczos", "bicubic"]
+    plain = night_pipeline.comparison_slots(config.__class__(config.experiment.replace(baselines=("bicubic",))))
+    order = night_pipeline.execution_order(plain, "lanczos", "super-resolution disabled, no SR applied")
+    assert [s.key for s in order] == ["bicubic", "lanczos"] and order[-1].upscaler.note
 
 
 def _ink_rows(band: np.ndarray) -> int:
@@ -254,7 +411,7 @@ def test_shadow_crop_panel_adds_a_display_only_gain_row(run):
     banner = gained[plain.shape[0] : -64]
     assert banner.shape[0] > 0 and (banner[..., 0] > 128).any()  # an amber banner labels the row
 
-    _, result = run
+    _, result, _ = run
     panels = {p["crop"]: p for p in result.manifest["crop_panels"]}
     assert panels["shadow"]["display_gain_ev"] == 3.0
     assert all("display_gain_ev" not in p for name, p in panels.items() if name != "shadow")
