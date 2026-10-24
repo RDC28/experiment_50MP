@@ -73,7 +73,7 @@ class AblationParams:
         {"precision": "float32"},
         {"precision": "float16"},
         {"tile_size": 256},
-        {"tile_overlap": 32},
+        {"tile_overlap": 128},
     )
     bit_depth_study: bool = True
     review_crop_count: int = 3

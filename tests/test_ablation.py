@@ -206,6 +206,18 @@ def test_performance_sweep_times_sr_without_the_model_load(tmp_path, monkeypatch
         assert row["model_load_seconds"] == 0.15 and 0.05 <= row["seconds"] < 0.2
 
 
+def test_default_performance_sweep_measures_every_setting(tmp_path, monkeypatch):
+    from synthetic_raw_lab.evaluation_config import AblationParams
+
+    monkeypatch.setattr(ablation, "phase2_sr_runner", lambda *args, **kwargs: fake_sr)
+    sweep = list(AblationParams().performance_sweep)
+    scene, config = make_scene(tmp_path, ablation={"performance_sweep": sweep})
+    engine = ablation.Engine(scene, config, sr_runner=fake_sr)
+    rows = ablation.performance_sweep(scene, engine, config, ROOT, tmp_path, None, print)
+    assert len(rows) == len(sweep) + 1
+    assert [r for r in rows if "error" in r] == []
+
+
 def test_reference_metrics_score_truth_perfectly_and_interpolation_near_one():
     rng = np.random.default_rng(1)
     truth = np.clip(baselines.resample(night_linear(96, 64), 288, 192, "lanczos"), 0, 1)

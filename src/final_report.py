@@ -996,11 +996,16 @@ def outcome(ev: Evidence, config: EvaluationConfig) -> dict:
         )
     thresholds = t.to_dict()
     if not per_case:
+        missing = (
+            "the controlled reference test (E10) ran, but no SR configuration was measured in it"
+            if lanczos
+            else "the controlled reference test (E10) has not been collected"
+        )
         return {
             "outcome": None,
             "status": "undetermined",
-            "reason": "the controlled reference test (E10) has not been collected, so accuracy against ground truth "
-            "is unknown; source consistency alone cannot choose an outcome",
+            "reason": f"{missing}, so accuracy against ground truth is unknown; source consistency alone cannot "
+            "choose an outcome",
             "thresholds": thresholds,
             "per_case": [],
         }
@@ -1094,7 +1099,7 @@ def can_and_cannot(ev: Evidence, answers: list[dict], decision: dict) -> dict:
             + "."
         )
     else:
-        cannot.append("The outcome stays undetermined until the reference test results are collected.")
+        cannot.append(f"The outcome stays undetermined: {decision['reason']}.")
     return {
         "can": can,
         "cannot": cannot,

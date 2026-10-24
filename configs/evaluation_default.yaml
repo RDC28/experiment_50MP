@@ -25,7 +25,7 @@ ablation:                        # PRD 31 matrix and E09 full-pipeline ablation 
     - {precision: float32}
     - {precision: float16}
     - {tile_size: 256}
-    - {tile_overlap: 32}
+    - {tile_overlap: 128}
   bit_depth_study: true          # E01 and PRD 14.5 on the reconstruction of the crop
   review_crop_count: 3
   review_crop_px: 256            # source pixels per review crop

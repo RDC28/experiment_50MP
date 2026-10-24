@@ -83,6 +83,14 @@ def test_outcome_is_undetermined_without_the_reference_test(evidence):
     assert decision["outcome"] is None and "reference test" in decision["reason"]
 
 
+def test_outcome_without_measured_sr_says_the_reference_test_ran(evidence):
+    record = final_report.build([*evidence, reference_run({})], CONFIG)
+    decision = record["outcome"]
+    assert decision["outcome"] is None and "no SR configuration was measured" in decision["reason"]
+    assert "not been collected" not in decision["reason"]
+    assert not any("not been collected" in line for line in record["summary"]["cannot"])
+
+
 @pytest.mark.parametrize(
     ("gains", "scores", "expected"),
     [
