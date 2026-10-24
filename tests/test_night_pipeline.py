@@ -323,7 +323,7 @@ def test_report_has_every_section_and_the_metrics_table(run):
     assert "sky_atmosphere at boxes [[0, 0, 16, 4]] (64 px) test override" in report
     for figure in ("regions.png", "banding_diagnostics.png", "halo_profile.png", "crop_shadow.png"):
         assert f"(figures/{figure})" in report
-    assert "—" not in report
+    assert "\u2014" not in report
 
 
 def test_region_overrides_are_recorded(run):
