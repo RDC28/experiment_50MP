@@ -809,8 +809,10 @@ def _stage(record: StageRecord, stages: list[StageRecord], monitor: environment.
         with monitor.stage(record.name):
             yield record
     except Exception as error:
-        record.error = f"{type(error).__name__}: {error}"
+        record.error = str(error) if isinstance(error, StageError) else f"{type(error).__name__}: {error}"
         log(f"stage {record.name} FAILED: {record.error}")
+        if isinstance(error, StageError):
+            raise
         raise StageError(record.name, error, None) from error
     finally:
         record.seconds = time.perf_counter() - start
