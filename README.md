@@ -85,9 +85,10 @@ Notebooks `02_Night_Scenery_50MP` and `03_Universal_50MP` remain planned for Pha
 ## Running in Google Colab
 
 1. Open `notebooks/00_Feasibility_Baselines.ipynb` in Colab (File > Open notebook > GitHub, or upload it).
-2. The repository is private: add a Colab secret named `GITHUB_TOKEN` holding a read-only token for it, or
-   copy the repository to Google Drive and set `PROJECT_DIR`. The token is sent with each Git request only and
-   is never stored in the clone.
+2. The repository is public, so the setup cell clones it without credentials. A Colab secret named
+   `GITHUB_TOKEN` (a read-only token) is optional, only for cloning a private fork; alternatively copy the
+   repository to Google Drive and set `PROJECT_DIR`. A token is sent with each Git request only and is never
+   stored in the clone.
 3. To keep the masters, enable `MOUNT_DRIVE` and point `OUTPUT_ROOT` at a Drive folder.
 4. Choose the input (`upload`, a `path`, or the `synthetic` test image) and a preset, then run all cells.
 5. Super-resolution (`ENABLE_SUPER_RESOLUTION`, on by default) needs a GPU runtime (Runtime > Change runtime
