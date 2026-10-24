@@ -536,7 +536,7 @@ def conclusions(manifest: dict) -> list[str]:
             )
     lines += _ranking_conclusions(manifest)
     lines += _sr_conclusions(manifest)
-    lines += _final_conclusions(manifest.get("final_output"))
+    lines += final_conclusions(manifest.get("final_output"))
     lines.append(
         "Visual acceptance (PRD 25.2: seams, ringing, halos, banding) needs human review of the crop "
         "panels at 100% and 200%."
@@ -636,7 +636,8 @@ def _ranking_conclusions(manifest: dict) -> list[str]:
     return lines
 
 
-def _final_conclusions(final: dict | None) -> list[str]:
+def final_conclusions(final: dict | None) -> list[str]:
+    """The conclusion lines naming a run's final image, its reason and files (empty without a record)."""
     if not final:
         return []
     if not final.get("method"):

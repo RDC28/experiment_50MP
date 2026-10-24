@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from . import baselines, environment, exporters, ingestion, quality_metrics, report_builder, sr_models
+from . import baselines, environment, exporters, final_output, ingestion, quality_metrics, report_builder, sr_models
 from . import color_management as cm
 from .face_preservation import haar_model_metadata
 from .human_comparisons import write_human_comparisons
@@ -185,6 +185,21 @@ def run_human_crowd(source_path, config, project_root, *, notebook_version=None,
                     "classification": "Packaging",
                     "notice": sr_notice,
                 }
+            with stage("final_output", "Packaging"):
+                method = "conservative learned SR" if learned else "Lanczos stand-in"
+                manifest["final_output"] = final_output.publish(
+                    {
+                        "method": "human_crowd",
+                        "rule": "notebook",
+                        "reason": f"notebook 01 makes one master: {method} with human protection and the identity "
+                        "fallback",
+                        "skipped": [],
+                        "notes": [],
+                    },
+                    manifest["exports"],
+                    masters,
+                    preview,
+                )
             with stage("source_consistency", MEASUREMENT):
                 reduced = baselines.downsample_area(cm.srgb_uint16_to_linear(encoded), source.width, source.height)
                 metrics, delta = quality_metrics.source_consistency(source.linear, reduced)
@@ -394,6 +409,9 @@ def render_human_report(manifest):
             f"### {name}\n\n{figure['classification']}: {figure['description']}"
             f"\n\n![{name}](figures/{Path(figure['path']).name})\n"
         )
+    final = manifest.get("final_output")
+    if final:
+        sections += ["## Final 50 MP image", "\n".join(f"- {line}" for line in report_builder.final_conclusions(final))]
     information = manifest.get("provenance", {}).get("information", {})
     sections += [
         "## Information provenance (PRD 27.5)",

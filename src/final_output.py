@@ -1,6 +1,8 @@
 """The final 50 MP image of a run (PRD sections 10.2, 11.2, 27.3 and 32.3).
 
-Every run ends with one final master, chosen from the outputs it produced by a documented rule:
+Every reconstruction run ends with one final master. Notebooks 01 (human and crowd) and 02 (night scenery)
+build that one master themselves and hand it to ``publish``. Notebook 00 chooses it from the outputs it
+produced by a documented rule (``select``):
 
 - ``final_output`` names an output (``lanczos``, ``bicubic`` or ``sr_<mode>``): that output, when the run
   produced it. When it did not (for example super-resolution was skipped because the target is not an
@@ -105,20 +107,32 @@ def select(manifest: dict, requested: str = AUTO) -> dict:
 
 def write_final(decision: dict, manifest: dict, masters_dir: Path, figures_dir: Path | None = None) -> dict:
     """Save the selected output's masters as the final image; returns the decision with ``files`` added."""
-    record = dict(decision)
     method = decision.get("method")
     if method is None:
-        return record
-    summary = outputs(manifest)[method]
+        return dict(decision)
+    preview = Path(figures_dir) / f"{method}_preview.jpg" if figures_dir is not None else None
+    return publish(decision, outputs(manifest)[method].get("exports", {}), masters_dir, preview)
+
+
+def publish(record: dict, exports: dict, masters_dir: Path, preview: Path | None = None) -> dict:
+    """Save validated masters (``exports`` by kind, as the exporters record them) as the run's final image.
+
+    Each TIFF and EXR (and its sidecar) is hard-linked, or copied, into ``final/`` with ``final_`` in front of
+    its name and verified by SHA-256. ``preview``, when it exists, is copied next to it as
+    ``final_preview.jpg``. Returns ``record`` with ``files`` (and ``preview``) added, the shape ``deliver``
+    reads. Specialised pipelines that build their one final master themselves call this directly.
+    """
+    record = dict(record)
     final_dir = Path(masters_dir) / FINAL_DIR
     final_dir.mkdir(parents=True, exist_ok=True)
     files = {}
     for kind in ("tiff16", "exr"):
-        export = summary.get("exports", {}).get(kind)
+        export = exports.get(kind)
         if not export:
             continue
         original = Path(export["path"])
-        target = final_dir / f"{FINAL_PREFIX}{original.name}"
+        name = original.name if original.name.startswith(FINAL_PREFIX) else f"{FINAL_PREFIX}{original.name}"
+        target = final_dir / name
         how = _link_or_copy(original, target)
         sidecar = original.with_name(original.name + ".json")
         if sidecar.exists():
@@ -137,10 +151,21 @@ def write_final(decision: dict, manifest: dict, masters_dir: Path, figures_dir: 
             "height": export["height"],
         }
     record["files"] = files
-    if figures_dir is not None and (Path(figures_dir) / f"{method}_preview.jpg").exists():
-        shutil.copyfile(Path(figures_dir) / f"{method}_preview.jpg", Path(figures_dir) / "final_preview.jpg")
+    if preview is not None and Path(preview).exists():
+        shutil.copyfile(preview, Path(preview).with_name("final_preview.jpg"))
         record["preview"] = "figures/final_preview.jpg"
     return record
+
+
+def storage_bytes(*folders: Path) -> int:
+    """Bytes used by every file under ``folders``, counting hard links (the final image) once."""
+    sizes = {}
+    for folder in folders:
+        for path in Path(folder).rglob("*"):
+            if path.is_file():
+                info = path.stat()
+                sizes[(info.st_dev, info.st_ino)] = info.st_size
+    return sum(sizes.values())
 
 
 def deliver(

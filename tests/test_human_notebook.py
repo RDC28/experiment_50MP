@@ -55,7 +55,7 @@ INPUTS_ROOT = {str(tmp_path / "inputs")!r}
     assert controls["colour_balance"]["parameters"]["skin_tone_shift_ciede2000"] > 0
     assert manifest["config"]["face_detector"] == "none"
     assert manifest["models"] == []
-    assert manifest["notebook_version"] == "01_Human_Crowd_50MP/1.0"
+    assert manifest["notebook_version"] == "01_Human_Crowd_50MP/1.1"
     assert [row["face_count"] for row in manifest["identity"]["per_tier"]] == [1, 1, 1]
     assert len(manifest["config"]["manual_face_boxes"]) == 3
     assert manifest["config"]["primary_subject_index"] is None

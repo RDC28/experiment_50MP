@@ -17,8 +17,10 @@ resolution, exporters) and adds the Layer 5B night processing of
 4. Apply Layer 5B in place on that kept image, so a 50 MP run holds one
    full-size float buffer.
 5. Export the final master as 16-bit TIFF and OpenEXR (half by default),
-   validate both, and write the crop panels, banding diagnostics, halo
-   comparisons, failure-rule fallback map, manifest and report.
+   validate both, save them again under ``final/`` as the run's final image
+   (``final_output.publish``, the step every reconstruction notebook ends
+   with), and write the crop panels, banding diagnostics, halo comparisons,
+   failure-rule fallback map, manifest and report.
 
 If a stage fails, outputs already written stay on disk, and the manifest and
 report name the failing stage (PRD 22.3).
@@ -44,6 +46,7 @@ from . import (
     comparison,
     environment,
     exporters,
+    final_output,
     ingestion,
     quality_metrics,
     report_builder,
@@ -554,6 +557,22 @@ def run_night(
             del encoded, delta_e
 
         with stage(
+            StageRecord("final_output", PACKAGING, {"output": FINAL}, "validated night master", "final TIFF and EXR")
+        ):
+            manifest["final_output"] = final_output.publish(
+                {
+                    "method": FINAL,
+                    "rule": "notebook",
+                    "reason": f"notebook 02 makes one master: Layer 5B night processing of {input_key}",
+                    "skipped": [],
+                    "notes": [],
+                },
+                final["exports"],
+                masters_dir,
+                figures_dir / "night_preview.jpg",
+            )
+
+        with stage(
             StageRecord("night_comparisons", MEASUREMENT, {"crops": len(crops)}, "uint16 sRGB", "review PNG figures")
         ):
             slot_order = [*manifest["comparisons"], FINAL]
@@ -996,9 +1015,9 @@ def _finish(manifest: dict, stages: list[StageRecord], monitor, started: float, 
     if "reports" not in paths:
         log("run failed before an output folder existed; nothing written")
         return None
-    storage = sum(f.stat().st_size for d in (paths["masters"], paths["reports"]) for f in d.rglob("*") if f.is_file())
-    manifest["storage_used_bytes"] = storage
+    manifest["storage_used_bytes"] = final_output.storage_bytes(paths["masters"], paths["reports"])
     exports = list(manifest.get("intermediates", [])) + list(manifest.get("final", {}).get("exports", {}).values())
+    exports += list((manifest.get("final_output") or {}).get("files", {}).values())
     manifest["output_checksums"] = {Path(e["path"]).name: e["file_sha256"] for e in exports}
     manifest_path = paths["reports"] / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
@@ -1454,6 +1473,7 @@ def night_conclusions(manifest: dict) -> list[str]:
             + ("met." if not worse else "not met.")
         )
     lines.append(_sr_conclusion(manifest))
+    lines += report_builder.final_conclusions(manifest.get("final_output"))
     lines.append(
         "Visual acceptance (halos, banding, invented texture, light colour) needs human review of the crop "
         "panels at 100% and 200%."

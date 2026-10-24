@@ -886,13 +886,7 @@ def _finish(manifest: dict, stages: list[StageRecord], monitor, started: float, 
     if "reports" not in paths:
         log("run failed before an output folder existed; nothing written")
         return None
-    files = {}  # by inode, so the hard-linked final image is counted once
-    for folder in (paths["masters"], paths["reports"]):
-        for f in folder.rglob("*"):
-            if f.is_file():
-                info = f.stat()
-                files[(info.st_dev, info.st_ino)] = info.st_size
-    manifest["storage_used_bytes"] = sum(files.values())
+    manifest["storage_used_bytes"] = final_output.storage_bytes(paths["masters"], paths["reports"])
     manifest["output_checksums"] = _checksums(manifest)
     manifest_path = paths["reports"] / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
