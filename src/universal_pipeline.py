@@ -528,7 +528,11 @@ def _human_route(source_path, config, project_root, run_id, manifest, stage, log
                 raise
         delegated = result.manifest
         attempt.update(
-            status=delegated["status"], manifest=str(result.manifest_path), report=str(result.report_path), gate=None
+            status=delegated["status"],
+            manifest=str(result.manifest_path),
+            report=str(result.report_path),
+            masters=str(result.masters_dir),
+            gate=None,
         )
         if sr_enabled:
             summary = delegated["super_resolution"]["modes"].get("conservative") or {}
@@ -584,6 +588,7 @@ def _night_route(source_path, config, project_root, run_id, manifest, stage, log
             status=delegated["status"],
             manifest=str(result.manifest_path),
             report=str(result.report_path),
+            masters=str(result.masters_dir),
             input=slot,
             gate=None,
         )
@@ -970,7 +975,11 @@ def _finish(manifest: dict, stages: list[StageRecord], monitor, started: float, 
         log("run failed before an output folder existed; nothing written")
         return None
     manifest.get("route", {}).pop("_lanczos", None)
-    manifest["storage_used_bytes"] = final_output.storage_bytes(paths["masters"], paths["reports"])
+    folders = [paths["masters"], paths["reports"]]
+    for attempt in manifest.get("route", {}).get("attempts", []):
+        if attempt.get("report"):
+            folders += [Path(attempt["masters"]), Path(attempt["report"]).parent]
+    manifest["storage_used_bytes"] = final_output.storage_bytes(*folders)
     exports = list(manifest.get("route", {}).get("exports", {}).values())
     exports += list((manifest.get("final_output") or {}).get("files", {}).values())
     manifest["output_checksums"] = {Path(e["path"]).name: e["file_sha256"] for e in exports}

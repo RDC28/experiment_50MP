@@ -311,6 +311,8 @@ def test_night_run_with_a_failed_sr_gate_is_repeated_without_sr(project, dark, m
     }
     assert attempts[1]["gate"] is None and attempts[1]["run_id"].endswith("_night_lanczos")
     assert result.manifest["route"]["delegate"]["run_id"] == attempts[1]["run_id"]
+    delegated = [Path(a["masters"]) for a in attempts] + [Path(a["report"]).parent for a in attempts]
+    assert result.manifest["storage_used_bytes"] > final_output.storage_bytes(*delegated)  # both night runs counted
     conclusions = universal_report.universal_conclusions(result.manifest)
     assert any("failed its seam gate" in line for line in conclusions)
     check_final(result)

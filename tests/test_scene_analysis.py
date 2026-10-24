@@ -47,6 +47,12 @@ def test_large_face_in_daylight_is_human():
     assert result["cues"]["human"][0]["value"] == 300.0
 
 
+def test_human_cue_uses_the_longest_shortest_side_not_the_largest_area():
+    result = scene_analysis.classify(statistics(0.45, 0.1, (100, 100, 400, 80), (600, 100, 150, 150)))
+    assert result["category"] == "human"
+    assert result["cues"]["human"][0]["value"] == 150.0
+
+
 def test_human_dominant_night_scene_goes_to_the_human_pipeline():
     result = scene_analysis.classify(statistics(0.08, 0.9, (100, 100, 300, 320)))
     assert result["category"] == "human" and result["night"]

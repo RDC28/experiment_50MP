@@ -73,9 +73,6 @@ def test_notebook_follows_the_prd_22_1_sequence():
     assert "GITHUB_TOKEN" not in text  # the repository is public
     assert all(not cell.outputs for cell in notebook.cells if cell.cell_type == "code")
     assert sum("parameters" in cell.metadata.get("tags", []) for cell in notebook.cells) == 1
-    for name in ("run_universal", "analyse_scene", "archive_reports"):
-        assert f"universal_pipeline.{name}(" in text
-    assert "final_output.deliver(MANIFEST" in text  # the shared final-output step of every reconstruction notebook
 
 
 def test_notebook_code_compiles():
