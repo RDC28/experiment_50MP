@@ -473,6 +473,18 @@ def test_fallback_figure_has_a_legend_and_marks_blocks_over_the_source(tmp_path)
     assert any(abs(c[0] - grey) <= 1 and c[0] == c[1] == c[2] for c in colours)
 
 
+def test_fallback_figure_drops_the_reason_legend_when_the_rule_is_off(tmp_path):
+    from PIL import Image
+
+    canvas = np.full((90, 160, 3), night.FALLBACK_BACKGROUND, np.uint8)
+    source = np.full((45, 80, 3), 0.2, np.float32)
+    path = night_pipeline.fallback_figure(canvas, source, [], 0.0, tmp_path / "fallback_map.png", enabled=False)
+    picture = np.asarray(Image.open(path).convert("RGB")).reshape(-1, 3)
+    colours = {tuple(int(v) for v in c) for c in np.unique(picture, axis=0)}
+    # No block was checked, so no zero-count reason patches suggest that one was.
+    assert not set(night.FALLBACK_COLORS.values()) & colours
+
+
 def test_block_counts_read_as_english():
     assert night_pipeline._blocks(1) == "1 block"
     assert night_pipeline._blocks(0) == "0 blocks"

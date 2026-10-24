@@ -459,17 +459,23 @@ def run_night(
                 "comparison": result.comparison,
                 "information": result.information,
             }
-            record.notes = [f"{len(result.fallbacks)} failure-rule fallback blocks ({result.fallback_fraction:.3%})"]
+            rule_on = params.failure_rule.enabled
+            if rule_on:
+                rule_note = f"{_blocks(len(result.fallbacks))} fell back ({result.fallback_fraction:.3%})"
+            else:
+                rule_note = "off, no blocks were checked"
+            record.notes = [f"failure rule: {rule_note}"]
             fallback_path = fallback_figure(
                 night.fallback_map(result, *size, max_edge=experiment.review_max_edge),
                 source.linear,
                 result.fallbacks,
                 result.fallback_fraction,
                 figures_dir / "fallback_map.png",
+                enabled=rule_on,
             )
             manifest["figures"]["fallbacks"] = str(fallback_path)
             del result, upscaled  # the upscale was processed in place; image is the only full-size buffer
-        log(f"night processing: {len(manifest['night']['fallbacks'])} fallback blocks")
+        log(f"night processing: failure rule {rule_note}")
 
         final = manifest["final"] = {"exports": {}}
         final["working_pixel_sha256"] = ingestion.pixel_sha256(image)
@@ -817,9 +823,17 @@ def _stage_enabled(record: dict, name: str) -> bool:
 
 
 def fallback_figure(
-    canvas: np.ndarray, source_linear: np.ndarray, fallbacks: list[dict], fraction: float, path: Path
+    canvas: np.ndarray,
+    source_linear: np.ndarray,
+    fallbacks: list[dict],
+    fraction: float,
+    path: Path,
+    enabled: bool = True,
 ) -> Path:
-    """The PRD 12.6 fallback blocks over the dimmed source luma, with a reason legend and the fallback share."""
+    """The PRD 12.6 fallback blocks over the dimmed source luma, with a reason legend and the fallback share.
+
+    With the failure rule off no block was checked, so the title says so and the zero-count legend is left out.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -838,17 +852,18 @@ def fallback_figure(
 
     fig, ax = plt.subplots(figsize=(10, 10 * height / width + 1.0), dpi=150)
     ax.imshow(picture, interpolation="nearest")
-    ax.set_title(
-        f"Failure-rule fallback blocks (PRD 12.6): {_blocks(len(fallbacks))}, {fraction:.2%} of output pixels "
-        "(over the dimmed source)",
-        fontsize=11,
-    )
+    if enabled:
+        title = f"{_blocks(len(fallbacks))}, {fraction:.2%} of output pixels"
+    else:
+        title = "off, no blocks were checked"
+    ax.set_title(f"Failure-rule fallback blocks (PRD 12.6): {title} (over the dimmed source)", fontsize=11)
     ax.axis("off")
-    handles = [
-        Patch(color=np.array(colour) / 255, label=f"{reason.replace('_', ' ')}: {_blocks(counts[reason])}")
-        for reason, colour in night.FALLBACK_COLORS.items()
-    ]
-    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=4, frameon=False, fontsize=9)
+    if enabled:
+        handles = [
+            Patch(color=np.array(colour) / 255, label=f"{reason.replace('_', ' ')}: {_blocks(counts[reason])}")
+            for reason, colour in night.FALLBACK_COLORS.items()
+        ]
+        ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=4, frameon=False, fontsize=9)
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight", pad_inches=0.1)
