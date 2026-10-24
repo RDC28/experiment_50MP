@@ -94,7 +94,7 @@ python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -e .     # includes PyTorch and spandrel for super-resolution
 
 python -m pytest                          # unit tests, light enough for a laptop
-SYNTHETIC_RAW_LAB_HEAVY_TESTS=1 python -m pytest   # also executes the notebook and, with cached weights, the SR networks
+SYNTHETIC_RAW_LAB_HEAVY_TESTS=1 python -m pytest   # also executes the notebooks and, with cached weights, the SR networks
 ruff check . && ruff format --check .
 ```
 
