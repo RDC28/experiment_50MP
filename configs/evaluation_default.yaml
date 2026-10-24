@@ -1,0 +1,58 @@
+# Notebook 06 evaluation profile (PRD Phase 6: ablations, controlled reference test, visual review,
+# performance measurements, final report). Every key is documented in src/evaluation_config.py.
+# Thresholds marked provisional are to be calibrated experimentally (PRD 25.3).
+
+# The universal profile supplies the human, night and universal processing and the SR settings, so every
+# ablation stage runs exactly what notebooks 01 to 03 run. universal_overrides changes single keys of it.
+universal_profile: configs/universal_default.yaml
+universal_overrides: {}
+
+ablation:                        # PRD 31 matrix and E09 full-pipeline ablation on one input
+  scene: auto                    # auto (scene analysis) | human | night | general
+  crop_size: 1536                # square source crop in source pixels, processed at the scale a full run of the
+                                 # whole source uses; 0 = the whole source at the full target (as slow as notebook 00)
+  crop_center: auto              # auto (primary face, else centre of interest) | [x, y] in source pixels
+  target_megapixels: 50.0        # sets the scale (a 6336 x 2688 source -> x1.7134)
+  configurations: []             # empty = every configuration in src/ablation.py (CONFIGURATIONS)
+  grain_amount: 0.008            # synthetic grain, sRGB std at mid grey (Layer 5B engine, 0 to 0.05)
+  bloom_amount: 0.03             # light bloom (Layer 5B engine, 0 to 0.2; above 0.05 looks stylised)
+  sensor:                        # Phase 5 synthetic sensor for the sensor round trip (src/sensor_simulation.py)
+    shot_noise_enabled: true
+    read_noise_enabled: true
+    demosaic: malvar             # malvar | bilinear
+  performance_sweep:             # PRD 28.3: conservative SR again under each setting; a precision the backend
+                                 # cannot run (SwinIR is float32 only) or the default run already used is skipped
+    - {precision: float32}
+    - {precision: float16}
+    - {tile_size: 256}
+    - {tile_overlap: 128}
+  bit_depth_study: true          # E01 and PRD 14.5 on the reconstruction of the crop
+  review_crop_count: 3
+  review_crop_px: 256            # source pixels per review crop
+
+reference:                       # E10 controlled reference test
+  references: [portrait_holi, night_forest_path]  # Wikimedia Commons photographs, licence checked at run time
+  degradations: [area, camera, ai_render]
+  scales: [1.7134]               # linear enlargement; 1.7134 is a 6336 x 2688 render to 50 MP
+  crop_megapixels: 12.0          # centre crop of each reference; 0 = the whole photograph (slower)
+  configurations: [bicubic, lanczos, sr_conservative, sr_balanced, specialized, full, full_no_sensor, full_no_grain]
+  optical_blur_sigma: 0.5        # camera degradation: Gaussian optics, source pixels
+  jpeg_quality: 95               # camera degradation JPEG quality (the AI-render proxy always uses 99)
+  ai_smoothing: 0.5              # AI-render proxy: edge-preserving smoothing of fine texture
+  ai_sharpening: 0.4             # AI-render proxy: unsharp mask amount
+  cache_dir: ""                  # downloaded references; empty = <inputs>/reference_downloads
+
+aggregation:                     # run collection and the identical-crops review sheet
+  labels:                        # source SHA-256 prefix -> name (the captain's two Colab inputs)
+    "40e304406633": portrait (red saree, festival)
+    "5fe78cd34888": night forest path
+  review_crops: []               # normalised [x, y, width, height] boxes; empty = the crops the runs recorded
+  review_crop_count: 4
+  review_crop_px: 256
+
+report:                          # provisional PRD 33 outcome thresholds, applied to the reference test
+  a_min_psnr_gain_db: 1.0        # outcome A: accuracy gain over Lanczos against ground truth ...
+  a_max_hf_nmse: 0.7             # ... and above-source-limit error at most this (1.0 = adding nothing)
+  c_max_psnr_gain_db: 0.25       # outcome C: gain below this ...
+  c_min_hf_nmse: 0.95            # ... and above-limit error at least this
+  quality_tolerance_db: 0.1      # best quality-to-runtime: configurations this close to the best count as equal

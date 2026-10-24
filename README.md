@@ -18,8 +18,8 @@ inferred, simulated and encoded information apart.
 | Phase 3: human and crowd (notebook 01) | Implemented: Phase 2 SR presets (conservative and balanced), YuNet or manual face observations, per-tier identity metrics, local failure recovery, comparisons and master exports; Colab verification pending |
 | Phase 3: night scenery (notebook 02) | Implemented: Phase 2 SR presets (conservative and balanced), luminance-region masks, Layer 5B night processing with the PRD 12.6 failure rule, before/after night metrics, comparisons and master exports; Colab verification pending |
 | Phase 4: universal notebook (notebook 03) | Implemented: scene statistics and optional face detection classify each input, human and night scenes go to the notebook 01 and 02 pipelines and other scenes to a common pipeline (gated SR ladder, combined masks, universal tone and colour, face protection); every run ends with one verified final image; Colab verification pending |
-| Phase 6: evaluation and optimisation | Not started |
 | Phase 5: synthetic sensor research | Implemented |
+| Phase 6: evaluation and optimisation (notebook 06) | Implemented: run collection and comparison of notebooks 00 to 05, identical-crop review sheets, the PRD 31 matrix and E09 full-pipeline ablation, the E10 controlled reference test on freely licensed photographs, performance measurements and the final experiment report (PRD 33, 34); Colab verification pending |
 
 Phase 0 exit criterion: a valid 50 MP master created and exported from a 4K input by classical
 interpolation. Phase 1 exit criterion: baselines that are reproducible and measurable. Phase 2 exit criterion:
@@ -42,6 +42,7 @@ configs/night_default.yaml     Phase 3 night profile (PRD 19.1), Layer 5B keys d
 configs/sensor_research.yaml   Phase 5 parameters, every key documented in src/sensor_config.py
 configs/human_default.yaml     human profile, documented in src/human_config.py
 configs/universal_default.yaml Phase 4 universal profile (PRD 20.1), documented in src/universal_config.py
+configs/evaluation_default.yaml Phase 6 evaluation profile, documented in src/evaluation_config.py
 docs/models.md                 SR model evaluation, weights, checksums, licences, commercial-use terms
 MODELS.md                      notebook 01 detector artifacts and pointer to SR weight terms
 notebooks/00_Feasibility_Baselines.ipynb  Phases 0 to 2
@@ -49,6 +50,8 @@ notebooks/01_Human_Crowd_50MP.ipynb  Phase 3 human and crowd
 notebooks/02_Night_Scenery_50MP.ipynb  Phase 3 Nighttime Scenery
 notebooks/03_Universal_50MP.ipynb  Phase 4 Universal Reconstruction
 notebooks/05_Synthetic_Sensor_Research.ipynb  Phase 5
+notebooks/06_Evaluation.ipynb  Phase 6 Evaluation and Optimisation
+evidence/colab_runs/           report.md and manifest.json of the captain's Colab runs (no images), collected by notebook 06
 src/                           the shared package, imported as synthetic_raw_lab
   config.py                    parameters with defaults, accepted values, effects and warnings (PRD 6, 22.2)
   resolution.py                exact 50 MP target dimensions (PRD 3.5, 25.3)
@@ -88,6 +91,12 @@ src/                           the shared package, imported as synthetic_raw_lab
   universal_config.py          the universal profile and the human and night presets it derives (PRD 20.1)
   universal_pipeline.py        the Phase 4 run: routing, SR ladder gates, common pipeline, evaluation, final image
   universal_report.py          Phase 4 Markdown report
+  evaluation_config.py         Phase 6 profile: ablation, reference test, aggregation and outcome thresholds
+  ablation.py                  the PRD 31 matrix and E09 ablation engine, full-reference metrics, review and blind sheets
+  reference_test.py            E10: licence-checked Commons references, degradation models, scoring against ground truth
+  run_collection.py            reads run folders and zips of notebooks 00 to 06, comparison tables, identical-crop sheets
+  evaluation_report.py         Markdown reports of the ablation and reference-test runs
+  final_report.py              the final experiment report: PRD 34 answers, PRD 33 outcome, best Colab configuration
 tests/                         pytest suite; notebook execution and real-network tests are opt-in
 inputs/{human,night,universal}/  read-only copies of ingested sources (not in Git)
 outputs/{human,night,universal}/  full-resolution masters per run (not in Git)
@@ -281,6 +290,45 @@ most conservative settings that produce measurable improvement.
 4. **Final image.** The route's TIFF and EXR masters are saved again under `outputs/universal/<run>/final/` by
    the shared `final_output.publish` (hard links where possible, verified by SHA-256) and delivered by
    `final_output.deliver`: copied to Drive when it is mounted and downloaded in Colab.
+
+## Phase 6: evaluation and optimisation
+
+`notebooks/06_Evaluation.ipynb` closes the first cycle. Run it in Colab on a GPU runtime; each part can be
+switched off in section 2.
+
+1. **Run collection** (`src/run_collection.py`). Reads every `manifest.json` under the run folders, folders and
+   report zips it is given: the captain's notebook 00 runs in `evidence/colab_runs` (included by default), the
+   notebook 01, 02 and 03 zips (list them in `RUN_SOURCES`, for example on Drive, or set `UPLOAD_RUN_ZIPS`), and
+   its own ablation and reference-test runs. Runs are grouped by source SHA-256 and compared: source consistency
+   of every output, seam gates, night metrics, identity by face tier, runtime, SR time and memory. A notebook 03
+   run's delegated notebook 01 or 02 run is linked to it. To add runs to the repository's evidence, copy only
+   their `report.md` and `manifest.json` into `evidence/colab_runs/<run id>/`.
+2. **Visual review sheet.** Identical crops from every run of one source, at 100% from the full-resolution
+   masters when they are found (in place or by name under `MASTERS_ROOTS`), otherwise from the review previews,
+   which the row label says.
+3. **Ablation** (`src/ablation.py`, E02, E07, E09, PRD 31). One input, processed as a 1536-pixel crop at the
+   scale a full 50 MP run of the whole input uses, through 17 configurations that switch one stage at a time:
+   upscale (bicubic, Lanczos, conservative, balanced, aggressive SR), the scene's specialised processing (the
+   notebook 01 region detail, or the notebook 02 or 03 Layer 5B profile), tone only, face handling (notebook 03
+   face masks, plus notebook 01 identity recovery on human scenes), grain, bloom and the Phase 5 sensor round
+   trip. Every configuration records runtime, peak memory, detail energy, source consistency and clipping; the
+   stage contributions compare the full pipeline with it minus each stage. It also runs the PRD 28.3 SR settings
+   sweep (precision, tile size, overlap) and the E01 bit-depth study, and writes a labelled review sheet and a
+   blind sheet with its key kept separately (PRD 26.3).
+4. **Controlled reference test** (`src/reference_test.py`, E10). Two camera photographs from Wikimedia Commons,
+   a Holi festival portrait and a forest path at night (both CC BY-SA 4.0), are fetched at run time; the
+   licence, author and page are read from the Commons API and checked, and each file is verified against a
+   pinned SHA-1. A centre crop of each is degraded to 1/1.7134 of its size (the 6336 x 2688 to 50 MP scale) by
+   three models (ideal area sampling; a camera forward model with optics, the Phase 5 sensor and JPEG; an
+   AI-render proxy with smoothing, sharpening and JPEG 99) and reconstructed back. Accuracy against the original
+   includes the above-source-limit error: about 1.0 is what adding no detail scores, below 1 is real detail
+   recovered, above 1 is invented detail that is wrong more than right.
+5. **Final report** (`src/final_report.py`). Answers the 18 questions of PRD 34 one by one, each marked
+   answered, partial, not measured (naming the run that would measure it) or reasoned, recommends a PRD 33
+   outcome from the reference test with the provisional thresholds in `configs/evaluation_default.yaml`, picks
+   the cheapest configuration within 0.1 dB of the most accurate one, and states what this upscaling approach
+   can and cannot achieve. Blind-review scores entered in the notebook feed questions 13 and outcome A.
+   Re-running section 13 with more runs collected updates every answer.
 
 ## Phase 5: synthetic sensor research
 
