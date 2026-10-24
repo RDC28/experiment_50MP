@@ -252,6 +252,17 @@ def test_conclusions_credit_the_shoulder_only_when_it_lowered_clipping(run, tmp_
     assert SHOULDER_CLAIM not in no_shoulder.report_path.read_text()
 
 
+def test_disabled_failure_rule_is_reported_as_off(tmp_path):
+    config = small_config(super_resolution={"enabled": False}, failure_rule={"enabled": False})
+    result = run_small(tmp_path, config)
+    conclusions = night_pipeline.night_conclusions(result.manifest)
+    assert "The failure rule was off, so no blocks were checked for fallback." in conclusions
+    assert not any("found no halos" in line for line in conclusions)
+    report = result.report_path.read_text()
+    assert "Failure rule (PRD 12.6): off, no blocks were checked." in report
+    assert "fell back to the conservative result" not in report
+
+
 def test_section_19_3_figures_are_written(run):
     _, result, _ = run
     figures = result.reports_dir / "figures"

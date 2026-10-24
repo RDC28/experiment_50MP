@@ -812,6 +812,10 @@ def _blocks(count: int) -> str:
     return f"{count} block" if count == 1 else f"{count} blocks"
 
 
+def _stage_enabled(record: dict, name: str) -> bool:
+    return any(stage["name"] == name and stage["enabled"] for stage in record["stages"])
+
+
 def fallback_figure(
     canvas: np.ndarray, source_linear: np.ndarray, fallbacks: list[dict], fraction: float, path: Path
 ) -> Path:
@@ -1154,10 +1158,13 @@ def render_night_report(manifest: dict, report_dir: Path) -> str:
             )
         )
         fallbacks = record["fallbacks"]
-        add(
-            f"Failure rule (PRD 12.6): {_blocks(len(fallbacks))} fell back to the conservative result "
-            f"({record['fallback_fraction']:.3%} of output pixels).\n"
-        )
+        if not _stage_enabled(record, "failure_rule"):
+            add("Failure rule (PRD 12.6): off, no blocks were checked.\n")
+        else:
+            add(
+                f"Failure rule (PRD 12.6): {_blocks(len(fallbacks))} fell back to the conservative result "
+                f"({record['fallback_fraction']:.3%} of output pixels).\n"
+            )
         if fallbacks:
             add(
                 _table(
@@ -1409,8 +1416,7 @@ def night_conclusions(manifest: dict) -> list[str]:
         if worse:
             lines.append("Higher after night processing (review the crops): " + ", ".join(worse) + ".")
         clip_before, clip_after = (m["highlight_clipping_fraction"]["any_channel"] for m in (before, after))
-        rolloff = any(stage["name"] == "highlight_rolloff" and stage["enabled"] for stage in record["stages"])
-        if rolloff and clip_after < clip_before:
+        if _stage_enabled(record, "highlight_rolloff") and clip_after < clip_before:
             lines.append(
                 "The lower clipping fraction comes from the highlight shoulder rolling off clipped values; no clipped "
                 "radiance was recovered."
@@ -1418,7 +1424,9 @@ def night_conclusions(manifest: dict) -> list[str]:
         else:
             lines.append("No clipped radiance was recovered.")
         reasons = sorted({r for f in record["fallbacks"] for r in f["reasons"]})
-        if reasons:
+        if not _stage_enabled(record, "failure_rule"):
+            lines.append("The failure rule was off, so no blocks were checked for fallback.")
+        elif reasons:
             lines.append(
                 f"The failure rule fell back in {_blocks(len(record['fallbacks']))} ({', '.join(reasons)}). "
                 "Recommended: " + "; ".join(_ADVICE[r] for r in reasons) + "."
