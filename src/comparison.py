@@ -2,8 +2,12 @@
 
 Crops are defined once in source pixels and mapped to every output with the
 same per-axis scale, so each method is judged on exactly the same scene region.
-Automatic selection takes the centre plus the most detailed non-overlapping
-windows (highest mean gradient magnitude); manual crops replace it.
+Automatic selection always starts with the main subject (``subjects.analyse``):
+the primary face (eyes, then nose and mouth when the face is larger than a
+crop), else the centre of interest, else the centre. The remaining crops are
+the most detailed windows (highest mean gradient magnitude), spread apart where
+the image allows, and at least one is kept whenever more than one crop is
+requested. Manual crops replace the automatic selection.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import cv2
 import numpy as np
 
 from .quality_metrics import luma
+from .subjects import SubjectAnalysis, analyse
 
 _GUTTER = 8
 _HEADER = 30
@@ -27,6 +32,7 @@ class Crop:
     y: int
     width: int
     height: int
+    label: str = ""
 
     def output_box(self, source_size: tuple[int, int], output_size: tuple[int, int]) -> tuple[int, int, int, int]:
         """(x0, y0, x1, y1) of this crop in an output of ``output_size`` (width, height)."""
@@ -40,23 +46,36 @@ class Crop:
         )
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "x": self.x, "y": self.y, "width": self.width, "height": self.height}
+        return {
+            "name": self.name,
+            "label": self.label,
+            "x": self.x,
+            "y": self.y,
+            "width": self.width,
+            "height": self.height,
+        }
 
 
-def select_crops(encoded: np.ndarray, size: int, count: int, manual=()) -> list[Crop]:
-    """Choose evaluation crops on a source image (sRGB-encoded float, (H, W, 3))."""
+def select_crops(
+    encoded: np.ndarray, size: int, count: int, manual=(), subjects: SubjectAnalysis | None = None
+) -> list[Crop]:
+    """Choose evaluation crops on a source image (sRGB-encoded float, (H, W, 3)).
+
+    ``subjects`` is the analysis of the same image; it is computed here when not given.
+    """
     height, width = encoded.shape[:2]
     if manual:
         crops = []
         for index, (x, y, w, h) in enumerate(manual, start=1):
             if x + w > width or y + h > height:
                 raise ValueError(f"manual crop {[x, y, w, h]} exceeds the {width}x{height} source")
-            crops.append(Crop(f"manual_{index}", int(x), int(y), int(w), int(h)))
+            crops.append(Crop(f"manual_{index}", int(x), int(y), int(w), int(h), "manual crop from the configuration"))
         return crops
 
     size = min(size, width, height)
-    crops = [Crop("center", (width - size) // 2, (height - size) // 2, size, size)]
-    if count == 1:
+    subjects = subjects or analyse(encoded)
+    crops = _subject_crops(subjects, size, width, height, limit=1 if count == 1 else count - 1)
+    if len(crops) >= count:
         return crops
 
     y_luma = luma(encoded)
@@ -71,12 +90,41 @@ def select_crops(encoded: np.ndarray, size: int, count: int, manual=()) -> list[
             energy = integral[y + size, x + size] - integral[y, x + size] - integral[y + size, x] + integral[y, x]
             candidates.append((-energy, y, x))
     candidates.sort()
-    for _, y, x in candidates:
-        if len(crops) >= count:
-            break
-        if all(_disjoint(x, y, size, c) for c in crops):
-            crops.append(Crop(f"detail_{len(crops)}", x, y, size, size))
+    # First pass keeps half a crop of space around every crop so detail crops show different parts of the
+    # scene; the second pass only requires them not to overlap.
+    for gap in (size // 2, 0):
+        for _, y, x in candidates:
+            if len(crops) >= count:
+                return crops
+            if all(_disjoint(x, y, size, c, gap) for c in crops):
+                index = sum(c.name.startswith("detail_") for c in crops) + 1
+                crops.append(Crop(f"detail_{index}", x, y, size, size, f"detail: most detailed region {index}"))
     return crops
+
+
+def _subject_crops(subjects: SubjectAnalysis, size: int, width: int, height: int, limit: int) -> list[Crop]:
+    """Crops of the main subject: the primary face, else the centre of interest, else the centre."""
+    face = subjects.primary_face
+    if face is not None:
+        cx = face.x + face.width / 2
+        if max(face.width, face.height) <= size:
+            return [_centred("face", "primary face", cx, face.y + face.height / 2, size, width, height)]
+        # A face larger than a crop: the eyes carry identity (PRD 11.1, 26.2), then nose and mouth below them.
+        eyes = _centred("face_eyes", "primary face: eyes", cx, face.y + 0.4 * face.height, size, width, height)
+        crops = [eyes]
+        if limit >= 2 and face.height >= 1.5 * size and eyes.y + 2 * size <= height:
+            crops.append(Crop("face_nose_mouth", eyes.x, eyes.y + size, size, size, "primary face: nose and mouth"))
+        return crops
+    if subjects.center_of_interest is not None:
+        x, y = subjects.center_of_interest
+        return [_centred("subject", "centre of interest (saliency)", x, y, size, width, height)]
+    return [Crop("center", (width - size) // 2, (height - size) // 2, size, size, "image centre")]
+
+
+def _centred(name: str, label: str, cx: float, cy: float, size: int, width: int, height: int) -> Crop:
+    x = min(max(0, round(cx - size / 2)), width - size)
+    y = min(max(0, round(cy - size / 2)), height - size)
+    return Crop(name, x, y, size, size, label)
 
 
 def crop_panel(
@@ -113,5 +161,10 @@ def crop_panel(
     return panel
 
 
-def _disjoint(x: int, y: int, size: int, crop: Crop) -> bool:
-    return x + size <= crop.x or crop.x + crop.width <= x or y + size <= crop.y or crop.y + crop.height <= y
+def _disjoint(x: int, y: int, size: int, crop: Crop, gap: int = 0) -> bool:
+    return (
+        x + size + gap <= crop.x
+        or crop.x + crop.width + gap <= x
+        or y + size + gap <= crop.y
+        or crop.y + crop.height + gap <= y
+    )

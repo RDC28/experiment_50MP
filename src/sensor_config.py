@@ -200,7 +200,7 @@ class SensorResearchConfig:
     )
     crop_count: int = _param(
         3,
-        "Number of visual comparison crops (centre plus the most detailed regions).",
+        "Number of visual comparison crops (the main subject, then the most detailed regions).",
         "1 to 12",
         "More crops cover more scene content.",
         bounds=(1, 12),

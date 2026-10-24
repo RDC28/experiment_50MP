@@ -50,6 +50,8 @@ INPUTS_ROOT = "{tmp_path / "inputs"}"
 
     assert "run " in outputs and ": complete in" in outputs
     assert list((tmp_path / "outputs" / "universal").glob("*/*_srgb16.tif"))
+    assert "Final 50 MP image: lanczos" in outputs and "not in Colab: the final image is" in outputs
+    assert list((tmp_path / "outputs" / "universal").glob("*/final/final_*_lanczos_*_srgb16.tif"))
     assert list((tmp_path / "reports").glob("*/report.md"))
     assert list((tmp_path / "reports").glob("*.zip"))
     assert list((tmp_path / "inputs" / "universal").glob("*_synthetic_320x180.png"))
@@ -102,6 +104,7 @@ INPUTS_ROOT = "{tmp_path / "inputs"}"
 
     assert ": complete in" in outputs
     assert "Mode A, conservative" in outputs and "Mode B, balanced" in outputs
+    assert "Final 50 MP image: sr_balanced" in outputs  # the synthetic chart has no face
     masters = list((tmp_path / "outputs" / "universal").glob("*/*_sr_*_srgb16.tif"))
     assert {p.name.split("_sr_")[1].split("_")[0] for p in masters} == {"conservative", "balanced"}
     report = next((tmp_path / "reports").glob("*/report.md")).read_text()

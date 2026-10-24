@@ -511,7 +511,7 @@ def _select_crops(linear: np.ndarray, config: SensorResearchConfig) -> list[comp
         x0, y0, _, _ = crop.output_box(small_size, (width, height))
         side = min(config.crop_size, width, height) // 2 * 2
         x0, y0 = min(x0 // 2 * 2, width - side), min(y0 // 2 * 2, height - side)
-        crops.append(comparison.Crop(crop.name, x0, y0, side, side))
+        crops.append(comparison.Crop(crop.name, x0, y0, side, side, crop.label))
     return crops
 
 

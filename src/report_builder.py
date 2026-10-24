@@ -124,6 +124,7 @@ def render_report(manifest: dict, report_dir: Path) -> str:
         ("Models", _models_text(manifest)),
         ("GPU", f"{gpu['name']} ({gpu['memory_total_gb']} GB)" if gpu else "none detected (CPU only)"),
         ("Platform", f"{runtime.get('platform', '-')}, Python {runtime.get('python', '-')}"),
+        ("Final image", _final_summary(manifest.get("final_output"))),
         ("Total runtime", f"{manifest.get('total_seconds', 0):.1f} s"),
         ("Peak resident memory", f"{manifest.get('memory', {}).get('pipeline_peak_rss_mb', '-')} MB"),
         ("Storage used", _bytes(manifest.get("storage_used_bytes"))),
@@ -239,6 +240,11 @@ def render_report(manifest: dict, report_dir: Path) -> str:
     figures = report_dir / "figures"
     if (figures / "source_preview.jpg").exists():
         add("Original source:\n\n![Source](figures/source_preview.jpg)\n")
+    final = manifest.get("final_output")
+    if final:
+        add(_final_section(final, figures))
+    if manifest.get("subject"):
+        add(f"Main subject: {subject_text(manifest['subject'])}\n")
     for method in methods:
         if (figures / f"{method}_preview.jpg").exists():
             kind = "pretrained super-resolution" if method.startswith("sr_") else "baseline"
@@ -246,10 +252,12 @@ def render_report(manifest: dict, report_dir: Path) -> str:
                 f"{method.capitalize()} {kind} at output size (review downscale):\n\n"
                 f"![{method}](figures/{method}_preview.jpg)\n"
             )
+    labels = {c["name"]: c.get("label") for c in manifest.get("crops", [])}
     for panel in manifest.get("crop_panels", []):
         name = Path(panel["path"]).name
+        shows = f", {labels[panel['crop']]}" if labels.get(panel["crop"]) else ""
         add(
-            f"Crop `{panel['crop']}` (source, every method at 100% output pixels, amplified difference):\n\n"
+            f"Crop `{panel['crop']}`{shows} (source, every method at 100% output pixels, amplified difference):\n\n"
             f"![{panel['crop']}](figures/{name})\n"
         )
     for mode in sr_record.get("modes", {}):
@@ -419,6 +427,7 @@ def _sr_section(sr_record: dict) -> str:
                 if projection
                 else "off",
                 f"{difference.get('mean', '-')} / {difference.get('p99', '-')}",
+                range_text(s),
             )
         )
     out.append(
@@ -438,6 +447,7 @@ def _sr_section(sr_record: dict) -> str:
                 "Seam check",
                 "Low-frequency residual (linear) before -> after",
                 "vs Lanczos mean / p99 (8-bit luma)",
+                "Linear min: resampled -> anti-ringing -> corrected",
             ],
             rows,
         )
@@ -449,7 +459,10 @@ def _sr_section(sr_record: dict) -> str:
         "texture the networks synthesised differently where one tile has almost no weight. Hard-seam height: the "
         "luma step across each tile-boundary line beyond the step across nearby lines, on samples where the "
         "content is flat (0 means no hard seam). Both gates are provisional until calibrated in pilot runs "
-        "(PRD 25.3)" + _limits_text(sr_record) + ".\n"
+        "(PRD 25.3)" + _limits_text(sr_record) + ". Linear min: the lowest linear value after the Lanczos-3 resample "
+        "from the network's x4 grid, after the anti-ringing clamp to the range of the network pixels under the "
+        "kernel's main lobe, and after the gain-form low-frequency correction (negative values clip to black in "
+        "the TIFF and show as dark halos).\n"
     )
     out.append("Mode intents:\n")
     out += [
@@ -521,21 +534,9 @@ def conclusions(manifest: dict) -> list[str]:
             lines.append(
                 "Phase 1 baselines are measurable: source-consistency metrics are reported for every baseline."
             )
-        if len(done) >= 2 and measured and all("statistics" in s for s in done.values()):
-            names = list(done)
-            best_psnr = max(names, key=lambda m: done[m]["source_consistency"]["psnr_db"])
-            best_de = min(names, key=lambda m: done[m]["source_consistency"]["color_difference_ciede2000"]["mean"])
-            lines.append(f"Highest source PSNR: {best_psnr}; lowest mean delta E 2000: {best_de}.")
-            overshoot = {
-                m: done[m]["statistics"]["below_zero_fraction"] + done[m]["statistics"]["above_one_fraction"]
-                for m in names
-            }
-            most = max(overshoot, key=overshoot.get)
-            lines.append(
-                f"Kernel overshoot outside [0, 1] (a ringing indicator) is largest for {most} "
-                f"({overshoot[most]:.4%} of samples); the TIFF clips it, the EXR keeps it."
-            )
+    lines += _ranking_conclusions(manifest)
     lines += _sr_conclusions(manifest)
+    lines += _final_conclusions(manifest.get("final_output"))
     lines.append(
         "Visual acceptance (PRD 25.2: seams, ringing, halos, banding) needs human review of the crop "
         "panels at 100% and 200%."
@@ -551,6 +552,159 @@ def conclusions(manifest: dict) -> list[str]:
             "limit, which is the reference that later pretrained SR phases must beat."
         )
     return lines
+
+
+# (label, metric getter, higher is better, digits) for the ranking in the conclusions
+RANKED_METRICS = (
+    ("Source PSNR (dB)", lambda m: m["psnr_db"], True, 2),
+    ("SSIM", lambda m: m["ssim"], True, 5),
+    ("MS-SSIM", lambda m: m["ms_ssim"]["value"], True, 5),
+    ("Edge displacement mean (px)", lambda m: m["edge_displacement"]["mean_px"], False, 3),
+    ("delta E 2000 mean", lambda m: m["color_difference_ciede2000"]["mean"], False, 4),
+    ("L* Wasserstein-1", lambda m: m["luminance_distribution"]["wasserstein_1"], False, 4),
+)
+
+
+def rank_outputs(manifest: dict) -> list[dict]:
+    """Every measured output (baselines and SR modes) ordered best first on each reported metric."""
+    measured = {
+        name: summary["source_consistency"]
+        for name, summary in {
+            **manifest.get("baselines", {}),
+            **{f"sr_{m}": s for m, s in (manifest.get("super_resolution") or {}).get("modes", {}).items()},
+        }.items()
+        if "source_consistency" in summary
+    }
+    rankings = []
+    for label, getter, higher, digits in RANKED_METRICS:
+        values = {}
+        for name, metrics in measured.items():
+            try:
+                value = getter(metrics)
+            except (KeyError, TypeError):
+                continue
+            if value is not None:
+                values[name] = float(value)
+        order = sorted(values, key=lambda n: -values[n] if higher else values[n])
+        rankings.append(
+            {"metric": label, "higher_is_better": higher, "digits": digits, "order": order, "values": values}
+        )
+    return rankings
+
+
+def _ranking_conclusions(manifest: dict) -> list[str]:
+    rankings = [r for r in rank_outputs(manifest) if len(r["order"]) >= 2]
+    if not rankings:
+        return []
+    corrected = {
+        f"sr_{m}"
+        for m, s in (manifest.get("super_resolution") or {}).get("modes", {}).items()
+        if s.get("source_projection")
+    }
+    lines = []
+    for r in rankings:
+        ordered = ", ".join(
+            f"{name}{'*' if name in corrected else ''} {r['values'][name]:.{r['digits']}f}" for name in r["order"]
+        )
+        lines.append(
+            f"{r['metric']} ({'higher' if r['higher_is_better'] else 'lower'} is better), best first: {ordered}."
+        )
+    if corrected:
+        lines.append(
+            "* Pulled towards the source by the low-frequency correction under the same area reduction these "
+            "metrics use, so its PSNR, SSIM, MS-SSIM, delta E and L* agreement are partly true by construction; "
+            "edge displacement is the independent check. Source consistency also cannot show whether synthesised "
+            "detail is correct."
+        )
+    stats = {
+        name: s["statistics"]
+        for name, s in {
+            **manifest.get("baselines", {}),
+            **{f"sr_{m}": s for m, s in (manifest.get("super_resolution") or {}).get("modes", {}).items()},
+        }.items()
+        if "statistics" in s
+    }
+    if len(stats) >= 2:
+        overshoot = {n: st["below_zero_fraction"] + st["above_one_fraction"] for n, st in stats.items()}
+        most = max(overshoot, key=overshoot.get)
+        lowest = min(stats, key=lambda n: min(stats[n]["min"].values()))
+        lines.append(
+            f"Samples outside [0, 1] (kernel overshoot, a ringing indicator) are most frequent in {most} "
+            f"({overshoot[most]:.4%}); the lowest linear value is {min(stats[lowest]['min'].values()):.4f} "
+            f"({lowest}). The TIFF clips them, the EXR keeps them."
+        )
+    return lines
+
+
+def _final_conclusions(final: dict | None) -> list[str]:
+    if not final:
+        return []
+    if not final.get("method"):
+        return [f"No final image was saved: {final.get('reason')}."]
+    files = final.get("files", {})
+    names = ", ".join(f"`{Path(f['path']).name}`" for f in files.values()) or "no files"
+    line = f"Final 50 MP image: {final['method']} ({final['reason']}); saved as {names}."
+    return [line, *final.get("notes", [])]
+
+
+def _final_summary(final: dict | None) -> str:
+    if not final:
+        return "-"
+    if not final.get("method"):
+        return f"none ({final.get('reason')})"
+    tiff = final.get("files", {}).get("tiff16")
+    return f"{final['method']}" + (f", `{Path(tiff['path']).name}`" if tiff else "")
+
+
+def _final_section(final: dict, figures: Path) -> str:
+    out = ["### Final 50 MP image\n"]
+    if not final.get("method"):
+        out.append(f"No final image: {final.get('reason')}.\n")
+        return "\n".join(out)
+    out.append(
+        f"**{final['method']}** ("
+        + ("requested in the configuration" if final["rule"] == "override" else "automatic rule")
+        + f"): {final['reason']}.\n"
+    )
+    if (figures / "final_preview.jpg").exists():
+        out.append("![Final image](figures/final_preview.jpg)\n")
+    rows = [
+        (
+            f"`{Path(f['path']).name}`",
+            f"{f['width']} x {f['height']}",
+            _bytes(f["size_bytes"]),
+            f"{f['how']} of `{f['from']}`, SHA-256 verified",
+        )
+        for f in final.get("files", {}).values()
+    ]
+    if rows:
+        out.append(_table(["File", "Dimensions", "Size", "Saved as"], rows))
+    return "\n".join(out)
+
+
+def subject_text(subject: dict) -> str:
+    face = subject.get("primary_face")
+    if face:
+        text = (
+            f"{len(subject['faces'])} face(s) found; the primary face is {face['width']} x {face['height']} source px "
+            f"at ({face['x']}, {face['y']})"
+        )
+        if subject.get("high_information_face"):
+            text += f", at least the provisional {subject['tier1_min_face_px']} px of a high-information face"
+    elif subject.get("center_of_interest"):
+        x, y = subject["center_of_interest"]
+        text = f"no face found; centre of interest at ({x}, {y}): {subject['interest_basis']}"
+    else:
+        text = "no face and no distinct centre of interest found"
+    return f"{text}. Detection: {subject['note']}. Never identity evidence."
+
+
+def range_text(summary: dict) -> str:
+    resample = summary.get("tiling", {}).get("resample_range") or {}
+    projection = summary.get("source_projection") or {}
+    parts = [_num(resample.get("min_linear_before"), 4), _num(resample.get("min_linear_after"), 4)]
+    parts.append(_num(projection.get("min_linear_after"), 4) if projection else "off")
+    return " -> ".join(parts)
 
 
 def _sr_conclusions(manifest: dict) -> list[str]:
@@ -588,6 +742,16 @@ def _sr_conclusions(manifest: dict) -> list[str]:
     fallbacks = sum(len(s.get("tiling", {}).get("fallbacks", [])) for s in modes.values())
     if fallbacks:
         lines.append(f"Memory fallback was used {fallbacks} time(s); see the SR table for details.")
+    for mode, s in modes.items():
+        resample = s.get("tiling", {}).get("resample_range") or {}
+        if resample.get("min_linear_before") is not None and resample["min_linear_before"] < 0:
+            final_min = min(s["statistics"]["min"].values()) if "statistics" in s else None
+            lines.append(
+                f"sr_{mode}: Lanczos resampling of the network output rang down to {resample['min_linear_before']:.4f} "
+                f"linear ({resample['below_zero_fraction_before']:.4%} of samples below 0); the anti-ringing clamp "
+                f"raised the minimum to {resample['min_linear_after']:.4f} and the master's minimum is "
+                f"{_num(final_min, 4)}, so no dark halos are clipped into the TIFF."
+            )
     measured = {f"sr_{m}": s["source_consistency"] for m, s in modes.items() if "source_consistency" in s}
     base = {m: s["source_consistency"] for m, s in manifest.get("baselines", {}).items() if "source_consistency" in s}
     if measured and base:

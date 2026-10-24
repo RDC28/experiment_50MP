@@ -50,7 +50,9 @@ src/                           the shared package, imported as synthetic_raw_lab
                                hallucination controls (PRD 10.2 to 10.5)
   exporters.py                 16-bit TIFF, OpenEXR and review images with read-back validation (PRD 17, 23.6)
   quality_metrics.py           source-consistency metrics and image statistics (PRD 23.2, 27.4)
-  comparison.py                identical evaluation crops across methods (PRD 9.2, 26)
+  subjects.py                  main subject: faces (OpenCV YuNet, else the Haar cascade) or a saliency centre of interest
+  comparison.py                identical evaluation crops across methods, main subject first (PRD 9.2, 26)
+  final_output.py              the run's final 50 MP image: selection rule, final files, Colab download and Drive copy
   environment.py               runtime inspection, memory benchmark, storage estimate (PRD 21, 28.1)
   report_builder.py            Markdown report and figures (PRD 27)
   pipeline.py                  the Phase 0 to 2 run with per-stage logging (PRD 5.2, 22.3)
@@ -69,6 +71,8 @@ reports/                       per-run report, manifest and figures (not in Git)
 ```
 
 Notebooks `01_Human_Crowd_50MP`, `02_Night_Scenery_50MP` and `03_Universal_50MP` arrive with Phases 3 and 4.
+Every notebook ends the same way: one final 50 MP image chosen by `final_output.select`, saved by
+`final_output.write_final` and delivered by `final_output.deliver`.
 
 ## Running in Google Colab
 
@@ -78,6 +82,9 @@ Notebooks `01_Human_Crowd_50MP`, `02_Night_Scenery_50MP` and `03_Universal_50MP`
    is never stored in the clone.
 3. To keep the masters, enable `MOUNT_DRIVE` and point `OUTPUT_ROOT` at a Drive folder.
 4. Choose the input (`upload`, a `path`, or the `synthetic` test image) and a preset, then run all cells.
+   The run ends with its final 50 MP image (see below): with `DOWNLOAD_FINAL` the browser downloads the final
+   16-bit TIFF, about 235 MB for a standard run, and with `MOUNT_DRIVE` the final TIFF and EXR are also copied to
+   `FINAL_DRIVE_DIR`. The report-and-figures zip is a separate, small download.
 5. Super-resolution (`ENABLE_SUPER_RESOLUTION`, on by default) needs a GPU runtime (Runtime > Change runtime
    type) to finish in minutes. The first run downloads about 135 MB of SwinIR weights into `WEIGHTS_DIR`; point
    it at Drive to keep them.
@@ -136,11 +143,14 @@ SR job on its own: it holds about 1 to 2 GB of device memory plus the 600 MB out
    float32 resampler, one channel and one baseline at a time. Kernel overshoot is kept in float.
 5. **Super-resolve** (Inference; optional, Phase 2). For each mode, the network runs at its native x4 on
    overlapping tiles aligned to its attention-window grid, one strip of tiles at a time (never the whole x4
-   image), and the overlaps are crossfaded with the quarter next to each tile edge left out. Each strip is resampled with Lanczos-3 in
-   linear light to its rows of the exact target, and a low-frequency correction pulls tone and colour back to
-   the source (Mode A conservative: fidelity network; Mode B balanced: perceptual network; Mode C aggressive,
-   experimental: perceptual network uncorrected). Out-of-memory tiles are split, then moved to the CPU. Seam
-   gates and a |SR - Lanczos| heatmap show where detail was synthesised. Choices and licences:
+   image), and the overlaps are crossfaded with the quarter next to each tile edge left out. Each strip is
+   resampled with Lanczos-3 in linear light to its rows of the exact target, with every sample held within the
+   range of the network pixels under the kernel's main lobe (anti-ringing: Lanczos otherwise rings below zero on
+   the crisp edges a network draws, which the TIFF clips to black as dark halos). A low-frequency correction,
+   applied as a gain so it cannot push a pixel below zero, then pulls tone and colour back to the source (Mode A
+   conservative: fidelity network; Mode B balanced: perceptual network; Mode C aggressive, experimental:
+   perceptual network uncorrected). Out-of-memory tiles are split, then moved to the CPU. Seam gates and a
+   |SR - Lanczos| heatmap show where detail was synthesised. Choices and licences:
    [docs/models.md](docs/models.md).
 6. **Export** (Packaging). OpenEXR (half by default, linear Rec.709, chromaticities and a scene-referred
    caveat in the header) and 16-bit sRGB TIFF (embedded sRGB ICC profile, lossless Deflate, provenance JSON).
@@ -148,9 +158,22 @@ SR job on its own: it holds about 1 to 2 GB of device memory plus the 600 MB out
 7. **Measure** (Measurement). Reduces each TIFF master to source size by area averaging and reports PSNR,
    SSIM, MS-SSIM, symmetric Canny edge displacement, CIEDE2000 and the L* distribution shift. LPIPS needs
    pretrained weights and is not computed yet.
-8. **Compare and report.** Saves identical crops from every baseline and SR mode (centre plus the most detailed
-   regions) next to the source and an amplified difference, previews, delta E maps, and writes
-   `reports/<run>/report.md` plus `manifest.json` with the provenance record of PRD 6.2.
+8. **Compare** (Measurement). Finds the main subject: faces with OpenCV's YuNet detector (its 0.2 MB model is
+   downloaded once into `WEIGHTS_DIR` and checksum-verified; see [docs/models.md](docs/models.md)), else the
+   Haar cascade of OpenCV 4.x, otherwise a spectral-residual saliency centre of interest.
+   Saves identical crops from every baseline and SR mode next to the source and an amplified difference: the
+   primary face first (its eyes, then nose and mouth when the face is larger than a crop), else the centre of
+   interest, then the most detailed regions spread apart. Manual `crops` replace them. Also previews and delta E
+   maps.
+9. **Final 50 MP image** (Packaging). One output becomes the run's final image (PRD 27.3, 32.3).
+   `final_output: auto` takes `sr_conservative` when the category is `human` or the primary face is at least 96
+   source pixels (PRD 10.2, 11.2 tier 1), `sr_balanced` for other scenes, and passes over any output whose
+   exports failed validation or that failed a seam gate, down to Lanczos and bicubic; `sr_aggressive` is never
+   chosen automatically. A named `final_output` picks that output. Its TIFF and EXR are saved again, verified
+   byte for byte, as `final/final_<name>` in the run's masters folder (hard links where the file system allows).
+10. **Report.** Writes `reports/<run>/report.md` plus `manifest.json` with the provenance record of PRD 6.2.
+    The conclusions rank every output on each metric (marking the SR modes whose correction makes source
+    consistency partly true by construction) and state which output is final and why.
 
 ## Phase 5: synthetic sensor research
 

@@ -32,10 +32,13 @@ export_review: true              # full-frame review JPEGs; crop comparison PNGs
 review_max_edge: 2048
 save_intermediates: true
 
+# Final 50 MP image (PRD 27.3, 32.3): saved under final/ in the run's masters folder
+final_output: auto               # auto (faces: sr_conservative; other scenes: sr_balanced; else Lanczos) | an output name
+
 # Evaluation crops (PRD 9.2, 26)
 crop_size: 256
-crop_count: 4
-crops: []                        # manual [x, y, width, height] boxes in source pixels
+crop_count: 4                    # the main subject (face, else centre of interest) first, then the most detailed regions
+crops: []                        # manual [x, y, width, height] boxes in source pixels; replace the automatic crops
 
 random_seed: 42
 

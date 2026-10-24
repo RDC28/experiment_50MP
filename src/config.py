@@ -28,6 +28,7 @@ RUNTIME_PRESETS = ("quick", "standard", "research")
 TIFF_COMPRESSIONS = ("zlib", "none")
 EXR_PRECISIONS = ("half", "float")
 EXR_COMPRESSIONS = ("zip", "piz", "none")
+FINAL_OUTPUTS = ("auto", *BASELINE_METHODS, *(f"sr_{mode}" for mode in SR_MODES))
 
 
 def _param(
@@ -279,6 +280,16 @@ class ExperimentConfig:
         "Larger previews show more detail but grow the report.",
         bounds=(256, 8192),
     )
+    final_output: str = _param(
+        "auto",
+        "Which output becomes the run's final 50 MP image (PRD 27.3, 32.3); src/final_output.py has the rule.",
+        "auto | lanczos | bicubic | sr_conservative | sr_balanced | sr_aggressive",
+        "auto: sr_conservative for the human category or a face of at least 96 source px, sr_balanced for other "
+        "scenes, then the next eligible output (valid exports, seam gates passed). A name picks that output. The "
+        "final TIFF and EXR are saved under final/ in the run's masters folder.",
+        warning="sr_aggressive invents the most detail and must not be used for identity-critical images.",
+        choices=FINAL_OUTPUTS,
+    )
     save_intermediates: bool = _param(
         True,
         "Save the working-space source as a float32 EXR for ablations.",
@@ -296,7 +307,8 @@ class ExperimentConfig:
         4,
         "Number of automatically chosen evaluation crops.",
         "1 to 12",
-        "The centre crop plus the most detailed non-overlapping regions.",
+        "The main subject first (the primary face, else the centre of interest, else the centre), then the most "
+        "detailed non-overlapping regions; at least one detail crop when the count is 2 or more.",
         bounds=(1, 12),
     )
     crops: tuple = _param(
@@ -349,6 +361,15 @@ class ExperimentConfig:
             raise ValueError(f"sr_tile_size must be 0 (auto) or at least 64, got {self.sr_tile_size}")
         if self.sr_tile_size and self.sr_tile_overlap * 2 > self.sr_tile_size:
             raise ValueError("sr_tile_overlap must be at most half of sr_tile_size")
+        if self.final_output != "auto":
+            produced = set(self.baselines) | (
+                {f"sr_{mode}" for mode in self.sr_modes} if self.enable_super_resolution else set()
+            )
+            if self.final_output not in produced:
+                raise ValueError(
+                    f"final_output {self.final_output!r} is not produced by this configuration "
+                    f"(outputs: {', '.join(sorted(produced))})"
+                )
         for crop in self.crops:
             if len(crop) != 4 or any(int(v) != v or v < 0 for v in crop) or crop[2] < 1 or crop[3] < 1:
                 raise ValueError(f"each crop must be [x, y, width, height] with non-negative integers, got {crop!r}")

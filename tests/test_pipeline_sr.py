@@ -147,7 +147,16 @@ def test_sr_modes_are_exported_measured_and_reported(source, project, loads):
     assert {s["classification"] for s in manifest["stages"]} <= ALLOWED_CLASSES
     assert {"load_model_swinir_m_x4_classical", "super_resolution_balanced"} <= {s["name"] for s in manifest["stages"]}
     assert all(f"sr_{m}" in p["methods"] for p in manifest["crop_panels"] for m in modes)
-    assert len(manifest["output_checksums"]) == 2 * (1 + 3) + 1  # TIFF + EXR per method, plus the intermediate
+    # TIFF + EXR per method, the intermediate, and the final image's TIFF + EXR
+    assert len(manifest["output_checksums"]) == 2 * (1 + 3) + 1 + 2
+    final = manifest["final_output"]
+    assert final["method"] == "sr_balanced" and "general scene" in final["reason"]  # no face in the test chart
+    assert final["files"]["tiff16"]["file_sha256"] == modes["balanced"]["exports"]["tiff16"]["file_sha256"]
+    for mode in ("conservative", "balanced"):
+        resample = modes[mode]["tiling"]["resample_range"]
+        assert resample["min_linear_after"] >= 0 and resample["min_linear_before"] <= resample["min_linear_after"]
+        assert modes[mode]["source_projection"]["min_linear_after"] >= 0
+        assert min(modes[mode]["statistics"]["min"].values()) >= 0
 
     report = result.report_path.read_text()
     assert report.startswith("# Phase 0 to 2 report")
@@ -156,6 +165,24 @@ def test_sr_modes_are_exported_measured_and_reported(source, project, loads):
     assert "partly true by construction" in report
     assert "synthesised" in report and "swinir_m_x4_classical" in report
     assert "Phase 2 exit criterion not assessed" in report
+    assert "Linear min: resampled -> anti-ringing -> corrected" in report
+    assert "Source PSNR (dB) (higher is better), best first: " in report and "sr_aggressive " in report
+    assert "Final 50 MP image: sr_balanced" in report
+
+
+def test_the_human_category_makes_the_conservative_mode_final(source, project, loads):
+    config = sr_config(input_category="human")
+    final = pipeline.run(source, config, project, log=lambda _: None).manifest["final_output"]
+    assert final["method"] == "sr_conservative" and "human" in final["reason"]
+    assert Path(final["files"]["exr"]["path"]).name.startswith("final_scene_sr_conservative_")
+
+
+def test_a_skipped_sr_override_falls_back_to_a_baseline(source, project, loads):
+    config = sr_config(quick_target_megapixels=0.04, pixel_count_tolerance=0.01, final_output="sr_conservative")
+    manifest = pipeline.run(source, config, project, log=lambda _: None).manifest
+    assert manifest["super_resolution"]["skipped"]
+    final = manifest["final_output"]
+    assert final["method"] == "lanczos" and "could not be used" in final["notes"][0]
 
 
 def test_disabled_projection_and_strength_reach_the_run(source, project, loads):
