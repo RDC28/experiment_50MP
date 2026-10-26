@@ -89,6 +89,10 @@ def test_foundation_uses_public_package_interfaces(notebook):
         for alias in node.names
     }
     assert imports == {
+        "CFA_PATTERNS",
+        "DNGMetadataBuilder",
+        "DNGWriter",
+        "LibRawValidator",
         "ExperimentConfig",
         "EnvironmentInspector",
         "InputInspector",
@@ -120,3 +124,44 @@ def test_scientific_boundary_is_visible(notebook):
     introduction = notebook.cells[0].source
     for required in ("synthetic sensor reconstruction", "hypothetical", "Synthetic", "D/I/F/M", "GPS"):
         assert required in introduction
+
+
+def raw_gate_cell(notebook):
+    return next(cell for cell in notebook.cells if cell.cell_type == "code" and "def run_raw_gate():" in cell.source)
+
+
+def test_raw_gate_precedes_input_audit(notebook):
+    gate = raw_gate_cell(notebook)
+    audit = next(
+        cell for cell in notebook.cells if cell.cell_type == "code" and "config = read_configuration()" in cell.source
+    )
+    assert notebook.cells.index(gate) < notebook.cells.index(audit)
+    assert 'globals().get("RAW_GATE_PASSED", False)' in audit.source
+
+
+def test_tiny_raw_gate_cell_with_real_libraw(notebook):
+    # Execute only the bounded fixture cell, never the notebook or Colab setup.
+    from synthraw.config import ExperimentConfig
+
+    namespace = {"ExperimentConfig": ExperimentConfig}
+    exec(compile(raw_gate_cell(notebook).source, str(NOTEBOOK), "exec"), namespace)
+    assert namespace["RAW_GATE_PASSED"] is True
+
+
+def test_tiny_raw_gate_failure_blocks_progress_and_cleans_up(notebook, monkeypatch):
+    from synthraw.config import ExperimentConfig
+    from synthraw.libraw_validator import HardValidationError, LibRawValidator
+
+    paths = []
+
+    def fail(self, path, *args, **kwargs):
+        paths.append(path)
+        raise HardValidationError("decoder rejected fixture")
+
+    monkeypatch.setattr(LibRawValidator, "validate", fail)
+    namespace = {"ExperimentConfig": ExperimentConfig, "RAW_GATE_PASSED": True}
+    with pytest.raises(HardValidationError, match="decoder rejected fixture"):
+        exec(compile(raw_gate_cell(notebook).source, str(NOTEBOOK), "exec"), namespace)
+    assert namespace["RAW_GATE_PASSED"] is False
+    assert len(paths) == 1
+    assert not paths[0].parent.exists()
