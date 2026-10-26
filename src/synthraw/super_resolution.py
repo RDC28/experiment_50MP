@@ -338,3 +338,63 @@ def diagnose_source_fidelity(reconstruction: np.ndarray, source: np.ndarray) -> 
         maximum,
         float(-10 * np.log10(mse)) if mse else float("inf"),
     )
+
+
+def resize_exact(
+    source: np.ndarray,
+    output_path: str | Path,
+    *,
+    width: int,
+    height: int,
+) -> Path:
+    """Resize SR to exact content dimensions with bounded-memory Lanczos-3.
+
+    PRD model selection requires an exact resize after x2/x4 inference. Pixel
+    centres align across grids; downsampling widens the antialiasing kernel.
+    Edge samples clamp to the image border. Only source rows and one output
+    row are materialised, so a disk-backed 50 MP input stays disk-backed.
+    """
+    if source.ndim != 3 or source.shape[2] != 3 or min(source.shape[:2]) < 1:
+        raise ValueError("source must be nonempty HWC RGB")
+    if any(type(value) is not int or value < 1 for value in (width, height)):
+        raise ValueError("target dimensions must be positive integers")
+    path = Path(output_path)
+    if path.exists():
+        raise FileExistsError(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    def kernel(input_size: int, output_size: int, positions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        factor = max(1.0, input_size / output_size)
+        centres = (positions + 0.5) * input_size / output_size - 0.5
+        radius = int(np.ceil(3 * factor))
+        indices = np.floor(centres).astype(np.int64)[:, None] + np.arange(-radius + 1, radius + 1)
+        distance = (centres[:, None] - indices) / factor
+        weights = np.sinc(distance) * np.sinc(distance / 3)
+        weights[np.abs(distance) >= 3] = 0
+        weights /= weights.sum(axis=1, keepdims=True)
+        return np.clip(indices, 0, input_size - 1), weights
+
+    source_height, source_width = source.shape[:2]
+    columns, horizontal = kernel(source_width, width, np.arange(width))
+    output = None
+    try:
+        output = np.lib.format.open_memmap(path, mode="w+", dtype=np.float32, shape=(height, width, 3))
+        for y in range(height):
+            rows, vertical = kernel(source_height, height, np.array([y]))
+            row = np.zeros((width, 3), dtype=np.float64)
+            for index, weight in zip(rows[0], vertical[0], strict=True):
+                if weight == 0:
+                    continue
+                pixels = np.asarray(source[index], dtype=np.float64)
+                if not np.isfinite(pixels).all() or np.any((pixels < 0) | (pixels > 1)):
+                    raise ValueError("source must contain finite RGB values in [0, 1]")
+                row += np.einsum("wk,wkc->wc", horizontal, pixels[columns]) * weight
+            output[y] = np.clip(row, 0, 1)
+        output.flush()
+    except BaseException:
+        output = None
+        path.unlink(missing_ok=True)
+        raise
+    finally:
+        output = None
+    return path
