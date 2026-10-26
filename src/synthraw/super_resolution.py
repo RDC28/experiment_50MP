@@ -135,3 +135,93 @@ class SuperResolutionEngine:
             output = weights = None
             weights_path.unlink(missing_ok=True)
         return TiledSRResult(path, len(positions), benchmark, benchmark * len(positions), tile)
+
+
+@dataclass(frozen=True)
+class SeamDiagnostic:
+    """Boundary/interior residuals against an aligned reference (PRD validation)."""
+
+    residual_map_path: Path
+    boundary_mean: float
+    interior_mean: float
+    ratio: float
+    meets_target: bool
+
+
+def diagnose_tile_seams(
+    reconstruction: np.ndarray,
+    reference: np.ndarray,
+    output_path: str | Path,
+    *,
+    tile_size: int,
+    overlap: int,
+    scale: int,
+    boundary_width: int = 1,
+    strip_rows: int = 64,
+) -> SeamDiagnostic:
+    """Store mean absolute RGB residuals and compare tile starts to interiors.
+
+    Both inputs must share the reconstructed grid and radiometric convention.
+    The reference should be an independently reconstructed baseline, so image
+    edges are not automatically mistaken for seams. Empty regions are rejected.
+    A zero interior residual yields ratio zero for perfect output, infinity for
+    nonzero boundary error. The PRD target is strictly below 1.25.
+    """
+    if reconstruction.ndim != 3 or reconstruction.shape[2] != 3 or reconstruction.shape != reference.shape:
+        raise ValueError("reconstruction and reference must share a nonempty HWC RGB shape")
+    if min(reconstruction.shape[:2]) < 1:
+        raise ValueError("inputs must be nonempty")
+    values = (tile_size, overlap, scale, boundary_width, strip_rows)
+    if any(type(value) is not int for value in values):
+        raise ValueError("tile and strip parameters must be integers")
+    if tile_size < 1 or not 0 <= overlap < tile_size or min(scale, boundary_width, strip_rows) < 1:
+        raise ValueError("invalid tile or strip parameters")
+    height, width = reconstruction.shape[:2]
+    stride = (tile_size - overlap) * scale
+
+    def near_boundary(indices: np.ndarray, extent: int) -> np.ndarray:
+        # Tile starts strictly inside the image, excluding the outer border.
+        previous = (indices // stride) * stride
+        following = previous + stride
+        return ((previous > 0) & (indices - previous < boundary_width)) | (
+            (following < extent) & (following - indices < boundary_width)
+        )
+
+    columns = np.arange(width)
+    column_boundary = near_boundary(columns, width)
+    rows = np.arange(height)
+    row_boundary = near_boundary(rows, height)
+    boundary_count = int(row_boundary.sum()) * width + int(column_boundary.sum()) * int((~row_boundary).sum())
+    if boundary_count == 0 or boundary_count == height * width:
+        raise ValueError("diagnostic requires both tile boundaries and interior pixels")
+    path = Path(output_path)
+    if path.exists():
+        raise FileExistsError(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    output = None
+    boundary_sum = interior_sum = 0.0
+    try:
+        output = np.lib.format.open_memmap(path, mode="w+", dtype=np.float32, shape=(height, width))
+        for y in range(0, height, strip_rows):
+            a = np.asarray(reconstruction[y : y + strip_rows], dtype=np.float32)
+            b = np.asarray(reference[y : y + strip_rows], dtype=np.float32)
+            if not np.isfinite(a).all() or not np.isfinite(b).all():
+                raise ValueError("inputs must be finite")
+            residual = np.mean(np.abs(a - b), axis=2)
+            if not np.isfinite(residual).all():
+                raise ValueError("residual overflow")
+            boundary = row_boundary[y : y + strip_rows, None] | column_boundary[None, :]
+            output[y : y + strip_rows] = residual
+            boundary_sum += float(residual[boundary].sum(dtype=np.float64))
+            interior_sum += float(residual[~boundary].sum(dtype=np.float64))
+        output.flush()
+    except BaseException:
+        output = None
+        path.unlink(missing_ok=True)
+        raise
+    finally:
+        output = None
+    boundary_mean = boundary_sum / boundary_count
+    interior_mean = interior_sum / (height * width - boundary_count)
+    ratio = boundary_mean / interior_mean if interior_mean else (float("inf") if boundary_mean else 0.0)
+    return SeamDiagnostic(path, boundary_mean, interior_mean, ratio, ratio < 1.25)

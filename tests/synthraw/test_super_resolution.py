@@ -118,3 +118,66 @@ def test_non_oom_runtime_failure_is_not_retried(tmp_path):
         )
     assert len(calls) == 1
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("strip_rows", [1, 5, 64])
+def test_seam_diagnostic_detects_injected_boundary_error(tmp_path, strip_rows):
+    from synthraw.super_resolution import diagnose_tile_seams
+
+    reference = np.zeros((17, 19, 3), dtype=np.float32)
+    reconstructed = np.full_like(reference, 0.01)
+    reconstructed[6::6] = 0.1
+    reconstructed[:, 6::6] = 0.1
+    result = diagnose_tile_seams(
+        reconstructed,
+        reference,
+        tmp_path / "seams.npy",
+        tile_size=4,
+        overlap=1,
+        scale=2,
+        strip_rows=strip_rows,
+    )
+    assert result.ratio == pytest.approx(10)
+    assert not result.meets_target
+    np.testing.assert_allclose(np.load(result.residual_map_path, mmap_mode="r"), reconstructed[..., 0])
+
+
+@pytest.mark.parametrize("error", [0, 0.02])
+def test_uniform_residual_has_no_seam_penalty(tmp_path, error):
+    from synthraw.super_resolution import diagnose_tile_seams
+
+    reference = np.zeros((12, 15, 3), dtype=np.float32)
+    result = diagnose_tile_seams(
+        reference + error,
+        reference,
+        tmp_path / "seams.npy",
+        tile_size=5,
+        overlap=1,
+        scale=1,
+    )
+    assert result.ratio == pytest.approx(1 if error else 0)
+    assert result.meets_target
+
+
+def test_seam_diagnostic_cleans_nonfinite_input_and_preserves_existing_output(tmp_path):
+    from synthraw.super_resolution import diagnose_tile_seams
+
+    source = np.zeros((12, 15, 3), dtype=np.float32)
+    source[-1] = np.nan
+    path = tmp_path / "seams.npy"
+    with pytest.raises(ValueError, match="finite"):
+        diagnose_tile_seams(source, source, path, tile_size=5, overlap=1, scale=1, strip_rows=2)
+    assert not path.exists()
+    path.write_bytes(b"original")
+    with pytest.raises(FileExistsError):
+        diagnose_tile_seams(source, source, path, tile_size=5, overlap=1, scale=1)
+    assert path.read_bytes() == b"original"
+
+
+def test_seam_diagnostic_requires_boundary_and_interior(tmp_path):
+    from synthraw.super_resolution import diagnose_tile_seams
+
+    source = np.zeros((3, 3, 3), dtype=np.float32)
+    with pytest.raises(ValueError, match="both tile boundaries"):
+        diagnose_tile_seams(source, source, tmp_path / "seams.npy", tile_size=5, overlap=1, scale=1)
+    assert not list(tmp_path.iterdir())
