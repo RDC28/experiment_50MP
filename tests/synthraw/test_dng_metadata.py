@@ -190,3 +190,68 @@ def test_exposure_dependencies_revalidated(geometry, change):
         fields["ExposureTime"].dng_type = "SHORT"
     with pytest.raises(ValueError):
         builder.validate(fields, ExperimentConfig())
+
+
+def test_lens_metadata_roundtrip(geometry, tmp_path):
+    import numpy as np
+    import rawpy
+
+    from synthraw.dng_writer import DNGWriter
+
+    lens = {
+        name: exposure_record(name, value, provenance)
+        for name, value, provenance in (
+            ("LensInfo", (24, 70, 2.8, 4), Provenance.MEASURED),
+            ("FocalLength", 50, Provenance.INFERRED),
+            # tifffile's canonical name for EXIF FocalLengthIn35mmFormat.
+            ("FocalLengthIn35mmFilm", 50, Provenance.DETERMINISTIC),
+            ("LensMake", "Synthetic", Provenance.FABRICATED),
+            ("LensModel", "Hypothetical 24-70mm", Provenance.FABRICATED),
+        )
+    }
+    fields = DNGMetadataBuilder().build(geometry, lens=lens)
+    for name, source in lens.items():
+        expected = source.to_dict()
+        assert {key: fields[name].to_dict()[key] for key in expected} == expected
+    mosaic = np.arange(48 * 64, dtype=np.uint16).reshape(48, 64) + 512
+    path = DNGWriter().write(tmp_path / "lens.dng", mosaic, fields)
+    with rawpy.imread(str(path)) as raw:
+        assert np.array_equal(raw.raw_image, mosaic)
+
+
+@pytest.mark.parametrize(
+    "name,value,provenance",
+    [
+        ("LensInfo", (70, 24, 4, 2.8), Provenance.MEASURED),
+        ("LensInfo", (24, 70, 0, 4), Provenance.INFERRED),
+        ("LensInfo", (24, 70, 2.8), Provenance.FABRICATED),
+        ("LensInfo", (24, 70, float("nan"), 4), Provenance.MEASURED),
+        ("LensInfo", ("24", "70", "2.8", "4"), Provenance.MEASURED),
+        ("FocalLength", True, Provenance.INFERRED),
+        ("FocalLength", -50, Provenance.INFERRED),
+        ("FocalLength", 50, Provenance.FABRICATED),
+        ("FocalLengthIn35mmFilm", 65536, Provenance.DETERMINISTIC),
+        ("FocalLengthIn35mmFilm", 50.5, Provenance.INFERRED),
+        ("LensMake", "", Provenance.FABRICATED),
+        ("LensModel", "Lens\x00hidden", Provenance.INFERRED),
+        ("LensModel", "Lens", Provenance.DETERMINISTIC),
+        ("UnknownLensField", 50, Provenance.INFERRED),
+    ],
+)
+def test_invalid_lens_metadata(geometry, name, value, provenance):
+    with pytest.raises(ValueError):
+        DNGMetadataBuilder().build(geometry, lens={name: exposure_record(name, value, provenance)})
+
+
+def test_mutated_lens_range_rejected(geometry):
+    builder = DNGMetadataBuilder()
+    fields = builder.build(
+        geometry,
+        lens={
+            "LensInfo": exposure_record("LensInfo", (24, 70, 2.8, 4)),
+            "FocalLength": exposure_record("FocalLength", 50),
+        },
+    )
+    fields["FocalLength"].value = 85
+    with pytest.raises(ValueError, match="outside selected lens range"):
+        builder.validate(fields, ExperimentConfig())

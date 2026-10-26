@@ -21,6 +21,14 @@ _EXPOSURE_TYPES = {
     "ExposureBiasValue": "SRATIONAL",
 }
 
+_LENS_TYPES = {
+    "LensInfo": "RATIONAL[4]",
+    "FocalLength": "RATIONAL",
+    "FocalLengthIn35mmFilm": "SHORT",
+    "LensMake": "ASCII",
+    "LensModel": "ASCII",
+}
+
 CFA_PATTERNS = {
     "RGGB": (0, 1, 1, 2),
     "BGGR": (2, 1, 1, 0),
@@ -66,6 +74,7 @@ class DNGMetadataBuilder:
         noise_profile: tuple[float, ...] = (0.001, 0.000001),
         software_version: str = "0.1.0",
         exposure: Mapping[str, FieldRecord] | None = None,
+        lens: Mapping[str, FieldRecord] | None = None,
     ) -> dict[str, DNGFieldRecord]:
         """Construct allocation-free metadata for a rectangular Bayer sensor.
 
@@ -156,6 +165,11 @@ class DNGMetadataBuilder:
                 add(derived, factor * log2(number), dtype)
                 records[derived].method = f"APEX derived from {source}"
                 records[derived].dependencies = [source]
+        for name, record in (lens or {}).items():
+            if name not in _LENS_TYPES or name != record.field:
+                raise ValueError(f"Unsupported lens input: {name}")
+            record.validate()
+            records[name] = DNGFieldRecord(**asdict(record), dng_type=_LENS_TYPES[name])
         self.validate(records, config)
         return records
 
@@ -235,6 +249,46 @@ class DNGMetadataBuilder:
                 or not isclose(number, factor * log2(value(source)), rel_tol=0, abs_tol=1e-12)
             ):
                 raise ValueError(f"Invalid derived {derived}")
+        for name, dtype in _LENS_TYPES.items():
+            if name not in records:
+                continue
+            record = records[name]
+            allowed = {Provenance.INFERRED, Provenance.FABRICATED}
+            if name == "LensInfo":
+                allowed.add(Provenance.MEASURED)
+            elif name == "FocalLength":
+                allowed = {Provenance.INFERRED}
+            elif name == "FocalLengthIn35mmFilm":
+                allowed = {Provenance.DETERMINISTIC, Provenance.INFERRED}
+            if record.dng_type != dtype or record.provenance not in allowed:
+                raise ValueError(f"Invalid type or provenance for {name}")
+            if dtype == "ASCII":
+                if not record.value.strip() or "\x00" in record.value:
+                    raise ValueError(f"{name} requires nonempty ASCII text without NUL")
+            elif name == "LensInfo":
+                numbers = np.asarray(record.value)
+                if (
+                    numbers.shape != (4,)
+                    or numbers.dtype.kind not in "iuf"
+                    or not np.isfinite(numbers).all()
+                    or (numbers <= 0).any()
+                    or numbers[0] > numbers[1]
+                ):
+                    raise ValueError("LensInfo requires ordered focal limits and positive maximum apertures")
+            elif name == "FocalLengthIn35mmFilm":
+                if type(record.value) is not int or not 1 <= record.value <= 65535:
+                    raise ValueError("35mm equivalent focal length must fit a positive SHORT")
+            elif (
+                isinstance(record.value, bool)
+                or not isinstance(record.value, Real)
+                or not np.isfinite(record.value)
+                or record.value <= 0
+            ):
+                raise ValueError("FocalLength requires a positive finite scalar")
+        if "LensInfo" in records and "FocalLength" in records:
+            minimum, maximum, _, _ = value("LensInfo")
+            if not minimum <= value("FocalLength") <= maximum:
+                raise ValueError("FocalLength outside selected lens range")
         white, black = value("WhiteLevel"), value("BlackLevel")
         if type(white) is not int or not 0 < white <= (1 << config.ADC_BITS) - 1:
             raise ValueError("WhiteLevel exceeds ADC range")
