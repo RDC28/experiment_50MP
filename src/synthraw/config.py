@@ -68,6 +68,9 @@ class ExperimentConfig:
     INPUT_PATH: str | None = None
     DRIVE_MOUNT_PATH: str = "/content/drive"
     CALIBRATION_ASSETS: tuple[str, ...] = ()
+    REFERENCE_RAW_PATH: str | None = None
+    DARK_FRAME_PATHS: tuple[str, ...] = ()
+    FLAT_FIELD_PATHS: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         hints = get_type_hints(type(self))
@@ -99,10 +102,14 @@ class ExperimentConfig:
             raise ValueError("PATH and DRIVE input require INPUT_PATH")
         if not isinstance(self.DRIVE_MOUNT_PATH, str) or not self.DRIVE_MOUNT_PATH.strip():
             raise ValueError("DRIVE_MOUNT_PATH must be a nonempty string")
-        if not isinstance(self.CALIBRATION_ASSETS, tuple) or any(
-            not isinstance(path, str) or not path.strip() for path in self.CALIBRATION_ASSETS
+        if self.REFERENCE_RAW_PATH is not None and (
+            not isinstance(self.REFERENCE_RAW_PATH, str) or not self.REFERENCE_RAW_PATH.strip()
         ):
-            raise ValueError("CALIBRATION_ASSETS must be a tuple of nonempty paths")
+            raise ValueError("REFERENCE_RAW_PATH must be a nonempty path or None")
+        for name in ("CALIBRATION_ASSETS", "DARK_FRAME_PATHS", "FLAT_FIELD_PATHS"):
+            paths = getattr(self, name)
+            if not isinstance(paths, tuple) or any(not isinstance(path, str) or not path.strip() for path in paths):
+                raise ValueError(f"{name} must be a tuple of nonempty paths")
         if self.SPECTRAL_MODE == "CALIBRATED_CURVES" and not self.CALIBRATION_ASSETS:
             raise ValueError("CALIBRATED_CURVES requires CALIBRATION_ASSETS")
         if self.OUTPUT_GEOMETRY == "CINEMA_50MP_VIRTUAL":
@@ -114,13 +121,15 @@ class ExperimentConfig:
     def to_dict(self) -> dict[str, object]:
         """Return JSON-native settings for config.json."""
         result = asdict(self)
-        result["CALIBRATION_ASSETS"] = list(self.CALIBRATION_ASSETS)
+        for name in ("CALIBRATION_ASSETS", "DARK_FRAME_PATHS", "FLAT_FIELD_PATHS"):
+            result[name] = list(getattr(self, name))
         return result
 
     @classmethod
     def from_dict(cls, settings: dict[str, object]) -> ExperimentConfig:
         """Restore validated settings, rejecting unknown configuration keys."""
         values = dict(settings)
-        if isinstance(values.get("CALIBRATION_ASSETS"), list):
-            values["CALIBRATION_ASSETS"] = tuple(values["CALIBRATION_ASSETS"])
+        for name in ("CALIBRATION_ASSETS", "DARK_FRAME_PATHS", "FLAT_FIELD_PATHS"):
+            if isinstance(values.get(name), list):
+                values[name] = tuple(values[name])
         return cls(**values)

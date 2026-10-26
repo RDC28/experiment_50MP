@@ -121,7 +121,7 @@ def test_reference_requires_explicit_file_and_mode(tmp_path):
         manager.build(reference_raw=tmp_path / "unused.raw")
     with pytest.raises(FileNotFoundError):
         manager.build(source="REFERENCE_RAW", reference_raw=tmp_path / "missing.raw")
-    with pytest.raises(ValueError, match="Supported profile sources"):
+    with pytest.raises(ValueError, match="REFERENCE_RAW_PATH"):
         manager.build(source="FULL_CALIBRATION")
 
 

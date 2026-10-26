@@ -49,8 +49,11 @@ class CameraProfileManager:
         source = source or (config.CAMERA_PROFILE_SOURCE if config is not None else "IMAGE_ONLY")
         if name not in PROFILE_NAMES:
             raise ValueError(f"Unknown camera profile: {name}")
-        if source not in ("IMAGE_ONLY", "REFERENCE_RAW"):
-            raise ValueError("Supported profile sources are IMAGE_ONLY and REFERENCE_RAW")
+        if source not in ("IMAGE_ONLY", "REFERENCE_RAW", "FULL_CALIBRATION"):
+            raise ValueError("Supported profile sources are IMAGE_ONLY, REFERENCE_RAW and FULL_CALIBRATION")
+        reference_raw = reference_raw or (config.REFERENCE_RAW_PATH if config is not None else None)
+        if source == "FULL_CALIBRATION" and reference_raw is None:
+            raise ValueError("FULL_CALIBRATION requires REFERENCE_RAW_PATH")
         if source == "REFERENCE_RAW" and reference_raw is None:
             raise ValueError("REFERENCE_RAW requires a user-supplied reference_raw file")
         if source == "IMAGE_ONLY" and reference_raw is not None:
@@ -126,7 +129,7 @@ class CameraProfileManager:
             add(sensor, field, value, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
             add(sensor, f"{field}_range", interval, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
         profile = CameraProfile(camera, sensor)
-        if source == "REFERENCE_RAW":
+        if source in ("REFERENCE_RAW", "FULL_CALIBRATION"):
             self._read_reference(profile, Path(reference_raw))
             if geometry is not None:
                 # Reference measurements describe calibration, not the output raster.
@@ -138,6 +141,10 @@ class CameraProfileManager:
                     "default_crop_size": list(target.default_crop_size),
                 }.items():
                     add(sensor, field, value)
+        if source == "FULL_CALIBRATION":
+            from synthraw.calibration import calibrate_sensor
+
+            calibrate_sensor(profile, config or ExperimentConfig(), Path(reference_raw))
         return profile
 
     @staticmethod

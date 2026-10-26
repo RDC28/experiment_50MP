@@ -27,7 +27,7 @@ def test_json_round_trip():
 @pytest.mark.parametrize("name,hint", get_type_hints(ExperimentConfig).items())
 def test_each_typed_control_rejects_wrong_type_or_choice(name, hint):
     invalid = "UNKNOWN" if getattr(hint, "__origin__", None) is Literal else None
-    if name == "INPUT_PATH":
+    if name in ("INPUT_PATH", "REFERENCE_RAW_PATH"):
         invalid = 12
     with pytest.raises((ValueError, TypeError)):
         ExperimentConfig(**{name: invalid})
