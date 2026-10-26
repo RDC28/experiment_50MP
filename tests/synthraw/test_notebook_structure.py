@@ -118,6 +118,7 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "ElectronSignalSimulator",
         "SensorNoiseSimulator",
         "CFAMosaicer",
+        "ADCSimulator",
     }
     assert "fields(ExperimentConfig)" in source
     assert "get_type_hints(ExperimentConfig)" in source
@@ -136,7 +137,7 @@ def test_later_sections_identify_milestone_placeholders(notebook):
             section = cell.source.removeprefix("## ")
         elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
             placeholders.add(section)
-    assert placeholders == set(SECTIONS[12:]) - {"Metadata construction", "DNG export"}
+    assert placeholders == set(SECTIONS[13:]) - {"Metadata construction", "DNG export"}
 
 
 def test_scientific_boundary_is_visible(notebook):
@@ -573,3 +574,66 @@ def test_cfa_cell_writes_tiny_sensor_mosaics(notebook, tmp_path, phase, strip_ro
     assert records["applied_cfa_phase"]["value"] == phase
     assert records["applied_cfa_phase"]["provenance"] == "D"
     assert records["applied_cfa_phase"]["dependencies"] == ["cfa_pattern"]
+
+
+@pytest.mark.parametrize("bits", [14, 16])
+@pytest.mark.parametrize("shot_noise", [True, False])
+@pytest.mark.parametrize("strip_rows", [1, 5])
+def test_adc_cell_writes_tiny_codes_and_applied_profile(notebook, tmp_path, bits, shot_noise, strip_rows):
+    import json
+
+    import numpy as np
+
+    from synthraw.adc import ADCSimulator
+    from synthraw.camera_profile import CameraProfileManager
+    from synthraw.config import ExperimentConfig
+    from synthraw.provenance import FieldRecord, Provenance
+    from synthraw.run_layout import RunLayout
+
+    config = ExperimentConfig(ADC_BITS=bits, SHOT_NOISE=shot_noise)
+    profile = CameraProfileManager().build(config=config)
+    electrons = np.linspace(-2000, 200000, 70).reshape(7, 10)
+    run = RunLayout.create(tmp_path)
+    namespace = dict(
+        np=np,
+        run=run,
+        config=config,
+        camera_profile=profile,
+        sensor_parameters=profile.sensor,
+        sensor_noisy_cfa=electrons,
+        sensor_conversion_gain=2.5,
+        sensor_noise_parameters={"read_noise_e": 3.0},
+        SENSOR_STRIP_ROWS=strip_rows,
+        FieldRecord=FieldRecord,
+        Provenance=Provenance,
+    )
+    cell = notebook.cells[31]
+    assert "milestone placeholder" not in cell.source
+    exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+    reference = ADCSimulator().simulate(
+        electrons,
+        config,
+        conversion_gain_e_per_dn=2.5,
+        read_noise_e=3.0,
+        black_level=profile.sensor["BlackLevel"].value,
+        white_level=profile.sensor["WhiteLevel"].value,
+    )
+    for directory, filename, name in (
+        ("intermediates", "11_adc_codes.npy", "adc_mosaic"),
+        ("raw", "sensor_mosaic_uint16.npy", "sensor_mosaic_uint16"),
+    ):
+        codes = np.load(run.directory(directory) / filename)
+        np.testing.assert_array_equal(codes, reference.codes)
+        assert codes.dtype == np.uint16
+        assert codes.min() == 0
+        assert codes.max() == (1 << bits) - 1
+        assert isinstance(namespace[name], np.memmap)
+    records = {
+        item["field"]: item for item in json.loads((run.directory("metadata") / "sensor_profile.json").read_text())
+    }
+    for name, value in reference.applied_parameters.items():
+        assert records[f"applied_adc_{name}"]["value"] == value
+        assert records[f"applied_adc_{name}"]["provenance"] == "D"
+    noise = records["applied_adc_noise_profile"]
+    assert noise["value"] == (list(reference.noise_profile) if shot_noise else None)
+    assert noise["provenance"] == "D"
