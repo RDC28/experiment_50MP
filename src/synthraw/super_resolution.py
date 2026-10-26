@@ -172,6 +172,7 @@ class SuperResolutionEngine:
             "HAT": ("HAT", "REAL_ESRGAN", "LANCZOS"),
             "REAL_ESRGAN": ("REAL_ESRGAN", "LANCZOS"),
             "LANCZOS": ("LANCZOS",),
+            "SUPIR": ("SUPIR", "SWINIR", "REAL_ESRGAN", "LANCZOS"),
         }
         if backend not in chains:
             raise ValueError(f"Unsupported fidelity backend: {backend}")
@@ -190,6 +191,12 @@ class SuperResolutionEngine:
             return np.clip(np.stack(channels, axis=2), 0, 1)
 
         for candidate in chains[backend]:
+            if candidate == "SUPIR":
+                # Licence-gated stub: never downloaded or run, even when a callable is injected.
+                from synthraw.experimental import request_experimental
+
+                reasons.append(request_experimental("SUPIR", accept_licence=accept_licence).fallback_reason)
+                continue
             model = lanczos if candidate == "LANCZOS" else models.get(candidate)
             if model is None and load_models:
                 from synthraw.learned_sr import load_learned_backend

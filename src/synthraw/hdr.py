@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 
 import numpy as np
 
+from synthraw.experimental import request_experimental
+
 Transfer = Literal["SRGB", "DISPLAY_P3", "ADOBE_RGB", "REC709"]
 
 
@@ -154,6 +156,8 @@ class HDRReconstructionEngine:
             raise ValueError("EV limits must be finite and in [0, 16]")
         if backend not in ("DETERMINISTIC", "EXPANDDIFF", "VID2HDR"):
             raise ValueError(f"Unsupported HDR backend: {backend}")
+        # Generative backends are licence-gated stubs: warn, then run the deterministic path.
+        decision = None if backend == "DETERMINISTIC" else request_experimental(backend)
         if negative_policy not in ("REJECT", "CLIP"):
             raise ValueError(f"Unsupported negative_policy: {negative_policy}")
         directory = Path(output_dir)
@@ -232,7 +236,7 @@ class HDRReconstructionEngine:
         return {
             "arrays": arrays,
             "backend": "DETERMINISTIC",
-            "fallback_reason": None if backend == "DETERMINISTIC" else f"{backend} is a gated, unavailable backend",
+            "fallback_reason": decision.fallback_reason if decision else None,
             "generated_hdr_area_percentage": 100 * generated / (linear.shape[0] * linear.shape[1]),
             "gamut_mapping": {
                 "policy": negative_policy,

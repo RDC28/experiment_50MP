@@ -104,6 +104,7 @@ def test_hdr_preserves_supported_and_bounds_extrapolation(tmp_path):
     assert np.isfinite(hdr).all() and np.all(hdr >= 0)
 
 
+@pytest.mark.filterwarnings("ignore:.*licence restrictions:UserWarning")
 @pytest.mark.parametrize("backend", ["DETERMINISTIC", "EXPANDDIFF", "VID2HDR"])
 def test_hdr_strip_equivalence_and_fallback(tmp_path, backend):
     encoded = np.linspace(0, 1, 81, dtype=np.float32).reshape(9, 3, 3)

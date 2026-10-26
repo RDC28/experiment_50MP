@@ -293,6 +293,7 @@ class _PipelineRun:
 
     def inverse_isp(self) -> None:
         from synthraw.camera_colour import CameraColourModel, InverseISPEngine
+        from synthraw.experimental import spectral_inference_records
 
         self.colour_model = CameraColourModel()
         engine = InverseISPEngine()
@@ -310,7 +311,16 @@ class _PipelineRun:
         output.flush()
         self.inverse_isp_backend = result.records["inverse_isp_backend"].value
         self.groups["inverse_isp"] = list(result.records.values())
-        self.groups["colour_model"] = list(self.colour_model.metadata().values())
+        spectral = spectral_inference_records(
+            self.config.INFER_SPECTRAL_RESPONSE_FROM_AI_IMAGE, accept_licence=self.options["accept_licence"]
+        )
+        self.groups["colour_model"] = list(self.colour_model.metadata().values()) + spectral
+        for label, record in (
+            ("Inverse ISP", result.records["inverse_isp_fallback_reason"]),
+            ("Spectral inference", spectral[-1]),
+        ):
+            if record.value:
+                self.fallbacks.append(f"{label} {record.value}")
         ProvenanceWriter().write(self.groups["inverse_isp"], self.path("metadata", "inverse_isp.json"))
 
     def optics(self) -> None:

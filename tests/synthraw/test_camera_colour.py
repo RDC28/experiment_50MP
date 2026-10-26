@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from synthraw.camera_colour import CameraColourModel, InverseISPEngine
+from synthraw.experimental import CAMERA_DOMAIN
 from synthraw.provenance import FieldRecord, Provenance
 
 
@@ -72,6 +73,7 @@ def test_model_snapshots_input_and_metadata():
         model.camera_to_working[0, 0] = 2
 
 
+@pytest.mark.filterwarnings("ignore:.*licence restrictions:UserWarning")
 @pytest.mark.parametrize("raw_flow,spiraldiff", [(False, False), (True, False), (False, True), (True, True)])
 def test_learned_gates_preserve_physics_and_report_domain(raw_flow, spiraldiff):
     rgb = np.arange(18).reshape(2, 3, 3) / 4
@@ -92,7 +94,7 @@ def test_learned_gates_preserve_physics_and_report_domain(raw_flow, spiraldiff):
     assert records["inverse_isp_requested_priors"].value == expected
     if expected:
         assert "unavailable" in records["inverse_isp_fallback_reason"].value
-        assert records["inverse_isp_camera_domain"].value == "cross-camera"
+        assert records["inverse_isp_camera_domain"].value == CAMERA_DOMAIN
     else:
         assert records["inverse_isp_fallback_reason"].value is None
         assert records["inverse_isp_camera_domain"].value == "virtual matrix camera"

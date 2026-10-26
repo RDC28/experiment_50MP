@@ -72,6 +72,7 @@ MODEL_MANIFEST = {
         ModelSpec("VID2HDR", None, None, None, None, "MIT code; restricted SVD dependency", True),
         ModelSpec("RAW_FLOW", None, None, None, None, "MIT code; weights unverified", True),
         ModelSpec("SPIRALDIFF", None, None, None, None, "MIT code; weights unverified", True),
+        ModelSpec("SPECTRAL_FROM_AI_IMAGE", None, None, None, None, "No method selected - acceptance required", True),
         ModelSpec(
             "GEOCALIB", "https://github.com/cvg/GeoCalib", None, None, None, "Apache-2.0 code; CC-BY-4.0 weights", True
         ),

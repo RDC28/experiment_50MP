@@ -22,12 +22,13 @@ def test_registry_and_log(tmp_path):
         "VID2HDR",
         "RAW_FLOW",
         "SPIRALDIFF",
+        "SPECTRAL_FROM_AI_IMAGE",
         "GEOCALIB",
     }
     assert entries["SWINIR"].commit == "6545850"
     assert entries["REAL_ESRGAN"].sha256 == "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"
     payload = json.loads(manifest.write_model_manifest(tmp_path).read_text())
-    assert len(payload["models"]) == 9
+    assert len(payload["models"]) == 10
     assert payload["models"][0]["status"] == "PINNED"
     for name, spec in entries.items():
         if name not in ("SWINIR", "REAL_ESRGAN"):
@@ -70,7 +71,16 @@ def test_failed_download_leaves_no_checkpoint(tmp_path, download, failure):
 
 
 def test_disabled_models_never_download(tmp_path, download):
-    for name in ("HAT", "SUPIR", "EXPANDDIFF", "VID2HDR", "RAW_FLOW", "SPIRALDIFF", "GEOCALIB"):
+    for name in (
+        "HAT",
+        "SUPIR",
+        "EXPANDDIFF",
+        "VID2HDR",
+        "RAW_FLOW",
+        "SPIRALDIFF",
+        "SPECTRAL_FROM_AI_IMAGE",
+        "GEOCALIB",
+    ):
         with pytest.raises(ValueError, match="UNPINNED"):
             manifest.download_checkpoint(name, cache_dir=tmp_path, accept_licence=True)
     download.assert_not_called()

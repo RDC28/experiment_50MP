@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from synthraw.experimental import CAMERA_DOMAIN, request_experimental
 from synthraw.provenance import FieldRecord, Provenance
 
 _SRGB_TO_XYZ = np.array(
@@ -143,13 +144,9 @@ class InverseISPEngine:
         selection = {
             "inverse_isp_backend": "PHYSICS",
             "inverse_isp_requested_priors": requested,
-            "inverse_isp_fallback_reason": (
-                "Learned inverse-ISP adapters are unavailable; no supplied checkpoint camera domain has been verified. "
-                "Using the PHYSICS baseline without a learned prior."
-                if requested
-                else None
-            ),
-            "inverse_isp_camera_domain": "cross-camera" if requested else "virtual matrix camera",
+            "inverse_isp_fallback_reason": " ".join(request_experimental(name).fallback_reason for name in requested)
+            or None,
+            "inverse_isp_camera_domain": CAMERA_DOMAIN if requested else "virtual matrix camera",
         }
         for name, value in selection.items():
             records[name] = FieldRecord(

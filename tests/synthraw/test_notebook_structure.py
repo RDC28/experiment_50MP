@@ -134,6 +134,7 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "compare_and_report",
         "make_downsampled_source",
         "run_pipeline",
+        "spectral_inference_records",
     }
     assert "fields(ExperimentConfig)" in source
     assert "get_type_hints(ExperimentConfig)" in source
@@ -483,6 +484,7 @@ def test_camera_cells_write_tiny_disk_products(notebook, tmp_path, capsys, optic
         run=run,
         config=ExperimentConfig(OPTICAL_SIMULATION=optical_enabled),
         hdr_radiance=radiance,
+        ACCEPT_SR_MODEL_LICENCE=False,
         geometry=SimpleNamespace(
             width=16,
             height=12,

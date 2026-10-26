@@ -87,6 +87,7 @@ def namespace_for(pipeline_state, tmp_path):
         "camera_geometry": SimpleNamespace(records=by_field["camera_geometry"], fallback_reason=None),
         "inverse_isp_records": by_field["inverse_isp"],
         "colour_model": state.colour_model,
+        "spectral_records": [record for record in groups["colour_model"] if record.field.startswith("spectral_")],
         "optical_records": state.optical_records,
         "hdr_result": state.hdr_report,
         "tiff_path": root / "masters" / "developed_50mp_16bit.tif",
