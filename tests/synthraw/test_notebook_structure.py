@@ -113,6 +113,10 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "InverseISPEngine",
         "LensSimulator",
         "OpticalBlurParameters",
+        "FieldRecord",
+        "Provenance",
+        "ElectronSignalSimulator",
+        "SensorNoiseSimulator",
     }
     assert "fields(ExperimentConfig)" in source
     assert "get_type_hints(ExperimentConfig)" in source
@@ -131,7 +135,7 @@ def test_later_sections_identify_milestone_placeholders(notebook):
             section = cell.source.removeprefix("## ")
         elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
             placeholders.add(section)
-    assert placeholders == set(SECTIONS[10:]) - {"Metadata construction", "DNG export"}
+    assert placeholders == set(SECTIONS[11:]) - {"Metadata construction", "DNG export"}
 
 
 def test_scientific_boundary_is_visible(notebook):
@@ -460,3 +464,59 @@ def test_camera_cells_write_tiny_disk_products(notebook, tmp_path, capsys, optic
     assert namespace["white_balance"].records["CCT"].user_override == manual_wb
     assert "Seconds       F-number   ISO       Weight" in capsys.readouterr().out
     assert not list(run.directory("intermediates").glob("synthraw-optics-*"))
+
+
+@pytest.mark.parametrize("shot_noise", [True, False])
+@pytest.mark.parametrize("calibrated_gain", [None, 2.5])
+def test_electron_cell_writes_tiny_sensor_products(notebook, tmp_path, shot_noise, calibrated_gain):
+    import json
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from synthraw.camera_profile import CameraProfileManager
+    from synthraw.config import ExperimentConfig
+    from synthraw.provenance import FieldRecord, Provenance
+    from synthraw.run_layout import RunLayout
+    from synthraw.sensor import SensorNoiseSimulator
+
+    config = ExperimentConfig(SHOT_NOISE=shot_noise)
+    profile = CameraProfileManager().build(config=config)
+    if calibrated_gain is not None:
+        profile.sensor["conversion_gain_e_per_dn"] = FieldRecord(
+            "conversion_gain_e_per_dn", calibrated_gain, Provenance.MEASURED, "Tiny calibration fixture"
+        )
+    optical = np.full((12, 16, 3), 0.02, dtype=np.float32)
+    optical[0] = -0.1
+    optical[-1] = 2.0
+    run = RunLayout.create(tmp_path)
+    namespace = dict(
+        np=np,
+        config=config,
+        camera_profile=profile,
+        optical_sensor_rgb=optical,
+        exposure_records={"ExposureTime": FieldRecord("ExposureTime", 0.25, Provenance.INFERRED, "Test prior")},
+        run=run,
+        geometry=SimpleNamespace(width=16, height=12),
+    )
+    cell = notebook.cells[27]
+    assert "milestone placeholder" not in cell.source
+    exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+    expected = np.load(run.directory("intermediates") / "07_expected_electrons.npy")
+    noisy = np.load(run.directory("intermediates") / "08_noisy_electrons.npy")
+    np.testing.assert_allclose(expected, np.maximum(optical.astype(np.float64), 0) * 52000)
+    np.testing.assert_array_equal(
+        noisy, SensorNoiseSimulator().simulate(expected, config, **namespace["sensor_noise_parameters"], strip_rows=1)
+    )
+    for name in ("sensor_expected_electrons", "sensor_noisy_electrons"):
+        assert isinstance(namespace[name], np.memmap)
+    records = {
+        item["field"]: item for item in json.loads((run.directory("metadata") / "sensor_profile.json").read_text())
+    }
+    assert records["applied_exposure_time_s"]["value"] == 0.25
+    assert records["applied_exposure_time_s"]["provenance"] == "I"
+    assert records["applied_SENSOR_NOISE_SEED"]["value"] == config.SENSOR_NOISE_SEED
+    assert records["applied_SHOT_NOISE"]["value"] is shot_noise
+    assert records["applied_row_fpn_e"]["provenance"] == "F"
+    assert records["conversion_gain_e_per_dn"]["provenance"] == ("M" if calibrated_gain else "F")
+    assert records["applied_dsnu_e"]["value"] == records["conversion_gain_e_per_dn"]["value"]
