@@ -637,3 +637,69 @@ def test_adc_cell_writes_tiny_codes_and_applied_profile(notebook, tmp_path, bits
     noise = records["applied_adc_noise_profile"]
     assert noise["value"] == (list(reference.noise_profile) if shot_noise else None)
     assert noise["provenance"] == "D"
+
+
+@pytest.mark.parametrize("bits", [14, 16])
+def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatch, bits):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import numpy as np
+    import tifffile
+
+    from synthraw.camera_colour import CameraColourModel
+    from synthraw.camera_profile import CameraProfileManager
+    from synthraw.config import ExperimentConfig
+    from synthraw.geometry import TargetGeometryPlanner
+    from synthraw.provenance import FieldRecord, Provenance
+    from synthraw.run_layout import RunLayout
+
+    monkeypatch.setattr("synthraw.sony_registry.shutil.which", lambda _: None)
+    config = ExperimentConfig(ADC_BITS=bits)
+    geometry = replace(
+        TargetGeometryPlanner().plan(64, 48),
+        width=64,
+        height=48,
+        active_area=(0, 0, 48, 64),
+        default_crop_origin=(0, 0),
+        default_crop_size=(64, 48),
+    )
+    profile = CameraProfileManager().build(config=config, geometry=geometry)
+    namespace = dict(
+        np=np,
+        run=RunLayout.create(tmp_path),
+        config=config,
+        geometry=geometry,
+        camera_profile=profile,
+        sensor_parameters=profile.sensor,
+        sensor_noisy_cfa=np.full((48, 64), 1000.0),
+        sensor_conversion_gain=2.5,
+        sensor_noise_parameters={"read_noise_e": 3.0},
+        SENSOR_STRIP_ROWS=5,
+        FieldRecord=FieldRecord,
+        Provenance=Provenance,
+        colour_model=CameraColourModel(),
+        white_balance=SimpleNamespace(gains=(2.0, 1.0, 1.5)),
+    )
+    for cell in (notebook.cells[31], next(c for c in notebook.cells if c.id == "8176dfe4")):
+        exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+    assert namespace["dng_metadata"] is not None
+    records = namespace["dng_metadata"]
+    assert records["NoiseProfile"].value == namespace["adc_result"].noise_profile
+    assert records["BlackLevel"].value == namespace["adc_result"].applied_parameters["black_level"]
+    assert records["WhiteLevel"].value == namespace["adc_result"].applied_parameters["white_level"]
+    np.testing.assert_allclose(records["AsShotNeutral"].value, (0.5, 1, 2 / 3))
+    export = next(c for c in notebook.cells if c.id == "2b0d5a2c")
+    exec(compile(export.source, str(NOTEBOOK), "exec"), namespace)
+    with tifffile.TiffFile(namespace["dng_path"]) as image:
+        np.testing.assert_array_equal(image.asarray(), namespace["adc_mosaic"])
+        np.testing.assert_allclose(image.pages[0].tags[51041].value, namespace["adc_result"].noise_profile)
+
+
+def test_metadata_cell_rejects_unrepresentable_adc_noise_profile(notebook):
+    from types import SimpleNamespace
+
+    cell = next(c for c in notebook.cells if c.id == "8176dfe4")
+    namespace = {"adc_result": SimpleNamespace(noise_profile=None)}
+    with pytest.raises(ValueError, match="enable SHOT_NOISE"):
+        exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
