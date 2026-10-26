@@ -640,19 +640,23 @@ def test_adc_cell_writes_tiny_codes_and_applied_profile(notebook, tmp_path, bits
 
 
 @pytest.mark.parametrize("bits", [14, 16])
-def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatch, bits):
+@pytest.mark.parametrize("phase", ["RGGB", "BGGR", "GRBG", "GBRG"])
+def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatch, bits, phase):
     from dataclasses import replace
     from types import SimpleNamespace
 
     import numpy as np
     import tifffile
 
+    from synthraw.adc import ADCSimulator
     from synthraw.camera_colour import CameraColourModel
     from synthraw.camera_profile import CameraProfileManager
+    from synthraw.cfa import CFAMosaicer
     from synthraw.config import ExperimentConfig
     from synthraw.geometry import TargetGeometryPlanner
     from synthraw.provenance import FieldRecord, Provenance
     from synthraw.run_layout import RunLayout
+    from synthraw.sensor import SensorNoiseSimulator
 
     monkeypatch.setattr("synthraw.sony_registry.shutil.which", lambda _: None)
     config = ExperimentConfig(ADC_BITS=bits)
@@ -665,24 +669,53 @@ def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatc
         default_crop_size=(64, 48),
     )
     profile = CameraProfileManager().build(config=config, geometry=geometry)
+    profile.sensor["cfa_pattern"] = FieldRecord("cfa_pattern", phase, Provenance.FABRICATED, "Test phase")
+    optical = np.linspace(-0.01, 1.1, 48 * 64 * 3, dtype=np.float32).reshape(48, 64, 3)
     namespace = dict(
         np=np,
         run=RunLayout.create(tmp_path),
         config=config,
         geometry=geometry,
         camera_profile=profile,
-        sensor_parameters=profile.sensor,
-        sensor_noisy_cfa=np.full((48, 64), 1000.0),
-        sensor_conversion_gain=2.5,
-        sensor_noise_parameters={"read_noise_e": 3.0},
-        SENSOR_STRIP_ROWS=5,
+        optical_sensor_rgb=optical,
+        exposure_records={"ExposureTime": FieldRecord("ExposureTime", 0.25, Provenance.INFERRED, "Test prior")},
         FieldRecord=FieldRecord,
         Provenance=Provenance,
         colour_model=CameraColourModel(),
         white_balance=SimpleNamespace(gains=(2.0, 1.0, 1.5)),
     )
-    for cell in (notebook.cells[31], next(c for c in notebook.cells if c.id == "8176dfe4")):
+    for cell in (
+        notebook.cells[27],
+        notebook.cells[29],
+        notebook.cells[31],
+        next(c for c in notebook.cells if c.id == "8176dfe4"),
+    ):
         exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+    # Independent one-row calls verify the notebook's default strip size and wiring.
+    expected = np.maximum(optical.astype(np.float64), 0) * profile.sensor["full_well_electrons"].value
+    noisy = SensorNoiseSimulator().simulate(expected, config, **namespace["sensor_noise_parameters"], strip_rows=1)
+    clean_cfa = CFAMosaicer(phase).mosaic(expected, strip_rows=1)
+    noisy_cfa = CFAMosaicer(phase).mosaic(noisy, strip_rows=1)
+    reference = ADCSimulator().simulate(
+        noisy_cfa,
+        config,
+        conversion_gain_e_per_dn=namespace["sensor_conversion_gain"],
+        read_noise_e=namespace["sensor_noise_parameters"]["read_noise_e"],
+        black_level=profile.sensor["BlackLevel"].value,
+        white_level=profile.sensor["WhiteLevel"].value,
+        strip_rows=1,
+    )
+    for filename, array in (
+        ("07_expected_electrons.npy", expected),
+        ("08_noisy_electrons.npy", noisy),
+        ("09_clean_cfa.npy", clean_cfa),
+        ("10_noisy_cfa.npy", noisy_cfa),
+        ("11_adc_codes.npy", reference.codes),
+    ):
+        np.testing.assert_array_equal(np.load(namespace["run"].directory("intermediates") / filename), array)
+    np.testing.assert_array_equal(
+        np.load(namespace["run"].directory("raw") / "sensor_mosaic_uint16.npy"), reference.codes
+    )
     assert namespace["dng_metadata"] is not None
     records = namespace["dng_metadata"]
     assert records["NoiseProfile"].value == namespace["adc_result"].noise_profile
