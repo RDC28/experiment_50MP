@@ -59,3 +59,61 @@ def test_bad_raw_does_not_write_successful_master(tmp_path):
 def test_bad_strip_size(tmp_path, rows):
     with pytest.raises(ValueError, match="positive integer"):
         TIFFWriter().write(tmp_path / "master.tif", tmp_path / "unused.dng", rows_per_strip=rows)
+
+
+def test_exr_preserves_unclamped_hdr(tmp_path):
+    import OpenEXR
+
+    from synthraw.exporters import EXRWriter
+
+    rgb = np.linspace(-0.2, 12, 48 * 20 * 3, dtype=np.float32).reshape(20, 48, 3)
+    original = rgb.copy()
+    path = EXRWriter().write(tmp_path / "masters/scene_linear_50mp.exr", rgb)
+    with OpenEXR.File(str(path), separate_channels=True) as exr:
+        for i, channel in enumerate("RGB"):
+            np.testing.assert_array_equal(exr.channels()[channel].pixels, original[..., i])
+        np.testing.assert_allclose(exr.header()["chromaticities"], (0.64, 0.33, 0.30, 0.60, 0.15, 0.06, 0.3127, 0.3290))
+    np.testing.assert_array_equal(rgb, original)
+
+
+def test_preview_is_bounded_tagged_srgb(tmp_path):
+    from PIL import Image
+
+    from synthraw.exporters import PreviewWriter
+
+    rgb = np.full((20, 48, 3), (-0.1, 0.18, 4), dtype=np.float32)
+    path = PreviewWriter().write(tmp_path / "masters/preview_8bit.png", rgb, max_side=24)
+    with Image.open(path) as image:
+        assert image.size == (24, 10)
+        assert image.mode == "RGB"
+        np.testing.assert_array_equal(np.asarray(image)[0, 0], [0, 118, 255])
+        profile = ImageCms.ImageCmsProfile(io.BytesIO(image.info["icc_profile"]))
+        assert "sRGB" in ImageCms.getProfileDescription(profile)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        np.zeros((2, 2)),
+        np.zeros((0, 2, 3)),
+        np.ones((2, 2, 3), dtype=np.uint8),
+        np.full((2, 2, 3), np.nan),
+        np.full((2, 2, 3), 1e100),
+    ],
+)
+def test_master_export_rejects_invalid_radiance(tmp_path, bad):
+    from synthraw.exporters import EXRWriter, PreviewWriter
+
+    for writer in (EXRWriter(), PreviewWriter()):
+        destination = tmp_path / "invalid"
+        with pytest.raises(ValueError):
+            writer.write(destination, bad)
+        assert not destination.exists()
+
+
+@pytest.mark.parametrize("size", [0, -1, True, 1.5])
+def test_preview_rejects_invalid_bound(tmp_path, size):
+    from synthraw.exporters import PreviewWriter
+
+    with pytest.raises(ValueError, match="positive integer"):
+        PreviewWriter().write(tmp_path / "preview.png", np.zeros((2, 2, 3)), max_side=size)

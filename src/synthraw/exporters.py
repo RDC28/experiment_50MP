@@ -109,3 +109,73 @@ class TIFFWriter:
                     raise HardValidationError("Developed TIFF pixels differ")
         finally:
             mapped._mmap.close()
+
+
+def _linear_rgb(rgb: np.ndarray) -> np.ndarray:
+    """Require finite scene-linear RGB without clipping HDR or negative samples."""
+    array = np.asarray(rgb)
+    if array.ndim != 3 or array.shape[2] != 3 or min(array.shape[:2]) < 1:
+        raise ValueError("Expected nonempty H x W x 3 scene-linear RGB")
+    if not np.issubdtype(array.dtype, np.floating) or not np.isfinite(array).all():
+        raise ValueError("Scene-linear RGB must contain finite floating-point samples")
+    with np.errstate(over="ignore"):
+        result = np.asarray(array, dtype=np.float32)
+    if not np.isfinite(result).all():
+        raise ValueError("Scene-linear RGB must be representable as float32")
+    return result
+
+
+class EXRWriter:
+    """Preserve unclamped linear sRGB/D65 HDR radiance per PRD_v3 master export."""
+
+    def write(self, path: str | Path, radiance: np.ndarray) -> Path:
+        """Write lossless float32 RGB with explicit primary chromaticities."""
+        import OpenEXR
+
+        rgb = _linear_rgb(radiance)
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        header = {
+            "compression": OpenEXR.ZIP_COMPRESSION,
+            "type": OpenEXR.scanlineimage,
+            "chromaticities": (0.64, 0.33, 0.30, 0.60, 0.15, 0.06, 0.3127, 0.3290),
+            "comments": "Synthetic scene-linear reconstruction; linear sRGB / D65",
+        }
+        with OpenEXR.File(header, {name: np.ascontiguousarray(rgb[..., i]) for i, name in enumerate("RGB")}) as exr:
+            exr.write(str(path))
+        with OpenEXR.File(str(path), separate_channels=True) as reopened:
+            for i, name in enumerate("RGB"):
+                if not np.array_equal(reopened.channels()[name].pixels, rgb[..., i]):
+                    raise HardValidationError("Scene-linear EXR pixels differ")
+        return path
+
+
+class PreviewWriter:
+    """Create a bounded display preview from linear sRGB, separate from RAW development."""
+
+    def write(self, path: str | Path, radiance: np.ndarray, *, max_side: int = 1600) -> Path:
+        """Downsample before applying a clipped standard sRGB display transfer."""
+        from PIL import Image, ImageCms
+
+        if isinstance(max_side, bool) or not isinstance(max_side, int) or max_side < 1:
+            raise ValueError("max_side must be a positive integer")
+        rgb = _linear_rgb(radiance)
+        height, width = rgb.shape[:2]
+        scale = min(1.0, max_side / max(height, width))
+        size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        if size != (width, height):
+            rgb = np.stack(
+                [np.asarray(Image.fromarray(rgb[..., i]).resize(size, Image.Resampling.BOX)) for i in range(3)],
+                axis=-1,
+            )
+        bounded = np.clip(rgb, 0, 1)
+        encoded = np.where(bounded <= 0.0031308, 12.92 * bounded, 1.055 * bounded ** (1 / 2.4) - 0.055)
+        pixels = np.rint(encoded * 255).astype(np.uint8)
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+        Image.fromarray(pixels).save(path, format="PNG", icc_profile=profile)
+        with Image.open(path) as reopened:
+            if reopened.mode != "RGB" or not np.array_equal(np.asarray(reopened), pixels):
+                raise HardValidationError("Preview PNG pixels differ")
+        return path
