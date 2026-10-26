@@ -64,11 +64,13 @@ class SuperResolutionEngine:
         models: Mapping[str, Callable[[np.ndarray], np.ndarray]] | None = None,
         scale: int,
         tiles: TileParameters,
+        cache_dir: str | Path = "/content/synthraw_cache",
+        accept_licence: bool = False,
     ) -> TiledSRResult:
         """Run the PRD fidelity fallback chain with caller-loaded optional models.
 
-        Model callables must implement the requested scale. Loading, manifest
-        validation and checkpoint licence gates belong to the caller. Lanczos
+        Injected callables must implement the requested scale. Without an injected
+        mapping, learned backends load lazily inside Colab with manifest gates. Lanczos
         needs only Pillow and resizes float channels without 8-bit quantisation.
         OOM retry happens within each backend before proceeding to the next one.
         """
@@ -80,6 +82,7 @@ class SuperResolutionEngine:
         }
         if backend not in chains:
             raise ValueError(f"Unsupported fidelity backend: {backend}")
+        load_models = models is None
         models = models or {}
         reasons = []
 
@@ -95,6 +98,16 @@ class SuperResolutionEngine:
 
         for candidate in chains[backend]:
             model = lanczos if candidate == "LANCZOS" else models.get(candidate)
+            if model is None and load_models:
+                from synthraw.learned_sr import load_learned_backend
+
+                try:
+                    model = load_learned_backend(
+                        candidate, scale=scale, cache_dir=cache_dir, accept_licence=accept_licence
+                    )
+                except (ImportError, RuntimeError, ValueError, OSError) as error:
+                    reasons.append(f"{candidate}: {type(error).__name__}: {error}")
+                    continue
             if model is None:
                 reasons.append(f"{candidate}: backend unavailable")
                 continue
