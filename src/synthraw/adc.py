@@ -16,7 +16,7 @@ class ADCResult:
 
     A disabled shot-noise model cannot satisfy DNG's S > 0 contract, so its
     NoiseProfile is None rather than a fabricated positive slope. Fixed body
-    effects and quantisation error are outside this Poisson/read-noise model.
+    effects are outside this Poisson/read/quantisation model.
     """
 
     codes: np.ndarray
@@ -44,7 +44,8 @@ class ADCSimulator:
 
         DNG signal is black-subtracted and divided by WhiteLevel - BlackLevel.
         With k = analogue_gain / conversion_gain, S = k / range and
-        O = (read_noise_e * k / range)**2. Parameters describe this exact call;
+        O = (read_noise_e * k / range)**2 + 1 / (12 * range**2), where the last term is
+        the uniform rounding variance of one DN in the stored codes. Parameters describe this exact call;
         read/shot toggles match SensorNoiseSimulator. Output may be an NPY memmap.
         """
         for name, value in {
@@ -84,7 +85,7 @@ class ADCSimulator:
             raise ValueError("ADC gain must be finite and representable")
         scale = k / (white - black_level)
         sigma = read_noise_e * scale if config.READ_NOISE else 0.0
-        offset = sigma * sigma
+        offset = sigma * sigma + 1.0 / (12.0 * (white - black_level) ** 2)
         if not math.isfinite(scale) or scale <= 0 or not math.isfinite(offset):
             raise ValueError("ADC gain and NoiseProfile must be finite and representable")
         # Validate before writing so invalid input never leaves a partial output.

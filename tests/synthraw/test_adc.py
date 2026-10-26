@@ -33,8 +33,10 @@ def test_adc_precision(bits):
 
 def test_noise_profile_uses_gain_range_and_toggles():
     result = simulate([[100]], analogue_gain=4, black_level=100, white_level=1100)
-    assert result.noise_profile == (0.002, 0.006**2) * 3
-    assert simulate([[0]], ExperimentConfig(READ_NOISE=False)).noise_profile[1] == 0
+    quantisation = 1 / (12 * 1000**2)
+    assert result.noise_profile == pytest.approx((0.002, 0.006**2 + quantisation) * 3)
+    # Rounding to integer DN remains in the stored codes when read noise is disabled.
+    assert simulate([[0]], ExperimentConfig(READ_NOISE=False)).noise_profile[1] == pytest.approx(1 / (12 * 15871**2))
     assert simulate([[0]], ExperimentConfig(SHOT_NOISE=False)).noise_profile is None
     assert simulate([[0]], ExperimentConfig(READ_NOISE=False)).applied_parameters["read_noise_e"] == 0
 
