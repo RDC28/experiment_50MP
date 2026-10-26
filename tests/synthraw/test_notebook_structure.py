@@ -120,7 +120,7 @@ def test_later_sections_identify_milestone_placeholders(notebook):
             section = cell.source.removeprefix("## ")
         elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
             placeholders.add(section)
-    assert placeholders == set(SECTIONS[5:]) - {"Metadata construction"}
+    assert placeholders == set(SECTIONS[5:]) - {"Metadata construction", "DNG export"}
 
 
 def test_scientific_boundary_is_visible(notebook):
@@ -216,3 +216,57 @@ def test_metadata_cell_writes_provenance_and_sidecars(notebook, tmp_path, monkey
     assert registry["seed_only"] is True
     assert len(sidecar["fields"]) == len(registry["fields"])
     assert all(field["generated_value"] is not None or field["unsupported_reason"] for field in sidecar["fields"])
+
+
+@pytest.mark.parametrize("failure", [None, "writer", "libraw"])
+def test_notebook_export_publishes_only_validated_raw(notebook, tmp_path, monkeypatch, failure):
+    from dataclasses import replace
+
+    import numpy as np
+
+    from synthraw.config import ExperimentConfig
+    from synthraw.dng_metadata import DNGMetadataBuilder
+    from synthraw.dng_writer import DNGWriter
+    from synthraw.geometry import TargetGeometryPlanner
+    from synthraw.libraw_validator import HardValidationError, LibRawValidator
+    from synthraw.run_layout import RunLayout
+
+    config = ExperimentConfig()
+    run = RunLayout.create(tmp_path)
+    cell = next(cell for cell in notebook.cells if cell.cell_type == "code" and "def export_dng(" in cell.source)
+    namespace = {"config": config, "dng_metadata": None}
+    exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+    assert namespace["dng_path"] is None
+    export = namespace["export_dng"]
+    assert export(None, None, replace(config, WRITE_DNG=False), run) is None
+    with pytest.raises(ValueError, match="Construct sensor metadata"):
+        export(None, None, config, run)
+    geometry = replace(
+        TargetGeometryPlanner().plan(64, 48),
+        width=64,
+        height=48,
+        active_area=(0, 0, 48, 64),
+        default_crop_origin=(0, 0),
+        default_crop_size=(64, 48),
+    )
+    records = DNGMetadataBuilder().build(geometry, config)
+    mosaic = np.arange(48 * 64, dtype=np.uint16).reshape(48, 64) + 512
+    destination = run.directory("raw") / "synthetic_sensor.dng"
+    if failure:
+        destination.write_bytes(b"previous validated output")
+
+        def fail(*args, **kwargs):
+            if failure == "writer":
+                args[1].write_bytes(b"partial")
+            raise HardValidationError("export rejected")
+
+        monkeypatch.setattr(
+            DNGWriter if failure == "writer" else LibRawValidator, "write" if failure == "writer" else "validate", fail
+        )
+        with pytest.raises(HardValidationError, match="export rejected"):
+            export(mosaic, records, config, run)
+        assert destination.read_bytes() == b"previous validated output"
+    else:
+        assert export(mosaic, records, config, run) == destination
+        LibRawValidator().validate(destination, mosaic, records, develop=True)
+    assert list(run.directory("raw").iterdir()) == [destination]
