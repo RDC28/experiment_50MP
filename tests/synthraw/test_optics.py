@@ -88,3 +88,56 @@ def test_rejects_alias_and_bad_strip_size():
         LensSimulator().blur_radiance(source, out=source)
     with pytest.raises(ValueError, match="strip_rows"):
         LensSimulator().blur_radiance(source, strip_rows=0)
+
+
+@pytest.mark.parametrize("rows", [1, 4, 30])
+def test_radial_distortion_matches_analytic_linear_ramp(rows):
+    from synthraw.optics import OpticalDistortionParameters
+
+    y, x = np.mgrid[:11, :13]
+    source = np.stack([x, y, 2 * x - y], axis=-1).astype(float)
+    p = OpticalDistortionParameters(enabled=True, k1=0.1, k2=0.02)
+    actual = LensSimulator().distort_radiance(source, p, strip_rows=rows)
+    r2 = ((x - 6) / 6) ** 2 + ((y - 5) / 5) ** 2
+    scale = 1 + 0.1 * r2 + 0.02 * r2**2
+    source_x, source_y = 6 + (x - 6) * scale, 5 + (y - 5) * scale
+    expected = np.stack([source_x, source_y, 2 * source_x - source_y], axis=-1)
+    np.testing.assert_allclose(actual[2:-2, 2:-2], expected[2:-2, 2:-2], atol=1e-12)
+    np.testing.assert_array_equal(actual[5, 6], source[5, 6])
+
+
+@pytest.mark.parametrize("shape", [(1, 1, 3), (1, 9, 3), (7, 1, 3), (17, 19, 3)])
+def test_distortion_strip_equivalence_and_hdr_identity(shape, tmp_path):
+    from synthraw.optics import OpticalDistortionParameters
+
+    source = np.random.default_rng(8).normal(size=shape).astype(np.float32) * 10
+    simulator = LensSimulator()
+    np.testing.assert_array_equal(simulator.distort_radiance(source), source)
+    p = OpticalDistortionParameters(enabled=True, k1=-0.05)
+    expected = simulator.distort_radiance(source, p, strip_rows=100)
+    out = np.memmap(tmp_path / "distortion.bin", mode="w+", shape=shape, dtype=source.dtype)
+    assert simulator.distort_radiance(source, p, strip_rows=2, out=out) is out
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_distortion_uniform_channels_and_records():
+    from synthraw.optics import OpticalDistortionParameters
+
+    source = np.broadcast_to([-2.0, 0.0, 8.0], (13, 15, 3)).copy()
+    p = OpticalDistortionParameters(enabled=True, k1=0.2)
+    np.testing.assert_allclose(LensSimulator().distort_radiance(source, p), source)
+    records = LensSimulator().distortion_records(p)
+    assert records["enabled"].value is True
+    assert records["k1"].value == 0.2
+    assert all(record.provenance == "F" for record in records.values())
+
+
+@pytest.mark.parametrize("kwargs", [{"enabled": 1}, {"k1": float("nan")}, {"k2": True}, {"k1": -1}])
+def test_distortion_rejects_invalid_parameters_before_writing(kwargs):
+    from synthraw.optics import OpticalDistortionParameters
+
+    source = np.ones((5, 5, 3))
+    out = np.full_like(source, -10)
+    with pytest.raises(ValueError):
+        LensSimulator().distort_radiance(source, OpticalDistortionParameters(**kwargs), out=out)
+    np.testing.assert_array_equal(out, -10)

@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, map_coordinates
 
 from synthraw.provenance import FieldRecord, Provenance
 
@@ -50,8 +50,38 @@ class OpticalBlurParameters:
         )
 
 
+@dataclass(frozen=True)
+class OpticalDistortionParameters:
+    """Fabricated radial inverse warp in half-frame normalized coordinates.
+
+    Destination (x, y) samples source (x, y) * (1 + k1*r² + k2*r⁴).
+    Positive coefficients move source samples outward. Reflective sampling
+    outside the source is a synthetic boundary assumption, not new scene data.
+    """
+
+    enabled: bool = False
+    k1: float = 0.0
+    k2: float = 0.0
+
+    def validate(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be boolean")
+        for name in ("k1", "k2"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+        # r² spans [0, 2]. Require an orientation-preserving radial map:
+        # tangential scale = 1+k1*t+k2*t²; radial = 1+3*k1*t+5*k2*t².
+        for a, b in ((self.k1, self.k2), (3 * self.k1, 5 * self.k2)):
+            candidates = [0.0, 2.0]
+            if b > 0 and 0 < -a / (2 * b) < 2:
+                candidates.append(-a / (2 * b))
+            if any(1 + a * t + b * t * t <= 0 for t in candidates):
+                raise ValueError("radial coefficients must avoid foldovers within the frame")
+
+
 class LensSimulator:
-    """Strip-friendly first optical stage; call before distortion and CFA sampling."""
+    """Strip-friendly optical stages in PRD order, before CFA sampling."""
 
     def blur_radiance(
         self,
@@ -70,6 +100,19 @@ class LensSimulator:
         """
         parameters = parameters or OpticalBlurParameters()
         sigma = parameters.sigma_px()
+        self._validate_radiance(radiance, strip_rows, out)
+        result = np.empty_like(radiance) if out is None else out
+        halo = int(4 * sigma + 0.5)  # scipy's default truncate=4 support radius
+        for start in range(0, radiance.shape[0], strip_rows):
+            stop = min(start + strip_rows, radiance.shape[0])
+            lower, upper = max(0, start - halo), min(radiance.shape[0], stop + halo)
+            source = radiance[lower:upper]
+            filtered = gaussian_filter(source, (sigma, sigma, 0), mode="reflect") if sigma else source
+            result[start:stop] = filtered[start - lower : stop - lower]
+        return result
+
+    @staticmethod
+    def _validate_radiance(radiance: np.ndarray, strip_rows: int, out: np.ndarray | None) -> None:
         if not isinstance(radiance, np.ndarray) or radiance.ndim != 3 or radiance.shape[2] != 3:
             raise ValueError("radiance must be an H x W x 3 RGB array before CFA sampling")
         if min(radiance.shape) <= 0 or radiance.dtype.kind != "f":
@@ -85,15 +128,52 @@ class LensSimulator:
         for start in range(0, radiance.shape[0], strip_rows):
             if not np.isfinite(radiance[start : start + strip_rows]).all():
                 raise ValueError("radiance must contain only finite values")
+
+    def distort_radiance(
+        self,
+        radiance: np.ndarray,
+        parameters: OpticalDistortionParameters | None = None,
+        *,
+        strip_rows: int = 128,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Bilinear radial warp after blur, before vignetting and CFA.
+
+        Coordinates and sampled values occupy at most one strip. Input may
+        be a memmap; supply an output memmap to bound resident allocation.
+        No clipping, exposure rescaling, or channel mixing is performed.
+        """
+        parameters = parameters or OpticalDistortionParameters()
+        parameters.validate()
+        self._validate_radiance(radiance, strip_rows, out)
         result = np.empty_like(radiance) if out is None else out
-        halo = int(4 * sigma + 0.5)  # scipy's default truncate=4 support radius
-        for start in range(0, radiance.shape[0], strip_rows):
-            stop = min(start + strip_rows, radiance.shape[0])
-            lower, upper = max(0, start - halo), min(radiance.shape[0], stop + halo)
-            source = radiance[lower:upper]
-            filtered = gaussian_filter(source, (sigma, sigma, 0), mode="reflect") if sigma else source
-            result[start:stop] = filtered[start - lower : stop - lower]
+        height, width = radiance.shape[:2]
+        cx, cy = (width - 1) / 2, (height - 1) / 2
+        sx, sy = max(cx, 1), max(cy, 1)
+        for start in range(0, height, strip_rows):
+            stop = min(start + strip_rows, height)
+            if not parameters.enabled or (parameters.k1 == 0 and parameters.k2 == 0):
+                result[start:stop] = radiance[start:stop]
+                continue
+            y, x = np.meshgrid(np.arange(start, stop), np.arange(width), indexing="ij")
+            dx, dy = (x - cx) / sx, (y - cy) / sy
+            radius2 = dx * dx + dy * dy
+            scale = 1 + parameters.k1 * radius2 + parameters.k2 * radius2**2
+            coordinates = [cy + dy * scale * sy, cx + dx * scale * sx]
+            for channel in range(3):
+                result[start:stop, :, channel] = map_coordinates(
+                    radiance[:, :, channel], coordinates, order=1, mode="reflect", prefilter=False
+                )
         return result
+
+    def distortion_records(self, parameters: OpticalDistortionParameters | None = None) -> dict[str, FieldRecord]:
+        """Record the enabled warp and its unmeasured coefficients."""
+        parameters = parameters or OpticalDistortionParameters()
+        parameters.validate()
+        return {
+            name: FieldRecord(name, value, Provenance.FABRICATED, "Synthetic radial inverse warp; not lens calibration")
+            for name, value in vars(parameters).items()
+        }
 
     def blur_records(self, parameters: OpticalBlurParameters | None = None) -> dict[str, FieldRecord]:
         """Describe fabricated PSF hypotheses separately from correction flags."""
