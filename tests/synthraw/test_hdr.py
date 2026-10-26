@@ -79,3 +79,58 @@ def test_failed_stage_cleanup_and_existing_output_protection(tmp_path):
 def test_invalid_strip_size(tmp_path, rows):
     with pytest.raises(ValueError, match="strip_rows"):
         HDRReconstructionEngine().linearize(np.zeros((2, 2, 3)), tmp_path / "out.npy", strip_rows=rows)
+
+
+def test_hdr_preserves_supported_and_bounds_extrapolation(tmp_path):
+    encoded = np.array([[[128] * 3, [253] * 3, [2] * 3, [255] * 3, [0] * 3]], dtype=np.uint8)
+    linear = inverse_transfer(encoded / 255)
+    result = HDRReconstructionEngine().expand(encoded, linear, tmp_path, strip_rows=1)
+    arrays = result["arrays"]
+    hdr = arrays["04_hdr_radiance"]
+    np.testing.assert_array_equal(hdr[:, :1], linear[:, :1])
+    assert np.all(hdr[:, 1] > linear[:, 1])
+    assert np.all(hdr[:, 2] < linear[:, 2])
+    np.testing.assert_allclose(hdr[:, 3], 8)
+    np.testing.assert_array_equal(hdr[:, 4], 0)
+    np.testing.assert_array_equal(arrays["source_supported_mask"], [[True, False, False, False, False]])
+    np.testing.assert_array_equal(arrays["highlight_fabricated_mask"], [[False, True, False, True, False]])
+    np.testing.assert_array_equal(arrays["shadow_fabricated_mask"], [[False, False, True, False, True]])
+    np.testing.assert_array_equal(arrays["hdr_confidence"][:, [0, 3, 4]], [[1, 0, 0]])
+    assert result["generated_hdr_area_percentage"] == 80
+    assert all(isinstance(array, np.memmap) for array in arrays.values())
+    assert np.isfinite(hdr).all() and np.all(hdr >= 0)
+
+
+@pytest.mark.parametrize("backend", ["DETERMINISTIC", "EXPANDDIFF", "VID2HDR"])
+def test_hdr_strip_equivalence_and_fallback(tmp_path, backend):
+    encoded = np.linspace(0, 1, 81, dtype=np.float32).reshape(9, 3, 3)
+    linear = inverse_transfer(encoded)
+    engine = HDRReconstructionEngine()
+    first = engine.expand(encoded, linear, tmp_path / "a", strip_rows=1, backend=backend)
+    second = engine.expand(encoded, linear, tmp_path / "b", strip_rows=9)
+    for name, array in first["arrays"].items():
+        np.testing.assert_array_equal(array, second["arrays"][name])
+        np.testing.assert_array_equal(np.load(tmp_path / "a" / f"{name}.npy"), array)
+    assert bool(first["fallback_reason"]) == (backend != "DETERMINISTIC")
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -1])
+def test_hdr_invalid_linear_cleans_outputs(tmp_path, invalid):
+    with pytest.raises(ValueError, match="radiance"):
+        HDRReconstructionEngine().expand(np.ones((2, 2, 3)), np.full((2, 2, 3), invalid), tmp_path)
+    assert not list(tmp_path.glob("*.npy"))
+
+
+def test_hdr_existing_stage_is_protected(tmp_path):
+    path = tmp_path / "highlight_fabricated_mask.npy"
+    path.write_bytes(b"keep")
+    with pytest.raises(FileExistsError):
+        HDRReconstructionEngine().expand(np.ones((2, 2, 3)), np.ones((2, 2, 3)), tmp_path)
+    assert path.read_bytes() == b"keep"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("ev", [-1, np.nan, np.inf, 17])
+def test_hdr_invalid_ev(tmp_path, ev):
+    with pytest.raises(ValueError, match="EV"):
+        HDRReconstructionEngine().expand(np.ones((2, 2, 3)), np.ones((2, 2, 3)), tmp_path, highlight_ev=ev)
