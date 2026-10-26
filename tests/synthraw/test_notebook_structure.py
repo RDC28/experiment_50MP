@@ -96,6 +96,9 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "ExperimentConfig",
         "EnvironmentInspector",
         "InputInspector",
+        "ProvenanceWriter",
+        "SonyARWEmulationBuilder",
+        "SonyMetadataRegistry",
         "RandomStreams",
         "RunLayout",
         "TargetGeometryPlanner",
@@ -117,7 +120,7 @@ def test_later_sections_identify_milestone_placeholders(notebook):
             section = cell.source.removeprefix("## ")
         elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
             placeholders.add(section)
-    assert placeholders == set(SECTIONS[5:])
+    assert placeholders == set(SECTIONS[5:]) - {"Metadata construction"}
 
 
 def test_scientific_boundary_is_visible(notebook):
@@ -165,3 +168,51 @@ def test_tiny_raw_gate_failure_blocks_progress_and_cleans_up(notebook, monkeypat
     assert namespace["RAW_GATE_PASSED"] is False
     assert len(paths) == 1
     assert not paths[0].parent.exists()
+
+
+def test_metadata_cell_writes_provenance_and_sidecars(notebook, tmp_path, monkeypatch):
+    import json
+    from dataclasses import replace
+
+    from synthraw.config import ExperimentConfig
+    from synthraw.geometry import TargetGeometryPlanner
+    from synthraw.run_layout import RunLayout
+
+    monkeypatch.setattr("synthraw.sony_registry.shutil.which", lambda _: None)
+    cell = next(cell for cell in notebook.cells if cell.id == "8176dfe4")
+    namespace = {}
+    exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+    assert namespace["dng_metadata"] is None
+    geometry = replace(
+        TargetGeometryPlanner().plan(64, 48),
+        width=64,
+        height=48,
+        active_area=(0, 0, 48, 64),
+        default_crop_origin=(0, 0),
+        default_crop_size=(64, 48),
+    )
+    run = RunLayout.create(tmp_path)
+    sensor = dict(
+        cfa_phase="GBRG",
+        black_level=512,
+        white_level=16383,
+        color_matrix1=((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+        color_matrix2=((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+        as_shot_neutral=(0.5, 1, 0.75),
+        noise_profile=(0.002, 0.000003),
+    )
+    build = namespace["construct_metadata"]
+    with pytest.raises(ValueError, match="Missing sensor metadata"):
+        build(geometry, ExperimentConfig(), run, sensor_metadata={})
+    assert not list(run.directory("metadata").iterdir())
+    records = build(geometry, ExperimentConfig(), run, sensor_metadata=sensor)
+    fields = json.loads((run.directory("metadata") / "dng_metadata.json").read_text())
+    noise = next(field for field in fields if field["field"] == "NoiseProfile")
+    assert noise["value"] == list(sensor["noise_profile"])
+    assert noise["provenance"] == "D"
+    assert records["Make"].value == "Synthetic"
+    registry = json.loads((run.directory("metadata") / "sony_tag_registry.json").read_text())
+    sidecar = json.loads((run.directory("metadata") / "sony_arw_emulation.json").read_text())
+    assert registry["seed_only"] is True
+    assert len(sidecar["fields"]) == len(registry["fields"])
+    assert all(field["generated_value"] is not None or field["unsupported_reason"] for field in sidecar["fields"])
