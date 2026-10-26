@@ -8,6 +8,7 @@ targets carry pass/fail against configurable thresholds, and report-only metrics
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -863,3 +864,324 @@ class HDRValidator:
                 target="report percentage, no arbitrary pass",
             ),
         ]
+
+
+# Body effects enabled for the seed checks; defect fractions are raised so a tiny patch exercises them.
+_SEED_NOISE_PARAMETERS = {
+    "read_noise_e": 3.0,
+    "prnu_sigma": 0.01,
+    "dsnu_e": 2.0,
+    "row_fpn_e": 0.5,
+    "column_fpn_e": 0.5,
+    "dark_current_e_per_s": 0.1,
+    "hot_pixel_fraction": 0.01,
+    "dead_pixel_fraction": 0.01,
+}
+_BODY_EFFECTS = ("PRNU", "DSNU", "ROW_FPN", "COLUMN_FPN", "DARK_CURRENT", "HOT_PIXELS", "DEAD_PIXELS")
+
+
+def _pearson(first: np.ndarray, second: np.ndarray) -> float:
+    return float(np.corrcoef(np.ravel(first), np.ravel(second))[0, 1])
+
+
+class SensorSeedValidator:
+    """PRD determinism, sensor-stochasticity and body-signature rows on a clean test patch.
+
+    Shot/read noise follow SENSOR_NOISE_SEED and PRNU/DSNU/FPN/defects follow SENSOR_BODY_SEED,
+    so the body map (temporal noise disabled) must not change when only the noise seed changes.
+    """
+
+    def __init__(self, *, structure_correlation: float = 0.98) -> None:
+        self.structure_correlation = structure_correlation
+
+    def validate(
+        self,
+        config: ExperimentConfig,
+        *,
+        shape: tuple[int, int] = (32, 32),
+        max_signal_e: float = 20000.0,
+        noise_parameters: Mapping[str, float] | None = None,
+    ) -> list[ValidationCheck]:
+        parameters = {**_SEED_NOISE_PARAMETERS, **(noise_parameters or {})}
+        rows, cols = np.mgrid[0 : shape[0], 0 : shape[1]]
+        ramp = (rows / max(shape[0] - 1, 1) + cols / max(shape[1] - 1, 1)) / 2
+        clean = np.repeat((max_signal_e * (0.05 + 0.95 * ramp))[..., None], 3, axis=2)
+        body_on = replace(config, **dict.fromkeys(_BODY_EFFECTS, True))
+        noise_seed = replace(body_on, SENSOR_NOISE_SEED=config.SENSOR_NOISE_SEED + 1)
+
+        def simulate(run_config: ExperimentConfig) -> np.ndarray:
+            return SensorNoiseSimulator().simulate(clean, run_config, **parameters)
+
+        def body_map(run_config: ExperimentConfig) -> np.ndarray:
+            return simulate(replace(run_config, SHOT_NOISE=False, READ_NOISE=False))
+
+        first, repeat, reseeded = simulate(body_on), simulate(body_on), simulate(noise_seed)
+        determinism_error = float(np.max(np.abs(first - repeat)))
+        # Structure is judged away from hot/dead photosites, whose outliers are body signature, not scene.
+        only_defects = replace(body_on, **dict.fromkeys(_BODY_EFFECTS[:-2], False))
+        regular = body_map(only_defects) == clean
+        corr_first, corr_reseeded = (
+            _pearson(first[regular], clean[regular]),
+            _pearson(reseeded[regular], clean[regular]),
+        )
+        temporal_changed = bool(np.any(first != reseeded))
+
+        body, body_noise_reseeded = body_map(body_on), body_map(noise_seed)
+        body_reseeded = body_map(replace(body_on, SENSOR_BODY_SEED=config.SENSOR_BODY_SEED + 1))
+        body_error = float(np.max(np.abs(body - body_noise_reseeded)))
+        body_seed_sensitive = bool(np.any(body != body_reseeded))
+        defects = {
+            "dead_photosites": int(np.count_nonzero(body[..., 0] == 0)),
+            "body_map_std_e": float(np.std(body - clean)),
+        }
+        return [
+            ValidationCheck(
+                "determinism",
+                "Determinism",
+                determinism_error == 0,
+                measured={"max_abs_difference_e": determinism_error, "shape": list(shape)},
+                target="same seed/config reproduces identical electrons",
+            ),
+            ValidationCheck(
+                "noise_seed_structure",
+                "Sensor stochasticity",
+                bool(temporal_changed and min(corr_first, corr_reseeded) >= self.structure_correlation),
+                measured={
+                    "realisation_changed": temporal_changed,
+                    "structure_correlation": corr_first,
+                    "structure_correlation_reseeded": corr_reseeded,
+                },
+                target=f"noise differs, correlation with clean scene >= {self.structure_correlation}",
+            ),
+            ValidationCheck(
+                "body_seed_signature",
+                "Body signature",
+                bool(body_error == 0 and body_seed_sensitive),
+                measured={
+                    "max_abs_difference_e": body_error,
+                    "body_seed_changes_map": body_seed_sensitive,
+                    **defects,
+                },
+                target="PRNU/DSNU/FPN/defect map unchanged by noise seed",
+            ),
+        ]
+
+    @staticmethod
+    def compare_runs(
+        first: Mapping[str, np.ndarray], second: Mapping[str, np.ndarray], *, tolerance: float = 0.0
+    ) -> ValidationCheck:
+        """Pipeline-level determinism: two runs with the same seeds/config, compared strip-wise."""
+        differences: dict[str, float | str] = {}
+        for name, array in first.items():
+            other = second.get(name)
+            if other is None or other.shape != array.shape:
+                differences[name] = "missing or shape mismatch"
+                continue
+            worst = 0.0
+            for start in range(0, array.shape[0], 128):
+                a = np.asarray(array[start : start + 128], dtype=np.float64)
+                b = np.asarray(other[start : start + 128], dtype=np.float64)
+                worst = max(worst, float(np.max(np.abs(a - b), initial=0.0)))
+            differences[name] = worst
+        passed = all(isinstance(value, float) and value <= tolerance for value in differences.values())
+        return ValidationCheck(
+            "pipeline_determinism",
+            "Determinism",
+            passed,
+            measured={"max_abs_difference": differences},
+            target=f"reproducible within {tolerance}",
+        )
+
+
+# Fields that several stages record must carry one value across groups.
+_SHARED_FIELDS = (
+    "Make",
+    "BlackLevel",
+    "WhiteLevel",
+    "AsShotNeutral",
+    "ColorMatrix1",
+    "ColorMatrix2",
+    "CalibrationIlluminant1",
+    "CalibrationIlluminant2",
+    "ExposureTime",
+    "FNumber",
+    "PhotographicSensitivity",
+    "ExposureBiasValue",
+    "BaselineExposure",
+)
+# Pixel products, not metadata fields, that records may legitimately depend on.
+DATA_DEPENDENCIES = frozenset({"scene_linear_srgb"})
+
+
+def _record_dict(record: Any) -> dict[str, Any]:
+    return record.to_dict() if hasattr(record, "to_dict") else dict(record)
+
+
+def _numbers(value: Any) -> np.ndarray | None:
+    try:
+        array = np.asarray(value, dtype=float).ravel()
+    except (TypeError, ValueError):
+        return None
+    return array
+
+
+class MetadataDependencyValidator:
+    """PRD metadata dependency validator: zero impossible field combinations (hard gate).
+
+    Works on metadata.json groups (dicts or FieldRecords) so it can audit a finished run.
+    """
+
+    def validate(
+        self, groups: Mapping[str, Iterable[Any]], *, data_dependencies: Iterable[str] = DATA_DEPENDENCIES
+    ) -> ValidationCheck:
+        records = {name: [_record_dict(record) for record in items] for name, items in groups.items()}
+        known = {record["field"] for items in records.values() for record in items} | set(data_dependencies)
+        dng = {record["field"]: record for record in records.get("dng", [])}
+        violations: list[str] = []
+        shared: dict[str, list[tuple[str, Any]]] = {}
+        for group, items in records.items():
+            for record in items:
+                name = record["field"]
+                where = f"{group}.{name}"
+                if record.get("provenance") not in {"D", "I", "F", "M"}:
+                    violations.append(f"{where}: provenance {record.get('provenance')!r} is not D/I/F/M")
+                if record.get("provenance") == "F" and (
+                    record.get("confidence") is not None or not record.get("disclaimer")
+                ):
+                    violations.append(f"{where}: fabricated field claims confidence or lacks a disclaimer")
+                for dependency in record.get("dependencies") or []:
+                    if dependency not in known:
+                        violations.append(f"{where}: depends on unknown field {dependency!r}")
+                if "makernote" in name.lower():
+                    violations.append(f"{where}: MakerNotes are prohibited")
+                if (re.search(r"(?:^|_)date|Date", name) or name.upper().startswith("GPS")) and not record.get(
+                    "user_override"
+                ):
+                    violations.append(f"{where}: date/GPS without explicit user input")
+                if "serial" in name.lower() and not str(record.get("value", "")).startswith("SYNTHETIC-"):
+                    violations.append(f"{where}: serial is not an explicitly synthetic token")
+                if name in _SHARED_FIELDS:
+                    shared.setdefault(name, []).append((group, record.get("value")))
+        for name, values in shared.items():
+            reference = values[0][1]
+            for group, value in values[1:]:
+                a, b = _numbers(reference), _numbers(value)
+                same = (
+                    a is not None and b is not None and a.shape == b.shape and np.allclose(a, b, rtol=1e-9, atol=0)
+                    if a is not None or b is not None
+                    else reference == value
+                )
+                if not same:
+                    violations.append(f"{name}: {values[0][0]}={reference!r} disagrees with {group}={value!r}")
+        violations.extend(self._dng_rules(dng, records))
+        return ValidationCheck(
+            "metadata_dependencies",
+            "Metadata",
+            not violations,
+            hard=True,
+            measured={"violations": violations, "violation_count": len(violations), "fields_checked": len(known)},
+            target="zero impossible combinations",
+        )
+
+    @staticmethod
+    def _dng_rules(dng: Mapping[str, dict[str, Any]], records: Mapping[str, list[dict[str, Any]]]) -> list[str]:
+        violations: list[str] = []
+
+        def value(name: str) -> Any:
+            return dng[name]["value"] if name in dng else None
+
+        if dng and value("Make") != "Synthetic":
+            violations.append(f"dng.Make is {value('Make')!r}, must be 'Synthetic'")
+        for source, derived, factor in (("ExposureTime", "ShutterSpeedValue", -1), ("FNumber", "ApertureValue", 2)):
+            if (source in dng) != (derived in dng):
+                violations.append(f"dng.{derived} and dng.{source} must be present together")
+            elif source in dng and not (
+                _numbers(value(source)) is not None
+                and float(value(source)) > 0
+                and math.isclose(value(derived), factor * math.log2(value(source)), abs_tol=1e-9)
+            ):
+                violations.append(f"dng.{derived}={value(derived)!r} is not the APEX value of {source}")
+        bits, black, white = value("BitsPerSample"), value("BlackLevel"), value("WhiteLevel")
+        if None not in (bits, black, white) and not 0 <= float(black) < float(white) <= 2**bits - 1:
+            violations.append(f"levels: need 0 <= BlackLevel ({black}) < WhiteLevel ({white}) <= 2^{bits}-1")
+        width, height = value("ImageWidth"), value("ImageLength")
+        area, origin, size = value("ActiveArea"), value("DefaultCropOrigin"), value("DefaultCropSize")
+        if None not in (width, height, area):
+            top, left, bottom, right = area
+            if not (0 <= top < bottom <= height and 0 <= left < right <= width):
+                violations.append(f"ActiveArea {list(area)} outside {width}x{height}")
+            elif origin is not None and size is not None:
+                if not (
+                    0 <= origin[0]
+                    and 0 <= origin[1]
+                    and origin[0] + size[0] <= right - left
+                    and origin[1] + size[1] <= bottom - top
+                ):
+                    violations.append(f"DefaultCrop {list(origin)}+{list(size)} outside ActiveArea {list(area)}")
+        pattern, repeat, planes = value("CFAPattern"), value("CFARepeatPatternDim"), value("CFAPlaneColor")
+        if pattern is not None and repeat is not None:
+            if len(pattern) != repeat[0] * repeat[1]:
+                violations.append(f"CFAPattern length {len(pattern)} does not match CFARepeatPatternDim {repeat}")
+            if planes is not None and set(pattern) != set(planes):
+                violations.append(f"CFAPattern colours {sorted(set(pattern))} do not cover CFAPlaneColor {planes}")
+        sensor = {record["field"]: record["value"] for record in records.get("sensor_profile", [])}
+        phase = sensor.get("applied_cfa_phase")
+        if pattern is not None and phase is not None and tuple(pattern) != CFA_PATTERNS.get(phase):
+            violations.append(f"dng.CFAPattern {list(pattern)} does not match applied phase {phase}")
+        profile = value("NoiseProfile")
+        if profile is not None:
+            numbers = _numbers(profile)
+            if numbers is None or numbers.size % 2 or not np.isfinite(numbers).all():
+                violations.append("NoiseProfile must be finite (S, O) pairs")
+            elif np.any(numbers[0::2] <= 0) or np.any(numbers[1::2] < 0):
+                violations.append("NoiseProfile needs S > 0 and O >= 0")
+            applied = sensor.get("applied_adc_noise_profile")
+            applied = _numbers(applied) if applied is not None else None
+            if (
+                applied is not None
+                and numbers is not None
+                and (applied.shape != numbers.shape or not np.allclose(numbers, applied, rtol=1e-9, atol=0))
+            ):
+                violations.append("dng.NoiseProfile differs from the applied ADC noise model")
+        neutral = _numbers(value("AsShotNeutral")) if "AsShotNeutral" in dng else None
+        if neutral is not None and (neutral.shape != (3,) or not np.isfinite(neutral).all() or np.any(neutral <= 0)):
+            violations.append(f"AsShotNeutral {value('AsShotNeutral')!r} must be three positive finite values")
+        return violations
+
+
+class RawTherapeeRenderer:
+    """Optional second independent processor; never fails the experiment (report-only row)."""
+
+    def __init__(self, executable: str = "rawtherapee-cli", timeout_s: float = 600.0) -> None:
+        self.executable = executable
+        self.timeout_s = timeout_s
+
+    def render(self, dng_path: str | Path, output_dir: str | Path) -> ValidationCheck:
+        import shutil
+        import subprocess
+
+        found = shutil.which(self.executable)
+        if found is None:
+            return ValidationCheck(
+                "rawtherapee_neutral_render",
+                "DNG structure",
+                None,
+                measured={"available": False},
+                detail=f"{self.executable} not installed; LibRaw remains the mandatory gate",
+            )
+        output = Path(output_dir) / f"{Path(dng_path).stem}_rawtherapee.tif"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        command = [found, "-o", str(output), "-t", "-Y", "-c", str(dng_path)]
+        try:
+            completed = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout_s, check=False)
+            returncode, message = completed.returncode, (completed.stderr or completed.stdout)[-500:]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            returncode, message = None, str(exc)
+        rendered = returncode == 0 and output.exists()
+        return ValidationCheck(
+            "rawtherapee_neutral_render",
+            "DNG structure",
+            None,
+            measured={"available": True, "returncode": returncode, "rendered": rendered, "output": str(output)},
+            detail="neutral render succeeded" if rendered else f"render failed (not a gate): {message}",
+        )
