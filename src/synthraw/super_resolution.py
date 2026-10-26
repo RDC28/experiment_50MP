@@ -13,6 +13,15 @@ from synthraw.environment import TileParameters
 
 
 @dataclass(frozen=True)
+class SRScalePlan:
+    """Allocation-free model scale and exact content resize (PRD model selection)."""
+
+    scale: int
+    intermediate_size: tuple[int, int]
+    content_size: tuple[int, int]
+
+
+@dataclass(frozen=True)
 class TiledSRResult:
     """Reconstruction location and first-tile timing, without loading the output."""
 
@@ -28,6 +37,23 @@ class TiledSRResult:
 
 class SuperResolutionEngine:
     """Execute optional RGB model callables on bounded, overlapping tiles."""
+
+    @staticmethod
+    def plan_scale(*, source_width: int, source_height: int, content_width: int, content_height: int) -> SRScalePlan:
+        """Select x4 up to 2K, otherwise nearest x2/x4 to the required scale.
+
+        Content dimensions describe the visible source crop after geometry
+        planning. Pass that crop's dimensions as source dimensions for crop
+        mode. Larger sources use the maximum axis ratio so both content axes
+        are considered; ties prefer x4 to retain detail before exact resizing.
+        No sensor-sized arrays or model checkpoints are allocated here.
+        """
+        dimensions = (source_width, source_height, content_width, content_height)
+        if any(type(value) is not int or value < 1 for value in dimensions):
+            raise ValueError("Source and content dimensions must be positive integers")
+        required = max(content_width / source_width, content_height / source_height)
+        scale = 4 if max(source_width, source_height) <= 2048 or required >= 3 else 2
+        return SRScalePlan(scale, (source_width * scale, source_height * scale), (content_width, content_height))
 
     def reconstruct(
         self,
