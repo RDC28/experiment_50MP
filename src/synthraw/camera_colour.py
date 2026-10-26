@@ -101,13 +101,19 @@ class InverseISPEngine:
         *,
         white_balance_gains: tuple[float, float, float] = (1.0, 1.0, 1.0),
         digital_gain: float = 1.0,
+        use_raw_flow: bool = False,
+        use_spiraldiff: bool = False,
     ) -> InverseISPResult:
         """Unprocess linear sRGB; WB gains must be in camera channel coordinates.
 
         Signed out-of-gamut values and HDR headroom are preserved. The downstream
         electron simulator must explicitly handle negative sensor expectations.
         No inverse tone curve is applied here: HDR reconstruction already did it.
+        Experimental learned toggles are gated stubs: they retain PHYSICS and
+        report the fallback and cross-camera domain without loading any model.
         """
+        if not isinstance(use_raw_flow, bool) or not isinstance(use_spiraldiff, bool):
+            raise ValueError("Learned inverse-ISP toggles must be booleans")
         rgb = np.asarray(scene_linear_rgb, dtype=float)
         gains = np.asarray(white_balance_gains, dtype=float)
         if rgb.ndim != 3 or rgb.shape[-1] != 3 or not rgb.size or not np.isfinite(rgb).all():
@@ -132,5 +138,25 @@ class InverseISPEngine:
                 "Supplied camera-channel gain hypothesis; neutral normalized to green",
                 dependencies=["inverse_isp_white_balance_gains"] if name == "AsShotNeutral" else [],
                 user_override=name != "AsShotNeutral",
+            )
+        requested = [name for name, enabled in (("RAW_FLOW", use_raw_flow), ("SPIRALDIFF", use_spiraldiff)) if enabled]
+        selection = {
+            "inverse_isp_backend": "PHYSICS",
+            "inverse_isp_requested_priors": requested,
+            "inverse_isp_fallback_reason": (
+                "Learned inverse-ISP adapters are unavailable; no supplied checkpoint camera domain has been verified. "
+                "Using the PHYSICS baseline without a learned prior."
+                if requested
+                else None
+            ),
+            "inverse_isp_camera_domain": "cross-camera" if requested else "virtual matrix camera",
+        }
+        for name, value in selection.items():
+            records[name] = FieldRecord(
+                name,
+                value,
+                Provenance.DETERMINISTIC,
+                "PRD_v3 learned inverse-ISP gate; no model import or checkpoint download",
+                dependencies=["inverse_isp_requested_priors"] if name != "inverse_isp_requested_priors" else [],
             )
         return InverseISPResult(camera, records)

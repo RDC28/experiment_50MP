@@ -70,3 +70,44 @@ def test_model_snapshots_input_and_metadata():
     assert model.metadata()["camera_to_working"].value[0][0] == 1
     with pytest.raises(ValueError):
         model.camera_to_working[0, 0] = 2
+
+
+@pytest.mark.parametrize("raw_flow,spiraldiff", [(False, False), (True, False), (False, True), (True, True)])
+def test_learned_gates_preserve_physics_and_report_domain(raw_flow, spiraldiff):
+    rgb = np.arange(18).reshape(2, 3, 3) / 4
+    model = CameraColourModel()
+    baseline = InverseISPEngine().reconstruct(rgb, model, white_balance_gains=(2, 1, 3), digital_gain=1.5)
+    result = InverseISPEngine().reconstruct(
+        rgb,
+        model,
+        white_balance_gains=(2, 1, 3),
+        digital_gain=1.5,
+        use_raw_flow=raw_flow,
+        use_spiraldiff=spiraldiff,
+    )
+    np.testing.assert_array_equal(result.camera_rgb, baseline.camera_rgb)
+    records = result.records
+    assert records["inverse_isp_backend"].value == "PHYSICS"
+    expected = [name for name, flag in (("RAW_FLOW", raw_flow), ("SPIRALDIFF", spiraldiff)) if flag]
+    assert records["inverse_isp_requested_priors"].value == expected
+    if expected:
+        assert "unavailable" in records["inverse_isp_fallback_reason"].value
+        assert records["inverse_isp_camera_domain"].value == "cross-camera"
+    else:
+        assert records["inverse_isp_fallback_reason"].value is None
+        assert records["inverse_isp_camera_domain"].value == "virtual matrix camera"
+    for key in (
+        "inverse_isp_backend",
+        "inverse_isp_requested_priors",
+        "inverse_isp_fallback_reason",
+        "inverse_isp_camera_domain",
+    ):
+        records[key].validate()
+        assert records[key].provenance == Provenance.DETERMINISTIC
+
+
+@pytest.mark.parametrize("flag", ["yes", 1, None])
+def test_learned_gates_reject_nonboolean(flag):
+    for key in ("use_raw_flow", "use_spiraldiff"):
+        with pytest.raises(ValueError, match="booleans"):
+            InverseISPEngine().reconstruct(np.ones((1, 1, 3)), CameraColourModel(), **{key: flag})
