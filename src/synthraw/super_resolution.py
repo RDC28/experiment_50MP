@@ -23,7 +23,11 @@ class SRScalePlan:
 
 @dataclass(frozen=True)
 class TiledSRResult:
-    """Reconstruction location and first-tile timing, without loading the output."""
+    """Reconstruction location and sampled tile timing, without loading the output.
+
+    benchmark_seconds is the mean elapsed preparation/inference/blending time
+    of the first benchmark_tile_count successful tiles (up to three). The ETA
+    extrapolates tile processing only, excluding allocation and final disk flush."""
 
     path: Path
     tile_count: int
@@ -33,6 +37,7 @@ class TiledSRResult:
     retry_reasons: tuple[str, ...] = ()
     backend: str | None = None
     fallback_reasons: tuple[str, ...] = ()
+    benchmark_tile_count: int = 0
 
 
 class SuperResolutionEngine:
@@ -178,6 +183,7 @@ class SuperResolutionEngine:
         positions = [(y, x) for y in range(0, height, stride) for x in range(0, width, stride)]
         output = weights = None
         benchmark = 0.0
+        benchmark_count = min(3, len(positions))
         try:
             output = np.lib.format.open_memmap(
                 path, mode="w+", dtype=np.float32, shape=(height * scale, width * scale, 3)
@@ -189,6 +195,7 @@ class SuperResolutionEngine:
             weights[:] = 0
             halo = overlap
             for index, (y, x) in enumerate(positions):
+                started = time.perf_counter() if index < benchmark_count else 0.0
                 h, w = min(tile, height - y), min(tile, width - x)
                 y0, x0 = max(0, y - halo), max(0, x - halo)
                 y1, x1 = min(height, y + h + halo), min(width, x + w + halo)
@@ -201,10 +208,7 @@ class SuperResolutionEngine:
                     (0, 0),
                 )
                 patch = np.pad(patch, padding, mode="reflect")
-                started = time.perf_counter()
                 prediction = np.asarray(model(patch), dtype=np.float32)
-                if index == 0:
-                    benchmark = time.perf_counter() - started
                 if prediction.shape != (patch.shape[0] * scale, patch.shape[1] * scale, 3):
                     raise ValueError("model returned an incompatible shape")
                 if not np.isfinite(prediction).all():
@@ -217,6 +221,8 @@ class SuperResolutionEngine:
                 region = np.s_[y * scale : (y + h) * scale, x * scale : (x + w) * scale]
                 output[region] += core * weight[..., None]
                 weights[region] += weight
+                if index < benchmark_count:
+                    benchmark += time.perf_counter() - started
             for y in range(0, height * scale, tile):
                 output[y : y + tile] /= weights[y : y + tile, :, None]
             output.flush()
@@ -228,7 +234,15 @@ class SuperResolutionEngine:
         finally:
             output = weights = None
             weights_path.unlink(missing_ok=True)
-        return TiledSRResult(path, len(positions), benchmark, benchmark * len(positions), tile)
+        mean_seconds = benchmark / benchmark_count
+        return TiledSRResult(
+            path,
+            len(positions),
+            mean_seconds,
+            mean_seconds * len(positions),
+            tile,
+            benchmark_tile_count=benchmark_count,
+        )
 
 
 @dataclass(frozen=True)

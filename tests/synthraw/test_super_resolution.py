@@ -300,3 +300,24 @@ def test_fallback_does_not_hide_output_collision(tmp_path):
     with pytest.raises(FileExistsError):
         SuperResolutionEngine().reconstruct(np.zeros((2, 2, 3)), path, scale=2, tiles=TileParameters(4, 1, True, False))
     assert path.read_bytes() == b"preserve"
+
+
+@pytest.mark.parametrize("width,tile_count,sample_count", [(2, 1, 1), (4, 2, 2), (10, 5, 3)])
+def test_first_tiles_benchmark_extrapolates_observed_mean(tmp_path, monkeypatch, width, tile_count, sample_count):
+    # Unequal durations ensure ETA uses the sampled mean, not the first tile.
+    ticks = iter([10.0, 11.0, 20.0, 23.0, 30.0, 35.0][: sample_count * 2])
+    monkeypatch.setattr("synthraw.super_resolution.time.perf_counter", lambda: next(ticks))
+    result = SuperResolutionEngine().reconstruct_tiles(
+        np.full((2, width, 3), 0.5, dtype=np.float32),
+        tmp_path / "sr.npy",
+        lambda patch: patch,
+        scale=1,
+        tiles=TileParameters(2, 0, True, False),
+    )
+    assert result.tile_count == tile_count
+    assert result.benchmark_tile_count == sample_count
+    assert result.benchmark_seconds == pytest.approx(sum([1, 3, 5][:sample_count]) / sample_count)
+    assert result.estimated_seconds == pytest.approx(result.benchmark_seconds * tile_count)
+    np.testing.assert_allclose(np.load(result.path), 0.5)
+    with pytest.raises(StopIteration):
+        next(ticks)
