@@ -9,7 +9,10 @@ from pathlib import Path
 
 import numpy as np
 
-from synthraw.environment import TileParameters
+from synthraw.config import ExperimentConfig
+from synthraw.environment import EnvironmentReport, TileParameters
+from synthraw.geometry import GeometryPlan
+from synthraw.sensor_canvas import SensorCanvasResult, place_sensor_canvas
 
 
 @dataclass(frozen=True)
@@ -40,8 +43,93 @@ class TiledSRResult:
     benchmark_tile_count: int = 0
 
 
+@dataclass(frozen=True)
+class SRRunResult:
+    """PRD reconstruction products, backend decisions, timing and diagnostics.
+
+    Fidelity is measured before geometry cropping so it compares the complete
+    source field of view. Seam diagnostics are unavailable for a single tile.
+    """
+
+    tiled: TiledSRResult
+    scale_plan: SRScalePlan
+    canvas: SensorCanvasResult
+    content_path: Path
+    seams: SeamDiagnostic | None
+    seam_unavailable_reason: str | None
+    source_fidelity: SourceFidelityDiagnostic
+
+
 class SuperResolutionEngine:
     """Execute optional RGB model callables on bounded, overlapping tiles."""
+
+    def run(
+        self,
+        source_rgb: np.ndarray,
+        geometry_plan: GeometryPlan,
+        config: ExperimentConfig,
+        environment: EnvironmentReport,
+        workdir: str | Path,
+        *,
+        accept_licence: bool = False,
+    ) -> SRRunResult:
+        """Reconstruct and place encoded RGB without stretching (PRD SR stage).
+
+        Products remain disk-backed. The independently resized source baseline
+        distinguishes scene edges from tile seams. Learned downloads retain the
+        explicit licence gate and Colab-only checks in the backend loader.
+        """
+        directory = Path(workdir)
+        left, top, right, bottom = map(round, geometry_plan.content_box)
+        content_width, content_height = right - left, bottom - top
+        crop_left, crop_top, crop_right, crop_bottom = geometry_plan.crop_box
+        scale_plan = self.plan_scale(
+            source_width=source_rgb.shape[1],
+            source_height=source_rgb.shape[0],
+            content_width=max(1, round(content_width * source_rgb.shape[1] / (crop_right - crop_left))),
+            content_height=max(1, round(content_height * source_rgb.shape[0] / (crop_bottom - crop_top))),
+        )
+        # The model sees the full source; only the final exact resize crops it.
+        scale_plan = replace(scale_plan, content_size=(content_width, content_height))
+        tiled = self.reconstruct(
+            source_rgb,
+            directory / "intermediates/sr_tiled.npy",
+            backend=config.SR_BACKEND,
+            scale=scale_plan.scale,
+            tiles=environment.tiles,
+            cache_dir=directory / "model_cache",
+            accept_licence=accept_licence,
+        )
+        reconstructed = np.load(tiled.path, mmap_mode="r")
+        fidelity = diagnose_source_fidelity(reconstructed, source_rgb)
+        seams = None
+        seam_reason = "Single tile: no internal tile boundaries" if tiled.tile_count == 1 else None
+        if tiled.tile_count > 1:
+            baseline_path = resize_exact(
+                source_rgb,
+                directory / "intermediates/sr_reference.npy",
+                width=scale_plan.intermediate_size[0],
+                height=scale_plan.intermediate_size[1],
+            )
+            baseline = np.load(baseline_path, mmap_mode="r")
+            overlap = min(environment.tiles.overlap, tiled.effective_tile_size - 1)
+            seams = diagnose_tile_seams(
+                reconstructed,
+                baseline,
+                directory / "validation/tile_seam_map.npy",
+                tile_size=tiled.effective_tile_size,
+                overlap=overlap,
+                scale=scale_plan.scale,
+            )
+        content_path = resize_exact(
+            reconstructed,
+            directory / "intermediates/sr_content.npy",
+            width=content_width,
+            height=content_height,
+            source_box=tuple(value * scale_plan.scale for value in geometry_plan.crop_box),
+        )
+        canvas = place_sensor_canvas(np.load(content_path, mmap_mode="r"), geometry_plan, directory)
+        return SRRunResult(tiled, scale_plan, canvas, content_path, seams, seam_reason, fidelity)
 
     @staticmethod
     def plan_scale(*, source_width: int, source_height: int, content_width: int, content_height: int) -> SRScalePlan:
