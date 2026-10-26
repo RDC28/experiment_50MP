@@ -225,3 +225,61 @@ def diagnose_tile_seams(
     interior_mean = interior_sum / (height * width - boundary_count)
     ratio = boundary_mean / interior_mean if interior_mean else (float("inf") if boundary_mean else 0.0)
     return SeamDiagnostic(path, boundary_mean, interior_mean, ratio, ratio < 1.25)
+
+
+@dataclass(frozen=True)
+class SourceFidelityDiagnostic:
+    """Source-grid RGB errors in the shared input convention (PRD SR validation)."""
+
+    mean_absolute_error: float
+    root_mean_square_error: float
+    maximum_absolute_error: float
+    psnr_db: float
+
+
+def diagnose_source_fidelity(reconstruction: np.ndarray, source: np.ndarray) -> SourceFidelityDiagnostic:
+    """Compare exact area downsampling to source RGB, including fractional scales.
+
+    Inputs must use the same transfer function and primaries. Read one SR row
+    at a time so disk-backed full-resolution RGB never becomes a RAM copy.
+    Metrics use a unit peak and no clipping; perfect fidelity has infinite PSNR.
+    This measures source consistency, not whether invented detail is correct.
+    """
+    for array in (reconstruction, source):
+        if array.ndim != 3 or array.shape[2] != 3 or min(array.shape[:2]) < 1:
+            raise ValueError("inputs must be nonempty HWC RGB")
+    height, width = source.shape[:2]
+    sr_height, sr_width = reconstruction.shape[:2]
+    if sr_height < height or sr_width < width:
+        raise ValueError("reconstruction must be at least source size on both axes")
+    x_edges = np.linspace(0, sr_width, width + 1)
+    x_index = np.minimum(x_edges.astype(np.int64), sr_width - 1)
+    x_fraction = x_edges - x_index
+    x_scale, y_scale = sr_width / width, sr_height / height
+    absolute_sum = squared_sum = maximum = 0.0
+    for y in range(height):
+        top, bottom = y * y_scale, min(sr_height, (y + 1) * y_scale)
+        downsampled = np.zeros((width, 3), dtype=np.float64)
+        for row in range(int(np.floor(top)), int(np.ceil(bottom))):
+            pixels = np.asarray(reconstruction[row], dtype=np.float64)
+            if not np.isfinite(pixels).all() or np.any((pixels < 0) | (pixels > 1)):
+                raise ValueError("inputs must contain finite RGB values in [0, 1]")
+            integral = np.vstack((np.zeros((1, 3)), np.cumsum(pixels, axis=0)))
+            edges = integral[x_index] + x_fraction[:, None] * pixels[x_index]
+            weight = min(bottom, row + 1) - max(top, row)
+            downsampled += np.diff(edges, axis=0) * (weight / (x_scale * y_scale))
+        original = np.asarray(source[y], dtype=np.float64)
+        if not np.isfinite(original).all() or np.any((original < 0) | (original > 1)):
+            raise ValueError("inputs must contain finite RGB values in [0, 1]")
+        error = downsampled - original
+        absolute_sum += float(np.abs(error).sum())
+        squared_sum += float(np.square(error).sum())
+        maximum = max(maximum, float(np.abs(error).max()))
+    count = height * width * 3
+    mse = squared_sum / count
+    return SourceFidelityDiagnostic(
+        absolute_sum / count,
+        float(np.sqrt(mse)),
+        maximum,
+        float(-10 * np.log10(mse)) if mse else float("inf"),
+    )

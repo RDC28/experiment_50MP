@@ -181,3 +181,64 @@ def test_seam_diagnostic_requires_boundary_and_interior(tmp_path):
     with pytest.raises(ValueError, match="both tile boundaries"):
         diagnose_tile_seams(source, source, tmp_path / "seams.npy", tile_size=5, overlap=1, scale=1)
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("scale", [1, 2, 4])
+def test_source_fidelity_for_exact_repeat_and_memmap(tmp_path, scale):
+    from synthraw.super_resolution import diagnose_source_fidelity
+
+    source = np.random.default_rng(8).random((5, 7, 3)).astype(np.float32)
+    path = tmp_path / "sr.npy"
+    np.save(path, np.repeat(np.repeat(source, scale, axis=0), scale, axis=1))
+    result = diagnose_source_fidelity(np.load(path, mmap_mode="r"), source)
+    assert result.mean_absolute_error == 0
+    assert result.root_mean_square_error == 0
+    assert result.maximum_absolute_error == 0
+    assert result.psnr_db == float("inf")
+
+
+def test_source_fidelity_measures_known_radiometric_error():
+    from synthraw.super_resolution import diagnose_source_fidelity
+
+    result = diagnose_source_fidelity(np.full((8, 12, 3), 0.75), np.full((4, 6, 3), 0.5))
+    assert result.mean_absolute_error == pytest.approx(0.25)
+    assert result.root_mean_square_error == pytest.approx(0.25)
+    assert result.maximum_absolute_error == pytest.approx(0.25)
+    assert result.psnr_db == pytest.approx(20 * np.log10(4))
+
+
+def test_source_fidelity_fractional_resize_matches_area_overlap_oracle():
+    from synthraw.super_resolution import diagnose_source_fidelity
+
+    sr = np.random.default_rng(9).random((11, 17, 3))
+    source = np.zeros((4, 6, 3))
+    # Independent brute-force pixel-area integration on tiny fixtures.
+    for y in range(4):
+        for x in range(6):
+            for sy in range(11):
+                wy = max(0, min((y + 1) * 11 / 4, sy + 1) - max(y * 11 / 4, sy))
+                for sx in range(17):
+                    wx = max(0, min((x + 1) * 17 / 6, sx + 1) - max(x * 17 / 6, sx))
+                    source[y, x] += sr[sy, sx] * wy * wx / (11 * 17 / (4 * 6))
+    result = diagnose_source_fidelity(sr, source)
+    assert result.maximum_absolute_error < 1e-14
+
+
+@pytest.mark.parametrize("invalid", ["shape", "smaller", "nan", "range", "source_nan"])
+def test_source_fidelity_rejects_invalid_inputs(invalid):
+    from synthraw.super_resolution import diagnose_source_fidelity
+
+    source = np.zeros((3, 4, 3))
+    sr = np.zeros((6, 8, 3))
+    if invalid == "shape":
+        sr = sr[..., 0]
+    elif invalid == "smaller":
+        sr = sr[:2]
+    elif invalid == "nan":
+        sr[-1, -1] = np.nan
+    elif invalid == "range":
+        sr[-1, -1] = 1.1
+    else:
+        source[-1, -1] = np.nan
+    with pytest.raises(ValueError):
+        diagnose_source_fidelity(sr, source)
