@@ -96,3 +96,9 @@ def test_all_documented_choices_construct():
                     **({"INPUT_PATH": "image.png"} if name == "INPUT_MODE" else {}),
                     **({"CALIBRATION_ASSETS": ("curves.json",)} if name == "SPECTRAL_MODE" else {}),
                 )
+
+
+def test_unimplemented_lossless_dng_compression_is_not_offered():
+    assert get_args(get_type_hints(ExperimentConfig)["DNG_COMPRESSION"]) == ("UNCOMPRESSED",)
+    with pytest.raises(ValueError, match="DNG_COMPRESSION"):
+        ExperimentConfig(DNG_COMPRESSION="LOSSLESS")

@@ -78,3 +78,17 @@ def test_run_records_fallback_and_single_tile_diagnostic(tmp_path, monkeypatch):
     assert "Single tile" in result.seam_unavailable_reason
     assert result.tiled.benchmark_tile_count == 1
     np.testing.assert_allclose(np.load(result.canvas.path), 0.5)
+
+
+def test_generative_detail_strength_is_recorded_as_ignored(tmp_path):
+    config = ExperimentConfig(SR_BACKEND="LANCZOS", GENERATIVE_DETAIL_STRENGTH=0.4, FAST_DEV_RUN=True)
+    geometry = TargetGeometryPlanner().plan(6, 4, config)
+    geometry = replace(geometry, width=12, height=8, content_box=(0, 0, 12, 8), outpaint_bands=())
+    source = np.full((4, 6, 3), 0.5, dtype=np.float32)
+    result = SuperResolutionEngine().run(source, geometry, config, environment(16), tmp_path)
+    assert result.tiled.backend == "LANCZOS"
+    assert result.tiled.fallback_reasons == (
+        "GENERATIVE_DETAIL_STRENGTH=0.4 ignored: no generative detail backend is implemented; "
+        "fidelity output only, no unseen texture added",
+    )
+    np.testing.assert_allclose(np.load(result.canvas.path), 0.5)

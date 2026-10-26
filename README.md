@@ -90,6 +90,9 @@ been run on this laptop. **Still to verify in Colab:** a full-size 50 MP run, le
 Real-ESRGAN) with downloaded weights, GPU memory fallbacks, and the validation and comparison reports
 produced at full resolution.
 
+[docs/prd_v3_checklist.md](docs/prd_v3_checklist.md) maps every item of the PRD delivery checklist and every
+toggle row to its module, tests and state: tested locally, pending Colab, gated stub or not implemented.
+
 ## Status
 
 | PRD phase (section 30) | State |

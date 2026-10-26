@@ -50,7 +50,8 @@ class ExperimentConfig:
     DIFFRACTION: bool = False
     DEFOCUS: bool = False
     DNG_STORAGE_BITS: int = 16
-    DNG_COMPRESSION: Literal["UNCOMPRESSED", "LOSSLESS"] = "UNCOMPRESSED"
+    # The PRD's optional lossless DNG mode is not implemented, so it is not offered.
+    DNG_COMPRESSION: Literal["UNCOMPRESSED"] = "UNCOMPRESSED"
     GENERATE_SYNTHETIC_EXIF: bool = True
     FABRICATE_UNOBSERVABLE_EXIF: bool = False
     WRITE_DNG: bool = True

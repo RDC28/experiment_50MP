@@ -100,6 +100,13 @@ class SuperResolutionEngine:
             cache_dir=directory / "model_cache",
             accept_licence=accept_licence,
         )
+        if config.GENERATIVE_DETAIL_STRENGTH > 0:
+            # No generative detail synthesis is implemented (SUPIR is a gated stub); say so rather than ignore it.
+            reason = (
+                f"GENERATIVE_DETAIL_STRENGTH={config.GENERATIVE_DETAIL_STRENGTH:g} ignored: no generative detail "
+                "backend is implemented; fidelity output only, no unseen texture added"
+            )
+            tiled = replace(tiled, fallback_reasons=(*tiled.fallback_reasons, reason))
         reconstructed = np.load(tiled.path, mmap_mode="r")
         fidelity = diagnose_source_fidelity(reconstructed, source_rgb)
         seams = None
