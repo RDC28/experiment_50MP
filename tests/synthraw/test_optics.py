@@ -254,3 +254,94 @@ def test_chromatic_rejects_invalid_parameters_before_writing(kwargs):
     with pytest.raises(ValueError):
         LensSimulator().chromatic_radiance(source, OpticalChromaticParameters(**kwargs), out=out)
     np.testing.assert_array_equal(out, -10)
+
+
+@pytest.mark.parametrize("rows", [1, 4, 30])
+def test_pipeline_disk_backed_matches_prd_stage_order(tmp_path, rows):
+    from synthraw.config import ExperimentConfig
+    from synthraw.optics import OpticalChromaticParameters, OpticalDistortionParameters, OpticalVignettingParameters
+
+    source = np.lib.format.open_memmap(tmp_path / "source.npy", mode="w+", dtype="float32", shape=(17, 19, 3))
+    source[:] = np.random.default_rng(13).normal(size=source.shape)
+    original = source.copy()
+    out = np.lib.format.open_memmap(tmp_path / "out.npy", mode="w+", dtype=source.dtype, shape=source.shape)
+    simulator = LensSimulator()
+    blur = OpticalBlurParameters(lens_blur=True, diffraction=True, defocus=True)
+    distortion = OpticalDistortionParameters(True, 0.08, 0.01)
+    vignetting = OpticalVignettingParameters(True, 1.2, 1.5)
+    chromatic = OpticalChromaticParameters(True, 1.05, 0.95)
+    expected = simulator.blur_radiance(source, blur)
+    expected = simulator.distort_radiance(expected, distortion)
+    expected = simulator.vignette_radiance(expected, vignetting)
+    expected = simulator.chromatic_radiance(expected, chromatic)
+    actual, records = simulator.apply(
+        source,
+        ExperimentConfig(
+            OPTICAL_SIMULATION=True,
+            DISTORTION=True,
+            VIGNETTING=True,
+            CHROMATIC_ABERRATION=True,
+            DIFFRACTION=True,
+            DEFOCUS=True,
+        ),
+        out=out,
+        strip_rows=rows,
+        work_dir=tmp_path,
+        distortion=distortion,
+        vignetting=vignetting,
+        chromatic=chromatic,
+    )
+    assert actual is out
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(source, original)
+    assert records["distortion"]["k1"].value == 0.08
+    assert all(record.provenance == "F" for stage in records.values() for record in stage.values())
+    assert not list(tmp_path.glob("synthraw-optics-*"))
+    source._mmap.close()
+    out._mmap.close()
+
+
+def test_pipeline_master_switch_overrides_all_stage_toggles(tmp_path):
+    from synthraw.config import ExperimentConfig
+
+    source = np.random.default_rng(21).normal(size=(9, 11, 3)).astype("float32") * 10
+    out = np.empty_like(source)
+    actual, records = LensSimulator().apply(
+        source,
+        ExperimentConfig(
+            OPTICAL_SIMULATION=False,
+            DISTORTION=True,
+            VIGNETTING=True,
+            CHROMATIC_ABERRATION=True,
+            DIFFRACTION=True,
+            DEFOCUS=True,
+        ),
+        out=out,
+        strip_rows=2,
+        work_dir=tmp_path,
+    )
+    assert actual is out
+    np.testing.assert_array_equal(actual, source)
+    assert records["blur"]["effective_sigma_px"].value == 0
+    assert all(records[stage]["enabled"].value is False for stage in ("distortion", "vignetting", "chromatic"))
+    assert not list(tmp_path.iterdir())
+
+
+def test_pipeline_substage_toggles_override_parameter_flags(tmp_path):
+    from synthraw.config import ExperimentConfig
+    from synthraw.optics import OpticalChromaticParameters, OpticalDistortionParameters, OpticalVignettingParameters
+
+    source = np.ones((5, 7, 3))
+    out, records = LensSimulator().apply(
+        source,
+        ExperimentConfig(OPTICAL_SIMULATION=True),
+        out=np.empty_like(source),
+        work_dir=tmp_path,
+        blur=OpticalBlurParameters(diffraction=True, defocus=True),
+        distortion=OpticalDistortionParameters(True, 0.1),
+        vignetting=OpticalVignettingParameters(True),
+        chromatic=OpticalChromaticParameters(True),
+    )
+    np.testing.assert_array_equal(out, source)
+    assert records["blur"]["effective_sigma_px"].value == 0
+    assert all(records[stage]["enabled"].value is False for stage in ("distortion", "vignetting", "chromatic"))

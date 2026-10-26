@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 from scipy.ndimage import gaussian_filter, map_coordinates
 
+from synthraw.config import ExperimentConfig
 from synthraw.provenance import FieldRecord, Provenance
 
 
@@ -127,6 +130,79 @@ class OpticalChromaticParameters:
 
 class LensSimulator:
     """Strip-friendly optical stages in PRD order, before CFA sampling."""
+
+    def apply(
+        self,
+        radiance: np.ndarray,
+        config: ExperimentConfig,
+        *,
+        out: np.ndarray,
+        strip_rows: int = 128,
+        work_dir: str | Path | None = None,
+        blur: OpticalBlurParameters | None = None,
+        distortion: OpticalDistortionParameters | None = None,
+        vignetting: OpticalVignettingParameters | None = None,
+        chromatic: OpticalChromaticParameters | None = None,
+    ) -> tuple[np.ndarray, dict[str, dict[str, FieldRecord]]]:
+        """Apply PRD_v3 optical order with disk-backed stage intermediates.
+
+        Config toggles override parameter enable flags. The master switch also
+        disables lens blur. Output storage is caller-owned; scratch files are
+        removed on success or failure. No full-frame resident copy is made.
+        """
+        enabled = config.OPTICAL_SIMULATION
+        blur = replace(
+            blur or OpticalBlurParameters(lens_blur=True),
+            lens_blur=enabled and (blur is None or blur.lens_blur),
+            diffraction=enabled and config.DIFFRACTION,
+            defocus=enabled and config.DEFOCUS,
+        )
+        distortion = replace(distortion or OpticalDistortionParameters(), enabled=enabled and config.DISTORTION)
+        vignetting = replace(vignetting or OpticalVignettingParameters(), enabled=enabled and config.VIGNETTING)
+        chromatic = replace(chromatic or OpticalChromaticParameters(), enabled=enabled and config.CHROMATIC_ABERRATION)
+        # Validate every effective parameter before any output write.
+        records = {
+            "blur": self.blur_records(blur),
+            "distortion": self.distortion_records(distortion),
+            "vignetting": self.vignetting_records(vignetting),
+            "chromatic": self.chromatic_records(chromatic),
+        }
+        self._validate_radiance(radiance, strip_rows, out)
+        stages = []
+        if blur.sigma_px():
+            stages.append((self.blur_radiance, blur))
+        for method, parameters in (
+            (self.distort_radiance, distortion),
+            (self.vignette_radiance, vignetting),
+            (self.chromatic_radiance, chromatic),
+        ):
+            if parameters.enabled:
+                stages.append((method, parameters))
+        if not stages:
+            for start in range(0, radiance.shape[0], strip_rows):
+                out[start : start + strip_rows] = radiance[start : start + strip_rows]
+            return out, records
+        with TemporaryDirectory(prefix="synthraw-optics-", dir=work_dir) as directory:
+            scratch = []
+            try:
+                # Two alternating scratch maps suffice for arbitrary stage count.
+                for index in range(min(2, len(stages) - 1)):
+                    scratch.append(
+                        np.lib.format.open_memmap(
+                            Path(directory) / f"stage-{index}.npy",
+                            mode="w+",
+                            dtype=radiance.dtype,
+                            shape=radiance.shape,
+                        )
+                    )
+                current = radiance
+                for index, (method, parameters) in enumerate(stages):
+                    destination = out if index == len(stages) - 1 else scratch[index % 2]
+                    current = method(current, parameters, strip_rows=strip_rows, out=destination)
+            finally:
+                for array in scratch:
+                    array._mmap.close()
+        return out, records
 
     def blur_radiance(
         self,
