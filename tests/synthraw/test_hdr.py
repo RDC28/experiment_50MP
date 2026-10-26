@@ -193,3 +193,16 @@ def test_invalid_gamut_policy_creates_no_outputs(tmp_path):
             np.ones((1, 1, 3)), np.ones((1, 1, 3)), tmp_path / "hdr", negative_policy="IGNORE"
         )
     assert not (tmp_path / "hdr").exists()
+
+
+def test_single_endpoint_channel_is_uncertain_but_not_rescaled(tmp_path):
+    """Regression: one empty or clipped channel used to scale a bright pixel by 2**-shadow_ev."""
+    encoded = np.array([[[128, 200, 0], [255, 128, 60], [3, 3, 3], [252, 254, 251]]], dtype=np.uint8)
+    linear = inverse_transfer(encoded / 255)
+    arrays = HDRReconstructionEngine().expand(encoded, linear, tmp_path, strip_rows=1)["arrays"]
+    hdr = arrays["04_hdr_radiance"]
+    np.testing.assert_allclose(hdr[:, :2], linear[:, :2], rtol=1e-6)
+    assert np.all(hdr[:, 2] < linear[:, 2]) and np.all(hdr[:, 3] > linear[:, 3])
+    np.testing.assert_array_equal(arrays["source_supported_mask"], [[False, False, False, False]])
+    np.testing.assert_array_equal(arrays["highlight_fabricated_mask"], [[False, True, False, True]])
+    np.testing.assert_array_equal(arrays["shadow_fabricated_mask"], [[True, False, True, False]])

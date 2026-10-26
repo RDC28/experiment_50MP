@@ -33,6 +33,12 @@ def inverse_transfer(encoded: np.ndarray, transfer: Transfer = "SRGB") -> np.nda
     return result.astype(np.float32)
 
 
+def _endpoint_weight(distance: np.ndarray) -> np.ndarray:
+    """Smoothstep weight over the 5/255 endpoint band; ``distance`` is positive inside."""
+    weight = np.clip(distance / (5 / 255), 0, 1)
+    return weight * weight * (3 - 2 * weight)
+
+
 def inverse_smoothstep(linear: np.ndarray) -> np.ndarray:
     """Undo Brooks-style smoothstep tone rendering on normalized linear RGB.
 
@@ -125,7 +131,9 @@ class HDRReconstructionEngine:
 
         Classification uses encoded RGB: any channel above 250/255 or below
         5/255 is uncertain. A smoothstep weight reaches one at the endpoints.
-        All channels are scaled together to retain chromaticity. Endpoint pixels
+        Gain uses the all-channel weight (minimum above 250/255, maximum below
+        5/255), so one saturated or empty channel never rescales a well exposed
+        pixel. All channels are scaled together to retain chromaticity. Endpoint pixels
         have zero confidence: their tonal extrapolation is fabricated, not detail
         recovery. EV limits bound the gain relative to source-derived radiance.
         Native colour primaries are retained, as in ``linearize``. For wide-gamut
@@ -192,11 +200,16 @@ class HDRReconstructionEngine:
                 minimum_channel = min(minimum_channel, float(radiance.min()))
                 if negative_policy == "CLIP":
                     radiance = np.maximum(radiance, 0)
-                high = np.clip((rgb.max(axis=2) - 250 / 255) / (5 / 255), 0, 1)
-                low = np.clip((5 / 255 - rgb.min(axis=2)) / (5 / 255), 0, 1)
-                high = high * high * (3 - 2 * high)
-                low = low * low * (3 - 2 * low)
-                gain = np.exp2(high * highlight_ev - low * shadow_ev)
+                # Any endpoint channel makes a pixel uncertain; only all-channel endpoints get gain.
+                high, high_gain = (
+                    _endpoint_weight(rgb.max(axis=2) - 250 / 255),
+                    _endpoint_weight(rgb.min(axis=2) - 250 / 255),
+                )
+                low, low_gain = (
+                    _endpoint_weight(5 / 255 - rgb.min(axis=2)),
+                    _endpoint_weight(5 / 255 - rgb.max(axis=2)),
+                )
+                gain = np.exp2(high_gain * highlight_ev - low_gain * shadow_ev)
                 with np.errstate(over="ignore"):
                     expanded = radiance * gain[..., None]
                 if not np.isfinite(expanded).all():

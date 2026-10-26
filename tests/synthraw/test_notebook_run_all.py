@@ -1,6 +1,11 @@
-"""Runtime > Run all of the Colab notebook on a tiny PNG with Colab mocked; never downloads anything."""
+"""Runtime > Run all of the Colab notebook on a tiny PNG with Colab mocked; never downloads anything.
+
+Opt-in: notebook execution runs only with SYNTHETIC_RAW_LAB_HEAVY_TESTS=1, like the cycle 1 notebook tests.
+The static structure checks in test_notebook_structure.py always run.
+"""
 
 import json
+import os
 import sys
 import types
 import zipfile
@@ -13,6 +18,11 @@ import rawpy
 import tifffile
 from PIL import Image
 from test_pipeline import PRD_TREE
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("SYNTHETIC_RAW_LAB_HEAVY_TESTS") != "1",
+    reason="notebook execution is opt-in: set SYNTHETIC_RAW_LAB_HEAVY_TESTS=1",
+)
 
 NOTEBOOK = Path(__file__).resolve().parents[2] / "notebooks" / "synthetic_camera_raw_50mp_colab.ipynb"
 
