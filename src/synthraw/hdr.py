@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from synthraw.colour_space import ColourSpaceResolution
 
 import numpy as np
 
@@ -57,12 +60,15 @@ class HDRReconstructionEngine:
         transfer: Transfer = "SRGB",
         undo_tone: bool = True,
         strip_rows: int = 64,
+        colour_space: ColourSpaceResolution | None = None,
     ) -> np.memmap:
         """Write float32 .npy radiance without copying the entire input to RAM.
 
         Accept uint8 or normalized floating RGB, including read-only memmaps.
         The caller selects the transfer from source diagnostics; ICC resolution
-        is not performed here. Reject input/output aliasing to protect source data.
+        is supplied through colour_space when resolved from an input audit. That
+        resolution overrides transfer and converts primaries after tone inversion.
+        Reject input/output aliasing to protect source data.
         """
         if encoded.ndim != 3 or encoded.shape[2] != 3 or min(encoded.shape[:2]) == 0:
             raise ValueError("Expected a nonempty H x W x 3 RGB array")
@@ -70,6 +76,8 @@ class HDRReconstructionEngine:
             raise ValueError("Expected uint8 or normalized floating RGB")
         if type(strip_rows) is not int or strip_rows <= 0:
             raise ValueError("strip_rows must be a positive integer")
+        if colour_space is not None:
+            transfer = colour_space.transfer
         if transfer not in ("SRGB", "DISPLAY_P3", "ADOBE_RGB", "REC709"):
             raise ValueError(f"Unsupported transfer: {transfer}")
         path = Path(output_path)
@@ -89,7 +97,12 @@ class HDRReconstructionEngine:
                 if encoded.dtype == np.uint8:
                     block /= 255
                 block = inverse_transfer(block, transfer)
-                output[row : row + strip_rows] = inverse_smoothstep(block) if undo_tone else block
+                block = inverse_smoothstep(block) if undo_tone else block
+                if colour_space is not None:
+                    from synthraw.colour_space import convert_linear_primaries
+
+                    block = convert_linear_primaries(block, colour_space)
+                output[row : row + strip_rows] = block
             output.flush()
         except Exception:
             path.unlink(missing_ok=True)
