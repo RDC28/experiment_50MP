@@ -1,8 +1,11 @@
 """Tiny numerical and disk-backed inverse-rendering tests."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
+from synthraw.colour_space import resolve_colour_space
 from synthraw.hdr import HDRReconstructionEngine, inverse_smoothstep, inverse_transfer
 
 
@@ -134,3 +137,59 @@ def test_hdr_existing_stage_is_protected(tmp_path):
 def test_hdr_invalid_ev(tmp_path, ev):
     with pytest.raises(ValueError, match="EV"):
         HDRReconstructionEngine().expand(np.ones((2, 2, 3)), np.ones((2, 2, 3)), tmp_path, highlight_ev=ev)
+
+
+@pytest.mark.parametrize("strip_rows", [1, 3])
+def test_wide_gamut_linearize_to_hdr_with_explicit_mapping(tmp_path, strip_rows):
+    encoded = np.array([[[255, 0, 0], [128, 128, 128]]] * 3, dtype=np.uint8)
+    space = resolve_colour_space(SimpleNamespace(icc_present=True, icc_description="Display P3"))
+    engine = HDRReconstructionEngine()
+    linear = engine.linearize(encoded, tmp_path / "linear.npy", colour_space=space, strip_rows=strip_rows)
+    before = linear.copy()
+    assert np.any(linear < 0)
+    with pytest.raises(ValueError, match="nonnegative"):
+        engine.expand(encoded, linear, tmp_path / "strict")
+    result = engine.expand(encoded, linear, tmp_path / "mapped", negative_policy="CLIP", strip_rows=strip_rows)
+    hdr = result["arrays"]["04_hdr_radiance"]
+    assert np.isfinite(hdr).all() and np.all(hdr >= 0)
+    assert np.all(hdr[:, 0, 0] > 1)  # Preserve positive wide-gamut headroom.
+    np.testing.assert_array_equal(hdr[:, 0, 1:], 0)
+    np.testing.assert_array_equal(hdr[:, 1], linear[:, 1])
+    np.testing.assert_array_equal(linear, before)
+    np.testing.assert_array_equal(np.load(tmp_path / "linear.npy"), before)
+    audit = result["gamut_mapping"]
+    assert audit["policy"] == "CLIP" and audit["provenance"] == "I"
+    assert audit["negative_channel_count"] == 6
+    assert audit["affected_pixel_count"] == 3
+    assert audit["affected_pixel_percentage"] == 50
+    assert audit["minimum_input_channel"] == float(before.min())
+
+
+def test_gamut_mapping_excludes_unsupported_colour_without_fabricating_hdr_masks(tmp_path):
+    encoded = np.full((1, 2, 3), 0.5, dtype=np.float32)
+    linear = np.array([[[-0.1, 0.2, 1.5], [0.2, 0.3, 0.4]]], dtype=np.float32)
+    result = HDRReconstructionEngine().expand(encoded, linear, tmp_path, negative_policy="CLIP")
+    arrays = result["arrays"]
+    np.testing.assert_array_equal(arrays["source_supported_mask"], [[False, True]])
+    np.testing.assert_array_equal(arrays["hdr_confidence"], [[0, 1]])
+    np.testing.assert_array_equal(arrays["highlight_fabricated_mask"], False)
+    np.testing.assert_array_equal(arrays["shadow_fabricated_mask"], False)
+    np.testing.assert_allclose(arrays["04_hdr_radiance"], [[[0, 0.2, 1.5], [0.2, 0.3, 0.4]]])
+    assert result["generated_hdr_area_percentage"] == 0
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf])
+def test_gamut_mapping_still_rejects_nonfinite_radiance(tmp_path, invalid):
+    with pytest.raises(ValueError, match="finite"):
+        HDRReconstructionEngine().expand(
+            np.full((1, 1, 3), 0.5), np.full((1, 1, 3), invalid), tmp_path, negative_policy="CLIP"
+        )
+    assert not list(tmp_path.glob("*.npy"))
+
+
+def test_invalid_gamut_policy_creates_no_outputs(tmp_path):
+    with pytest.raises(ValueError, match="negative_policy"):
+        HDRReconstructionEngine().expand(
+            np.ones((1, 1, 3)), np.ones((1, 1, 3)), tmp_path / "hdr", negative_policy="IGNORE"
+        )
+    assert not (tmp_path / "hdr").exists()
