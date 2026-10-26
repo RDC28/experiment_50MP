@@ -195,3 +195,62 @@ def test_vignetting_rejects_invalid_parameters_before_writing(kwargs):
     with pytest.raises(ValueError):
         LensSimulator().vignette_radiance(source, OpticalVignettingParameters(**kwargs), out=out)
     np.testing.assert_array_equal(out, -10)
+
+
+@pytest.mark.parametrize("rows", [1, 4, 30])
+def test_chromatic_channel_displacement_matches_ramps(rows):
+    from synthraw.optics import OpticalChromaticParameters
+
+    y, x = np.mgrid[:11, :13]
+    source = np.stack([x + 2 * y, x - y, 2 * x + y], axis=-1).astype(float)
+    p = OpticalChromaticParameters(enabled=True, red_scale=1.1, blue_scale=0.9)
+    actual = LensSimulator().chromatic_radiance(source, p, strip_rows=rows)
+    expected = source.copy()
+    for channel, scale in ((0, 1.1), (2, 0.9)):
+        xx, yy = 6 + (x - 6) * scale, 5 + (y - 5) * scale
+        expected[:, :, channel] = xx + 2 * yy if channel == 0 else 2 * xx + yy
+    np.testing.assert_allclose(actual[2:-2, 2:-2], expected[2:-2, 2:-2], atol=1e-12)
+    np.testing.assert_array_equal(actual[:, :, 1], source[:, :, 1])
+    np.testing.assert_array_equal(actual[5, 6], source[5, 6])
+
+
+@pytest.mark.parametrize("shape", [(1, 1, 3), (1, 9, 3), (7, 1, 3), (12, 14, 3)])
+def test_chromatic_identity_and_strip_memmap_equivalence(shape, tmp_path):
+    from synthraw.optics import OpticalChromaticParameters
+
+    source = np.random.default_rng(9).normal(size=shape).astype(np.float32) * 10
+    simulator = LensSimulator()
+    identity = simulator.chromatic_radiance(source)
+    np.testing.assert_array_equal(identity, source)
+    assert not np.shares_memory(identity, source)
+    np.testing.assert_array_equal(simulator.chromatic_radiance(source, OpticalChromaticParameters(True, 1, 1)), source)
+    p = OpticalChromaticParameters(True, 1.1, 0.9)
+    expected = simulator.chromatic_radiance(source, p, strip_rows=100)
+    out = np.memmap(tmp_path / "chromatic.bin", mode="w+", shape=shape, dtype=source.dtype)
+    assert simulator.chromatic_radiance(source, p, strip_rows=1, out=out) is out
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_chromatic_uniform_channels_and_fabricated_records():
+    from synthraw.optics import OpticalChromaticParameters
+
+    source = np.broadcast_to([-2.0, 0.0, 8.0], (13, 15, 3)).copy()
+    p = OpticalChromaticParameters(enabled=True)
+    np.testing.assert_allclose(LensSimulator().chromatic_radiance(source, p), source)
+    records = LensSimulator().chromatic_records(p)
+    assert records["enabled"].value is True
+    assert records["red_scale"].value == 1.001
+    assert all(record.provenance == "F" for record in records.values())
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"enabled": 1}, {"red_scale": 0}, {"blue_scale": -1}, {"red_scale": float("nan")}, {"blue_scale": True}]
+)
+def test_chromatic_rejects_invalid_parameters_before_writing(kwargs):
+    from synthraw.optics import OpticalChromaticParameters
+
+    source = np.ones((5, 5, 3))
+    out = np.full_like(source, -10)
+    with pytest.raises(ValueError):
+        LensSimulator().chromatic_radiance(source, OpticalChromaticParameters(**kwargs), out=out)
+    np.testing.assert_array_equal(out, -10)

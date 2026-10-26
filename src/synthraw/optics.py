@@ -103,6 +103,28 @@ class OpticalVignettingParameters:
                 raise ValueError(f"{name} is outside the physical domain")
 
 
+@dataclass(frozen=True)
+class OpticalChromaticParameters:
+    """Synthetic lateral chromatic aberration relative to the green channel.
+
+    Red/blue destination offsets from frame centre sample source offsets
+    multiplied by their channel scale. Positive scales preserve orientation;
+    unity is identity. This does not model longitudinal chromatic defocus.
+    """
+
+    enabled: bool = False
+    red_scale: float = 1.001
+    blue_scale: float = 0.999
+
+    def validate(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be boolean")
+        for name in ("red_scale", "blue_scale"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive")
+
+
 class LensSimulator:
     """Strip-friendly optical stages in PRD order, before CFA sampling."""
 
@@ -246,5 +268,51 @@ class LensSimulator:
         parameters.validate()
         return {
             name: FieldRecord(name, value, Provenance.FABRICATED, "Synthetic radial vignetting; not lens calibration")
+            for name, value in vars(parameters).items()
+        }
+
+    def chromatic_radiance(
+        self,
+        radiance: np.ndarray,
+        parameters: OpticalChromaticParameters | None = None,
+        *,
+        strip_rows: int = 128,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Apply lateral channel displacement after vignetting, before CFA.
+
+        Bilinear reflective sampling matches the distortion boundary policy.
+        Green remains unchanged; signed HDR values are never clipped. Supply
+        an output memmap to keep coordinate and output buffers strip bounded.
+        """
+        parameters = parameters or OpticalChromaticParameters()
+        parameters.validate()
+        self._validate_radiance(radiance, strip_rows, out)
+        result = np.empty_like(radiance) if out is None else out
+        height, width = radiance.shape[:2]
+        cx, cy = (width - 1) / 2, (height - 1) / 2
+        for start in range(0, height, strip_rows):
+            stop = min(start + strip_rows, height)
+            result[start:stop] = radiance[start:stop]
+            if not parameters.enabled:
+                continue
+            y, x = np.meshgrid(np.arange(start, stop), np.arange(width), indexing="ij")
+            for channel, scale in ((0, parameters.red_scale), (2, parameters.blue_scale)):
+                if scale == 1:
+                    continue
+                coordinates = [cy + (y - cy) * scale, cx + (x - cx) * scale]
+                result[start:stop, :, channel] = map_coordinates(
+                    radiance[:, :, channel], coordinates, order=1, mode="reflect", prefilter=False
+                )
+        return result
+
+    def chromatic_records(self, parameters: OpticalChromaticParameters | None = None) -> dict[str, FieldRecord]:
+        """Record fabricated channel magnifications, never measured calibration."""
+        parameters = parameters or OpticalChromaticParameters()
+        parameters.validate()
+        return {
+            name: FieldRecord(
+                name, value, Provenance.FABRICATED, "Synthetic lateral chromatic aberration; not calibration"
+            )
             for name, value in vars(parameters).items()
         }
