@@ -55,3 +55,66 @@ def test_existing_output_is_preserved(tmp_path):
             np.zeros((2, 2, 3)), path, lambda x: x, scale=1, tiles=TileParameters(4, 1, True, False)
         )
     assert path.read_bytes() == b"original"
+
+
+@pytest.mark.parametrize("oom", [MemoryError("allocation failed"), RuntimeError("CUDA out of memory")])
+def test_oom_retries_once_with_smaller_tiles(tmp_path, oom):
+    source = np.random.default_rng(3).random((9, 11, 3)).astype(np.float32)
+    seen = []
+
+    def model(patch):
+        seen.append(patch.shape)
+        if len(seen) == 1:
+            raise oom
+        return patch
+
+    result = SuperResolutionEngine().reconstruct_tiles(
+        source, tmp_path / "sr.npy", model, scale=1, tiles=TileParameters(8, 5, True, False)
+    )
+    assert result.effective_tile_size == 4
+    assert len(result.retry_reasons) == 1
+    assert str(oom) in result.retry_reasons[0]
+    assert "8 -> 4" in result.retry_reasons[0]
+    assert max(seen[0][:2]) == 18
+    assert max(max(shape[:2]) for shape in seen[1:]) <= 10
+    np.testing.assert_allclose(np.load(result.path), source, atol=2e-7)
+    assert list(tmp_path.iterdir()) == [result.path]
+
+
+@pytest.mark.parametrize("tile_size", [1, 8])
+def test_repeated_oom_stops_after_two_attempts(tmp_path, tile_size):
+    calls = []
+
+    def model(patch):
+        calls.append(patch.shape)
+        raise RuntimeError("CUDA out of memory")
+
+    with pytest.raises(RuntimeError, match="out of memory"):
+        SuperResolutionEngine().reconstruct_tiles(
+            np.zeros((9, 9, 3)),
+            tmp_path / "sr.npy",
+            model,
+            scale=1,
+            tiles=TileParameters(tile_size, 0, True, False),
+        )
+    assert len(calls) == 2
+    assert not list(tmp_path.iterdir())
+
+
+def test_non_oom_runtime_failure_is_not_retried(tmp_path):
+    calls = []
+
+    def model(patch):
+        calls.append(patch.shape)
+        raise RuntimeError("invalid model weights")
+
+    with pytest.raises(RuntimeError, match="invalid model weights"):
+        SuperResolutionEngine().reconstruct_tiles(
+            np.zeros((3, 3, 3)),
+            tmp_path / "sr.npy",
+            model,
+            scale=1,
+            tiles=TileParameters(4, 1, True, False),
+        )
+    assert len(calls) == 1
+    assert not list(tmp_path.iterdir())

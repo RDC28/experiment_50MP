@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -20,12 +20,39 @@ class TiledSRResult:
     tile_count: int
     benchmark_seconds: float
     estimated_seconds: float
+    effective_tile_size: int
+    retry_reasons: tuple[str, ...] = ()
 
 
 class SuperResolutionEngine:
     """Execute optional RGB model callables on bounded, overlapping tiles."""
 
     def reconstruct_tiles(
+        self,
+        source: np.ndarray,
+        output_path: str | Path,
+        model: Callable[[np.ndarray], np.ndarray],
+        *,
+        scale: int,
+        tiles: TileParameters,
+    ) -> TiledSRResult:
+        """Retry OOM once with half-size tiles (PRD failure hierarchy).
+
+        A second OOM propagates to the backend selector. Other model failures
+        propagate immediately. No torch import is needed for CUDA OOM detection.
+        """
+        try:
+            return self._reconstruct_tiles_once(source, output_path, model, scale=scale, tiles=tiles)
+        except (MemoryError, RuntimeError) as error:
+            if not isinstance(error, MemoryError) and "out of memory" not in str(error).lower():
+                raise
+            reduced_size = max(1, tiles.tile_size // 2)
+            reduced = replace(tiles, tile_size=reduced_size, overlap=min(tiles.overlap, reduced_size - 1))
+            reason = f"{type(error).__name__}: {error}; tile {tiles.tile_size} -> {reduced_size}"
+        result = self._reconstruct_tiles_once(source, output_path, model, scale=scale, tiles=reduced)
+        return replace(result, retry_reasons=(reason,))
+
+    def _reconstruct_tiles_once(
         self,
         source: np.ndarray,
         output_path: str | Path,
@@ -107,4 +134,4 @@ class SuperResolutionEngine:
         finally:
             output = weights = None
             weights_path.unlink(missing_ok=True)
-        return TiledSRResult(path, len(positions), benchmark, benchmark * len(positions))
+        return TiledSRResult(path, len(positions), benchmark, benchmark * len(positions), tile)
