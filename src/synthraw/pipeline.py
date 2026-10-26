@@ -15,7 +15,7 @@ import shutil
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -138,12 +138,7 @@ class _PipelineRun:
         self.fallbacks: list[str] = []
         self.checkpoints: list[dict[str, Any]] = []
         self.groups: dict[str, list[FieldRecord]] = {}
-        self.logger = logging.getLogger(f"synthraw.pipeline.{layout.root.name}.{id(self)}")
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
-        self.handler = logging.FileHandler(layout.directory("logs") / "execution.log", encoding="utf-8")
-        self.handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        self.logger.addHandler(self.handler)
+        self.logger = open_execution_log(layout, f"synthraw.pipeline.{layout.root.name}.{id(self)}")
 
     def path(self, directory: str, name: str) -> Path:
         return self.run.directory(directory) / name
@@ -152,8 +147,7 @@ class _PipelineRun:
         self.logger.info(message)
 
     def close(self) -> None:
-        self.logger.removeHandler(self.handler)
-        self.handler.close()
+        _close_handlers(self.logger)
 
     def stage(self, name: str, function: Callable[[], None]) -> None:
         """Run, checkpoint and free one stage; a failure stops the whole chain."""
@@ -179,12 +173,8 @@ class _PipelineRun:
         from synthraw.input_audit import InputInspector
 
         self.audit = InputInspector().inspect(self.source)
-        original = self.path("source", "source_original" + SOURCE_EXTENSIONS[self.audit.image_format])
+        original = publish_source(self.run, self.source, self.audit)
         self.source_original = original
-        shutil.copy2(self.source, original)
-        if _sha256(original) != self.audit.sha256:
-            raise RuntimeError("Source copy differs from the audited input")
-        self.path("source", "source_sha256.txt").write_text(f"{self.audit.sha256}  {original.name}\n", "utf-8")
         _write_json(self.path("metadata", "config.json"), self.config.to_dict())
         _write_json(self.path("metadata", "input_audit.json"), self.audit.to_dict())
         with Image.open(original) as image:
@@ -597,53 +587,121 @@ class _PipelineRun:
 
     def provenance(self) -> None:
         tiled = self.sr_result.tiled
-        learned = tiled.backend not in (None, "LANCZOS")
-        targets = [path for path in (self.tiff_path, self.preview_path) if path is not None]
-        c2pa = write_c2pa(
-            targets,
-            enabled=self.config.WRITE_C2PA,
-            signer=self.options["c2pa_signer"],
-            learned_models=learned,
-            version=SOFTWARE_VERSION,
+        c2pa = write_run_provenance(
+            self.run,
+            self.config,
+            source_original=self.source_original,
+            source_sha256=self.audit.sha256,
+            dng_records=self.dng_records,
+            groups=self.groups,
+            backends={
+                "super_resolution": tiled.backend,
+                "hdr": self.hdr_report["backend"],
+                "inverse_isp": self.inverse_isp_backend,
+            },
+            fallbacks=self.fallbacks,
+            generated_hdr_area_percentage=self.hdr_report["generated_hdr_area_percentage"],
+            learned_models=tiled.backend not in (None, "LANCZOS"),
+            c2pa_targets=[path for path in (self.tiff_path, self.preview_path) if path is not None],
+            c2pa_signer=self.options["c2pa_signer"],
         )
         self.log(f"C2PA: {c2pa['status']}")
-        outputs = sorted(
-            path
-            for directory in ("source", "raw", "masters", "metadata")
-            for path in self.run.directory(directory).iterdir()
-            if path.is_file()
-        )
-        counts = {cls.value: 0 for cls in Provenance}
-        for records in self.groups.values():
-            for record in records:
-                counts[Provenance(record.provenance).value] += 1
-        ProvenanceWriter().write_provenance(
-            {
-                "run": self.run.root.name,
-                "software": {"name": "synthraw", "version": SOFTWARE_VERSION},
-                "source": {
-                    "file": str(self.source_original.relative_to(self.run.root)),
-                    "sha256": self.audit.sha256,
-                },
-                "dng_identity": {
-                    name: self.dng_records[name].value
-                    for name in ("Make", "Model", "UniqueCameraModel", "ImageDescription")
-                    if name in self.dng_records
-                },
-                "chain": list(STAGES),
-                "backends": {
-                    "super_resolution": tiled.backend,
-                    "hdr": self.hdr_report["backend"],
-                    "inverse_isp": self.inverse_isp_backend,
-                },
-                "fallbacks": self.fallbacks,
-                "field_provenance_counts": counts,
-                "generated_hdr_area_percentage": self.hdr_report["generated_hdr_area_percentage"],
-                "c2pa": c2pa,
-                "outputs": {str(path.relative_to(self.run.root)): _sha256(path) for path in outputs},
+
+
+def _close_handlers(logger: logging.Logger) -> None:
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+
+
+def open_execution_log(run: RunLayout, name: str = "synthraw.notebook") -> logging.Logger:
+    """Return a logger appending to logs/execution.log; rebinding a name closes its previous run's log."""
+    logger = logging.getLogger(name)
+    _close_handlers(logger)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    handler = logging.FileHandler(run.directory("logs") / "execution.log", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    return logger
+
+
+def publish_source(run: RunLayout, source: str | Path, audit: Any) -> Path:
+    """Copy the audited input to source/source_original.ext and write source_sha256.txt (PRD tree)."""
+    original = run.directory("source") / ("source_original" + SOURCE_EXTENSIONS[audit.image_format])
+    shutil.copy2(source, original)
+    if _sha256(original) != audit.sha256:
+        raise RuntimeError("Source copy differs from the audited input")
+    (run.directory("source") / "source_sha256.txt").write_text(f"{audit.sha256}  {original.name}\n", "utf-8")
+    return original
+
+
+def write_run_logs(run: RunLayout, environment: EnvironmentReport) -> tuple[Path, Path]:
+    """Write logs/environment.json and logs/model_manifest.json for a run."""
+    from synthraw.model_manifest import write_model_manifest
+
+    return _write_json(run.directory("logs") / "environment.json", environment.to_dict()), write_model_manifest(
+        run.root
+    )
+
+
+def write_run_provenance(
+    run: RunLayout,
+    config: ExperimentConfig,
+    *,
+    source_original: Path,
+    source_sha256: str,
+    dng_records: Mapping[str, FieldRecord],
+    groups: Mapping[str, Iterable[FieldRecord]],
+    backends: Mapping[str, str | None],
+    fallbacks: Iterable[str],
+    generated_hdr_area_percentage: float,
+    learned_models: bool,
+    c2pa_targets: Iterable[Path],
+    c2pa_signer: Any = None,
+) -> dict[str, Any]:
+    """Apply optional C2PA, then write metadata/provenance.json with output hashes; returns the C2PA status.
+
+    JSON provenance is mandatory and is written whether or not C2PA is available.
+    """
+    c2pa = write_c2pa(
+        list(c2pa_targets),
+        enabled=config.WRITE_C2PA,
+        signer=c2pa_signer,
+        learned_models=learned_models,
+        version=SOFTWARE_VERSION,
+    )
+    outputs = sorted(
+        path
+        for directory in ("source", "raw", "masters", "metadata")
+        for path in run.directory(directory).iterdir()
+        if path.is_file() and path.name != "provenance.json"
+    )
+    counts = {cls.value: 0 for cls in Provenance}
+    for records in groups.values():
+        for record in records:
+            counts[Provenance(record.provenance).value] += 1
+    ProvenanceWriter().write_provenance(
+        {
+            "run": run.root.name,
+            "software": {"name": "synthraw", "version": SOFTWARE_VERSION},
+            "source": {"file": str(Path(source_original).relative_to(run.root)), "sha256": source_sha256},
+            "dng_identity": {
+                name: dng_records[name].value
+                for name in ("Make", "Model", "UniqueCameraModel", "ImageDescription")
+                if name in dng_records
             },
-            self.path("metadata", "provenance.json"),
-        )
+            "chain": list(STAGES),
+            "backends": dict(backends),
+            "fallbacks": list(fallbacks),
+            "field_provenance_counts": counts,
+            "generated_hdr_area_percentage": generated_hdr_area_percentage,
+            "c2pa": c2pa,
+            "outputs": {str(path.relative_to(run.root)): _sha256(path) for path in outputs},
+        },
+        run.directory("metadata") / "provenance.json",
+    )
+    return c2pa
 
 
 def run_pipeline(
@@ -691,10 +749,7 @@ def run_pipeline(
     state = _PipelineRun(source, config, layout, options)
     try:
         state.environment = environment or EnvironmentInspector().inspect(layout.root)
-        _write_json(layout.directory("logs") / "environment.json", state.environment.to_dict())
-        from synthraw.model_manifest import write_model_manifest
-
-        write_model_manifest(layout.root)
+        write_run_logs(layout, state.environment)
         state.log(f"synthraw {SOFTWARE_VERSION}; source {source.name}; geometry {config.OUTPUT_GEOMETRY}")
         for name in STAGES:
             state.stage(name, getattr(state, name))

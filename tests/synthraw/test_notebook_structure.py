@@ -119,6 +119,17 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "SensorNoiseSimulator",
         "CFAMosaicer",
         "ADCSimulator",
+        "EXPOSURE_FIELDS",
+        "run_with_oom_fallback",
+        "open_execution_log",
+        "publish_source",
+        "write_run_logs",
+        "write_run_provenance",
+        "TIFFWriter",
+        "EXRWriter",
+        "PreviewWriter",
+        "bundle_run",
+        "deliver_bundle",
     }
     assert "fields(ExperimentConfig)" in source
     assert "get_type_hints(ExperimentConfig)" in source
@@ -129,15 +140,31 @@ def test_foundation_uses_public_package_interfaces(notebook):
         assert fragment in source
 
 
-def test_later_sections_identify_milestone_placeholders(notebook):
+def test_only_validation_milestone_placeholders_remain(notebook):
     section = None
     placeholders = set()
     for cell in notebook.cells:
         if cell.cell_type == "markdown" and cell.source.startswith("## "):
             section = cell.source.removeprefix("## ")
         elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
+            assert "Validation milestone placeholder:" in cell.source
             placeholders.add(section)
-    assert placeholders == set(SECTIONS[13:]) - {"Metadata construction", "DNG export"}
+    assert placeholders == {"RAW round-trip development", "Validation suite", "2K/4K comparison"}
+    assert all("Integration milestone" not in cell.source for cell in notebook.cells)
+
+
+def test_notebook_ends_with_bundle_zip_delivery(notebook):
+    last = notebook.cells[-1]
+    assert last.cell_type == "code"
+    for fragment in (
+        "BUNDLE_EXCLUDE_LARGE_ARRAYS = False",
+        "write_run_provenance(",
+        "ProvenanceWriter().write_metadata(",
+        "bundle_run(run.root, exclude_large_arrays=BUNDLE_EXCLUDE_LARGE_ARRAYS)",
+        "deliver_bundle(bundle_path, drive_dir=drive_dir)",
+    ):
+        assert fragment in last.source
+    assert last.source.rstrip().splitlines()[-1].startswith('print(f"Bundle:')
 
 
 def test_scientific_boundary_is_visible(notebook):
@@ -268,7 +295,7 @@ def test_notebook_export_publishes_only_validated_raw(notebook, tmp_path, monkey
     )
     records = DNGMetadataBuilder().build(geometry, config)
     mosaic = np.arange(48 * 64, dtype=np.uint16).reshape(48, 64) + 512
-    destination = run.directory("raw") / "synthetic_sensor.dng"
+    destination = run.directory("raw") / "synthetic_50mp.dng"
     if failure:
         destination.write_bytes(b"previous validated output")
 
