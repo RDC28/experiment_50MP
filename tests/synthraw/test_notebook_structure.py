@@ -418,7 +418,13 @@ def test_camera_cells_write_tiny_disk_products(notebook, tmp_path, capsys, optic
         run=run,
         config=ExperimentConfig(OPTICAL_SIMULATION=optical_enabled),
         hdr_radiance=radiance,
-        geometry=SimpleNamespace(width=16),
+        geometry=SimpleNamespace(
+            width=16,
+            height=12,
+            active_area=(0, 0, 12, 16),
+            default_crop_origin=(0, 0),
+            default_crop_size=(16, 12),
+        ),
         ProvenanceWriter=ProvenanceWriter,
     )
     for index in (21, 23, 25):

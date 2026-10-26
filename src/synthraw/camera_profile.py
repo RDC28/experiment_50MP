@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from synthraw.config import ExperimentConfig
+from synthraw.geometry import GeometryPlan, TargetGeometryPlanner
 from synthraw.provenance import FieldRecord, Provenance, ProvenanceWriter
 
 SENSOR_PRIOR_DISCLAIMER = "Not measured from a Sony Alpha 1 II sensor."
@@ -36,10 +38,15 @@ class CameraProfileManager:
         self,
         name: str = "SONY_A1II_LIKE",
         *,
-        source: str = "IMAGE_ONLY",
+        source: str | None = None,
+        config: ExperimentConfig | None = None,
+        geometry: GeometryPlan | None = None,
         reference_raw: str | Path | None = None,
     ) -> CameraProfile:
         """Return a fresh profile; virtual geometries never claim native Sony status."""
+        if config is not None:
+            name = config.TARGET_PROFILE
+        source = source or (config.CAMERA_PROFILE_SOURCE if config is not None else "IMAGE_ONLY")
         if name not in PROFILE_NAMES:
             raise ValueError(f"Unknown camera profile: {name}")
         if source not in ("IMAGE_ONLY", "REFERENCE_RAW"):
@@ -50,7 +57,17 @@ class CameraProfileManager:
             raise ValueError("Select REFERENCE_RAW to use a reference_raw file")
         virtual = name != "SONY_A1II_LIKE"
         bits = 16 if name == "VIRTUAL_16BIT_SENSOR" else 14
-        width, height = (10872, 4608) if name == "CINEMA_50MP_VIRTUAL" else (8640, 5760)
+        # Legacy name-only calls retain the PRD example source geometry.
+        target = geometry or TargetGeometryPlanner().plan(
+            2048,
+            868,
+            config
+            or ExperimentConfig(
+                OUTPUT_GEOMETRY="CINEMA_50MP_VIRTUAL" if name == "CINEMA_50MP_VIRTUAL" else "SONY_A1II_NATIVE",
+                ADC_BITS=bits,
+            ),
+        )
+        width, height = target.width, target.height
         camera: dict[str, FieldRecord] = {}
         sensor: dict[str, FieldRecord] = {}
 
@@ -89,9 +106,9 @@ class CameraProfileManager:
         for field, value in {
             "sensor_width": width,
             "sensor_height": height,
-            "active_area": [0, 0, height, width],
-            "default_crop_origin": [0, 0],
-            "default_crop_size": [width, height],
+            "active_area": list(target.active_area),
+            "default_crop_origin": list(target.default_crop_origin),
+            "default_crop_size": list(target.default_crop_size),
             "adc_bits": bits,
             "dng_storage_bits": 16,
             "WhiteLevel": (1 << bits) - 1,
@@ -111,6 +128,16 @@ class CameraProfileManager:
         profile = CameraProfile(camera, sensor)
         if source == "REFERENCE_RAW":
             self._read_reference(profile, Path(reference_raw))
+            if geometry is not None:
+                # Reference measurements describe calibration, not the output raster.
+                for field, value in {
+                    "sensor_width": width,
+                    "sensor_height": height,
+                    "active_area": list(target.active_area),
+                    "default_crop_origin": list(target.default_crop_origin),
+                    "default_crop_size": list(target.default_crop_size),
+                }.items():
+                    add(sensor, field, value)
         return profile
 
     @staticmethod

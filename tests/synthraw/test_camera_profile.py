@@ -132,3 +132,80 @@ def test_invalid_reference_fails_without_synthetic_fallback(tmp_path):
 
     with pytest.raises(rawpy.LibRawError):
         CameraProfileManager().build(source="REFERENCE_RAW", reference_raw=path)
+
+
+@pytest.mark.parametrize("aspect", [(4, 3), (1, 1), (2048, 868)])
+@pytest.mark.parametrize("settings", [{}, {"ADC_BITS": 16}, {"EXPERIMENTAL_16BIT_SENSOR": True}])
+def test_configured_profile_matches_planned_export(tmp_path, aspect, settings):
+    """Exercise notebook profile -> sidecars -> DNG using a tiny export."""
+    from dataclasses import replace
+
+    import numpy as np
+    import tifffile
+
+    from synthraw.config import ExperimentConfig
+    from synthraw.dng_metadata import DNGMetadataBuilder
+    from synthraw.dng_writer import DNGWriter
+    from synthraw.geometry import TargetGeometryPlanner
+
+    config = ExperimentConfig(OUTPUT_GEOMETRY="CINEMA_50MP_VIRTUAL", **settings)
+    geometry = TargetGeometryPlanner().plan(*aspect, config)
+    profile = CameraProfileManager().build(config=config, geometry=geometry)
+    assert profile.camera["Model"].value == config.TARGET_PROFILE
+    assert not profile.camera["native_sony_geometry"].value
+    for field, expected in {
+        "sensor_width": geometry.width,
+        "sensor_height": geometry.height,
+        "active_area": list(geometry.active_area),
+        "default_crop_origin": list(geometry.default_crop_origin),
+        "default_crop_size": list(geometry.default_crop_size),
+        "adc_bits": config.ADC_BITS,
+    }.items():
+        assert profile.sensor[field].value == expected
+    profile.write(tmp_path)
+    # No full-resolution allocation: only the arithmetic plan above uses 50 MP.
+    tiny = replace(geometry, width=64, height=48, active_area=(0, 0, 48, 64), default_crop_size=(64, 48))
+    records = DNGMetadataBuilder().build(tiny, config)
+    path = DNGWriter().write(tmp_path / "synthetic.dng", np.full((48, 64), 1024, dtype=np.uint16), records, config)
+    with tifffile.TiffFile(path) as raw:
+        tags = raw.pages[0].tags
+        assert "virtual" in tags[272].value.lower()
+        assert "virtual" in tags[50708].value.lower()
+        assert tags[50717].value == profile.sensor["WhiteLevel"].value
+
+
+@pytest.mark.parametrize("settings", [{}, {"ADC_BITS": 16}, {"EXPERIMENTAL_16BIT_SENSOR": True}])
+def test_native_config_identity_and_margin_geometry(settings):
+    from synthraw.config import ExperimentConfig
+    from synthraw.geometry import TargetGeometryPlanner
+
+    config = ExperimentConfig(SENSOR_FIT_MODE="FIT_WITH_SENSOR_MARGINS", **settings)
+    geometry = TargetGeometryPlanner().plan(16, 9, config)
+    profile = CameraProfileManager().build(config=config, geometry=geometry)
+    assert profile.camera["Model"].value == config.TARGET_PROFILE
+    assert profile.camera["native_sony_geometry"].value == (config.ADC_BITS == 14)
+    assert profile.sensor["adc_bits"].value == config.ADC_BITS
+    assert profile.sensor["default_crop_origin"].value == list(geometry.default_crop_origin)
+    assert profile.sensor["default_crop_size"].value == list(geometry.default_crop_size)
+
+
+def test_notebook_passes_output_plan_and_config_to_profile():
+    import ast
+    from pathlib import Path
+
+    notebook = json.loads(Path("notebooks/synthetic_camera_raw_50mp_colab.ipynb").read_text())
+    cell = next(
+        "".join(cell["source"])
+        for cell in notebook["cells"]
+        if "CameraProfileManager().build(" in "".join(cell["source"])
+    )
+    tree = ast.parse(cell)
+    call = next(
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "camera_profile" for t in node.targets)
+    )
+    keywords = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
+    assert keywords["geometry"] == "geometry"
+    assert keywords["config"] == "config"
