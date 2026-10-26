@@ -6,6 +6,8 @@ import math
 
 import numpy as np
 
+from .config import ExperimentConfig
+
 
 class ElectronSignalSimulator:
     """Convert pre-CFA linear RGB to expected electrons before sensor noise.
@@ -65,4 +67,114 @@ class ElectronSignalSimulator:
             target = result[start : start + strip_rows]
             np.maximum(scene_signal[start : start + strip_rows], 0, out=target)
             np.multiply(target, scale, out=target)
+        return result
+
+
+class SensorNoiseSimulator:
+    """Apply PRD_v3 electron noise in bounded, reproducible row sub-streams.
+
+    Body effects are shared by the RGB channels of each photosite. Temporal
+    shot/read samples are independent per channel before CFA selection.
+    """
+
+    def simulate(
+        self,
+        expected_e: np.ndarray,
+        config: ExperimentConfig,
+        *,
+        read_noise_e: float,
+        exposure_time_s: float = 1.0,
+        prnu_sigma: float = 0.0,
+        dsnu_e: float = 0.0,
+        row_fpn_e: float = 0.0,
+        column_fpn_e: float = 0.0,
+        dark_current_e_per_s: float = 0.0,
+        hot_pixel_fraction: float = 0.0,
+        dead_pixel_fraction: float = 0.0,
+        hot_pixel_e_per_s: float = 1000.0,
+        strip_rows: int = 128,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Use Poisson, PRNU, read, dark/DSNU, FPN, then hot/dead defects.
+
+        Sigma and rate parameters are in electrons, except dimensionless PRNU
+        and defect fractions. Dead pixels override hot pixels and yield zero.
+        Negative noisy electrons are retained for the later ADC pedestal.
+        """
+        parameters = {
+            "read_noise_e": read_noise_e,
+            "exposure_time_s": exposure_time_s,
+            "prnu_sigma": prnu_sigma,
+            "dsnu_e": dsnu_e,
+            "row_fpn_e": row_fpn_e,
+            "column_fpn_e": column_fpn_e,
+            "dark_current_e_per_s": dark_current_e_per_s,
+            "hot_pixel_fraction": hot_pixel_fraction,
+            "dead_pixel_fraction": dead_pixel_fraction,
+            "hot_pixel_e_per_s": hot_pixel_e_per_s,
+        }
+        for name, value in parameters.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and nonnegative")
+        if hot_pixel_fraction > 1 or dead_pixel_fraction > 1:
+            raise ValueError("defect fractions must be in [0, 1]")
+        if type(strip_rows) is not int or strip_rows < 1:
+            raise ValueError("strip_rows must be a positive integer")
+        if (
+            not isinstance(expected_e, np.ndarray)
+            or expected_e.ndim != 3
+            or expected_e.shape[2] != 3
+            or min(expected_e.shape) == 0
+            or expected_e.dtype.kind != "f"
+        ):
+            raise ValueError("expected_e must be a nonempty floating RGB array")
+        if out is not None and (
+            not isinstance(out, np.ndarray)
+            or out.shape != expected_e.shape
+            or out.dtype != np.float64
+            or not out.flags.writeable
+            or np.may_share_memory(expected_e, out)
+        ):
+            raise ValueError("out must be a writable, independent float64 array matching expected_e")
+        for start in range(0, expected_e.shape[0], strip_rows):
+            strip = expected_e[start : start + strip_rows]
+            if not np.isfinite(strip).all() or np.any(strip < 0) or np.any(strip > 1e18):
+                raise ValueError("expected_e must be finite, nonnegative and within the Poisson domain (<= 1e18)")
+        for seed in (config.SENSOR_BODY_SEED, config.SENSOR_NOISE_SEED):
+            if type(seed) is not int or seed < 0:
+                raise ValueError("sensor seeds must be nonnegative integers")
+
+        def rng(seed: int, component: int, row: int = 0) -> np.random.Generator:
+            return np.random.default_rng(np.random.SeedSequence([seed, component, row]))
+
+        body = config.SENSOR_BODY_SEED
+        noise = config.SENSOR_NOISE_SEED
+        width = expected_e.shape[1]
+        columns = rng(body, 4).normal(0, column_fpn_e, (width, 1)) if config.COLUMN_FPN else None
+        result = np.empty(expected_e.shape, dtype=np.float64) if out is None else out
+        for start in range(0, expected_e.shape[0], strip_rows):
+            for row in range(start, min(start + strip_rows, expected_e.shape[0])):
+                target = result[row]
+                if config.SHOT_NOISE:
+                    target[:] = rng(noise, 0, row).poisson(expected_e[row])
+                else:
+                    target[:] = expected_e[row]
+                if config.PRNU:
+                    target *= rng(body, 0, row).normal(1, prnu_sigma, (width, 1))
+                if config.READ_NOISE:
+                    target += rng(noise, 1, row).normal(0, read_noise_e, target.shape)
+                if config.DARK_CURRENT:
+                    target += dark_current_e_per_s * exposure_time_s
+                if config.DSNU:
+                    target += rng(body, 1, row).normal(0, dsnu_e, (width, 1))
+                if config.ROW_FPN:
+                    target += rng(body, 2, row).normal(0, row_fpn_e)
+                if columns is not None:
+                    target += columns
+                if config.HOT_PIXELS:
+                    hot = rng(body, 5, row).random(width) < hot_pixel_fraction
+                    target[hot] += hot_pixel_e_per_s * exposure_time_s
+                if config.DEAD_PIXELS:
+                    dead = rng(body, 6, row).random(width) < dead_pixel_fraction
+                    target[dead] = 0
         return result
