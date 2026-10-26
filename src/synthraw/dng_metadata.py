@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
+from math import isclose, log2
+from numbers import Real
 from typing import Any
 
 import numpy as np
@@ -10,6 +13,13 @@ import numpy as np
 from synthraw.config import ExperimentConfig
 from synthraw.geometry import GeometryPlan
 from synthraw.provenance import FieldRecord, Provenance
+
+_EXPOSURE_TYPES = {
+    "ExposureTime": "RATIONAL",
+    "FNumber": "RATIONAL",
+    "PhotographicSensitivity": "LONG",
+    "ExposureBiasValue": "SRATIONAL",
+}
 
 CFA_PATTERNS = {
     "RGGB": (0, 1, 1, 2),
@@ -37,8 +47,9 @@ class DNGFieldRecord(FieldRecord):
 class DNGMetadataBuilder:
     """Build core RAW fields; profile defaults are explicitly fabricated priors.
 
-    Exposure/lens EXIF and optional calibrated fields are separate from this core
-    schema. No binary MakerNotes or inferred capture time/location are accepted.
+    Exposure inputs retain upstream provenance; APEX values are deterministic.
+    Optional calibrated fields are separate from this core schema. No binary
+    MakerNotes or inferred capture time/location are accepted.
     """
 
     def build(
@@ -54,6 +65,7 @@ class DNGMetadataBuilder:
         as_shot_neutral: tuple[float, float, float] = (1, 1, 1),
         noise_profile: tuple[float, ...] = (0.001, 0.000001),
         software_version: str = "0.1.0",
+        exposure: Mapping[str, FieldRecord] | None = None,
     ) -> dict[str, DNGFieldRecord]:
         """Construct allocation-free metadata for a rectangular Bayer sensor.
 
@@ -128,6 +140,22 @@ class DNGMetadataBuilder:
             ("AntiAliasStrength", 1, "RATIONAL"),
         ):
             add(name, value, dtype, "F")
+        for name, record in (exposure or {}).items():
+            if name not in _EXPOSURE_TYPES or name != record.field:
+                raise ValueError(f"Unsupported exposure input: {name}")
+            record.validate()
+            records[name] = DNGFieldRecord(**asdict(record), dng_type=_EXPOSURE_TYPES[name])
+        for source, derived, factor, dtype in (
+            ("ExposureTime", "ShutterSpeedValue", -1, "SRATIONAL"),
+            ("FNumber", "ApertureValue", 2, "RATIONAL"),
+        ):
+            if source in records:
+                number = records[source].value
+                if isinstance(number, bool) or not isinstance(number, Real) or not np.isfinite(number) or number <= 0:
+                    raise ValueError(f"{source} must be a positive finite scalar")
+                add(derived, factor * log2(number), dtype)
+                records[derived].method = f"APEX derived from {source}"
+                records[derived].dependencies = [source]
         self.validate(records, config)
         return records
 
@@ -162,6 +190,51 @@ class DNGMetadataBuilder:
         ):
             if type(value(name)) is not int or value(name) != expected:
                 raise ValueError(f"Invalid {name}")
+        for name, dtype in _EXPOSURE_TYPES.items():
+            if name not in records:
+                continue
+            record = records[name]
+            number = record.value
+            if record.dng_type != dtype:
+                raise ValueError(f"Invalid container type for {name}")
+            if record.provenance not in {Provenance.INFERRED, Provenance.FABRICATED}:
+                raise ValueError(f"{name} requires inferred or fabricated provenance")
+            if isinstance(number, bool) or not isinstance(number, Real) or not np.isfinite(number):
+                raise ValueError(f"{name} must be a finite scalar")
+            if name == "ExposureTime" and (
+                number <= 0 or (config.TARGET_PROFILE == "SONY_A1II_LIKE" and number < 1 / 32000)
+            ):
+                raise ValueError("ExposureTime outside profile range")
+            if name == "FNumber" and number < 1:
+                raise ValueError("FNumber must be at least 1 for nonnegative EXIF ApertureValue")
+            if name == "PhotographicSensitivity" and (
+                type(number) is not int
+                or not 1 <= number <= 2**32 - 1
+                or (config.TARGET_PROFILE == "SONY_A1II_LIKE" and not 50 <= number <= 102400)
+            ):
+                raise ValueError("PhotographicSensitivity outside profile range")
+            if name == "ExposureBiasValue" and not -5 <= number <= 5:
+                raise ValueError("ExposureBiasValue outside design range")
+        for source, derived, factor, dtype in (
+            ("ExposureTime", "ShutterSpeedValue", -1, "SRATIONAL"),
+            ("FNumber", "ApertureValue", 2, "RATIONAL"),
+        ):
+            if source not in records and derived not in records:
+                continue
+            if source not in records or derived not in records:
+                raise ValueError(f"{derived} requires {source} and its derived value")
+            record = records[derived]
+            number = record.value
+            if (
+                record.dng_type != dtype
+                or record.provenance != Provenance.DETERMINISTIC
+                or record.dependencies != [source]
+                or isinstance(number, bool)
+                or not isinstance(number, Real)
+                or not np.isfinite(number)
+                or not isclose(number, factor * log2(value(source)), rel_tol=0, abs_tol=1e-12)
+            ):
+                raise ValueError(f"Invalid derived {derived}")
         white, black = value("WhiteLevel"), value("BlackLevel")
         if type(white) is not int or not 0 < white <= (1 << config.ADC_BITS) - 1:
             raise ValueError("WhiteLevel exceeds ADC range")

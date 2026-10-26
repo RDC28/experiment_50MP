@@ -116,3 +116,77 @@ def test_crop_relative_to_active_area(geometry):
 def test_virtual_cinema_identity(geometry):
     fields = DNGMetadataBuilder().build(geometry, ExperimentConfig(OUTPUT_GEOMETRY="CINEMA_50MP_VIRTUAL"))
     assert fields["UniqueCameraModel"].value == "Synthetic Virtual Cinema 50MP v1"
+
+
+def exposure_record(name, value, provenance=Provenance.INFERRED):
+    from synthraw.provenance import FieldRecord
+
+    return FieldRecord(name, value, provenance, "manual hypothetical exposure", user_override=True)
+
+
+def test_exposure_provenance_and_apex_derivation(geometry):
+    exposure = {
+        name: exposure_record(name, value)
+        for name, value in (("ExposureTime", 1 / 128), ("FNumber", 4), ("PhotographicSensitivity", 100))
+    }
+    exposure["ExposureTime"].confidence = 0.6
+    exposure["ExposureTime"].alternatives = [{"value": 1 / 64}]
+    fields = DNGMetadataBuilder().build(geometry, exposure=exposure)
+    assert fields["ShutterSpeedValue"].value == 7
+    assert fields["ApertureValue"].value == 4
+    for name in exposure:
+        expected = exposure[name].to_dict()
+        assert {key: fields[name].to_dict()[key] for key in expected} == expected
+    assert fields["ShutterSpeedValue"].dependencies == ["ExposureTime"]
+    assert fields["ApertureValue"].provenance == Provenance.DETERMINISTIC
+    fields["ExposureTime"].alternatives.append({"value": 1 / 32})
+    assert len(exposure["ExposureTime"].alternatives) == 1
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("ExposureTime", 0),
+        ("ExposureTime", -1),
+        ("ExposureTime", 1 / 64000),
+        ("ExposureTime", float("nan")),
+        ("ExposureTime", True),
+        ("FNumber", 0.5),
+        ("FNumber", float("inf")),
+        ("PhotographicSensitivity", 49),
+        ("PhotographicSensitivity", 102401),
+        ("PhotographicSensitivity", 100.5),
+        ("ExposureBiasValue", 6),
+        ("ExposureBiasValue", [0]),
+        ("ShutterSpeedValue", 7),
+    ],
+)
+def test_invalid_exposure_inputs(geometry, name, value):
+    with pytest.raises(ValueError):
+        DNGMetadataBuilder().build(geometry, exposure={name: exposure_record(name, value)})
+
+
+@pytest.mark.parametrize("iso", (50, 102400))
+def test_expanded_iso_limits(geometry, iso):
+    fields = DNGMetadataBuilder().build(
+        geometry, exposure={"PhotographicSensitivity": exposure_record("PhotographicSensitivity", iso)}
+    )
+    assert fields["PhotographicSensitivity"].value == iso
+
+
+@pytest.mark.parametrize("change", ("source", "derived", "missing", "provenance", "type"))
+def test_exposure_dependencies_revalidated(geometry, change):
+    builder = DNGMetadataBuilder()
+    fields = builder.build(geometry, exposure={"ExposureTime": exposure_record("ExposureTime", 1 / 128)})
+    if change == "source":
+        fields["ExposureTime"].value = 1 / 64
+    elif change == "derived":
+        fields["ShutterSpeedValue"].value = 8
+    elif change == "missing":
+        del fields["ExposureTime"]
+    elif change == "provenance":
+        fields["ExposureTime"].provenance = Provenance.MEASURED
+    else:
+        fields["ExposureTime"].dng_type = "SHORT"
+    with pytest.raises(ValueError):
+        builder.validate(fields, ExperimentConfig())
