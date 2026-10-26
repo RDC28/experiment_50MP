@@ -20,6 +20,8 @@ _EXPOSURE_TYPES = {
     "PhotographicSensitivity": "LONG",
     "ExposureBiasValue": "SRATIONAL",
 }
+# Exposure-posterior fields accepted by DNGMetadataBuilder.build(exposure=...).
+EXPOSURE_FIELDS = frozenset(_EXPOSURE_TYPES)
 
 _LENS_TYPES = {
     "LensInfo": "RATIONAL[4]",

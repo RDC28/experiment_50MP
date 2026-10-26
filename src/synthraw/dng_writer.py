@@ -108,7 +108,7 @@ class DNGWriter:
                 raise ValueError("Unexpected DNG container layout")
             page = container.pages[0]
             for name, record in records.items():
-                tag = page.tags.get(name)
+                tag = page.tags.get(tifffile.TIFF.TAGS[name])
                 if tag is None:
                     raise ValueError(f"Missing DNG tag: {name}")
                 actual = tag.value

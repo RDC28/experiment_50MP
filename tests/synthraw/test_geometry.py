@@ -74,3 +74,15 @@ def test_uniform_fit_and_fast_dev(source, mode, geometry):
 def test_invalid_dimensions(source):
     with pytest.raises(ValueError, match="positive integers"):
         TargetGeometryPlanner().plan(*source)
+
+
+def test_fast_dev_max_side_bounds_both_geometries():
+    planner = TargetGeometryPlanner()
+    native = planner.plan(48, 20, ExperimentConfig(FAST_DEV_RUN=True), fast_dev_max_side=96)
+    cinema = planner.plan(
+        48, 20, ExperimentConfig(FAST_DEV_RUN=True, OUTPUT_GEOMETRY="CINEMA_50MP_VIRTUAL"), fast_dev_max_side=96
+    )
+    assert (native.width, native.height) == (96, 64)
+    assert (cinema.width, cinema.height) == (96, 40)
+    with pytest.raises(ValueError, match="fast_dev_max_side"):
+        planner.plan(48, 20, ExperimentConfig(FAST_DEV_RUN=True), fast_dev_max_side=1)

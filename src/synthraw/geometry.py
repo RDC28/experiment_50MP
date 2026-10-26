@@ -35,15 +35,25 @@ class GeometryPlan:
 class TargetGeometryPlanner:
     """Plan uniform source fitting without allocating any sensor arrays."""
 
-    def plan(self, source_width: int, source_height: int, config: ExperimentConfig | None = None) -> GeometryPlan:
+    def plan(
+        self,
+        source_width: int,
+        source_height: int,
+        config: ExperimentConfig | None = None,
+        *,
+        fast_dev_max_side: int = 512,
+    ) -> GeometryPlan:
         """Resolve native/virtual geometry and the selected sensor-fit policy.
 
         Cinema rounds the ideal 50.1 MP dimensions to the nearest even pixels.
         OUTPAINT_VERTICAL contains wide sources; portrait sources require side
-        outpainting. FAST_DEV_RUN limits the longest sensor side to 512 pixels.
+        outpainting. FAST_DEV_RUN limits the longest sensor side to fast_dev_max_side
+        pixels (default 512) while retaining the selected geometry's aspect ratio.
         """
         if any(type(value) is not int or value <= 0 for value in (source_width, source_height)):
             raise ValueError("Source dimensions must be positive integers")
+        if type(fast_dev_max_side) is not int or fast_dev_max_side < 2:
+            raise ValueError("fast_dev_max_side must be an integer of at least 2")
         config = config or ExperimentConfig()
         if config.OUTPUT_GEOMETRY == "SONY_A1II_NATIVE":
             width, height = 8640, 5760
@@ -52,7 +62,7 @@ class TargetGeometryPlanner:
             width = max(2, 2 * round(math.sqrt(50_100_000 * ratio) / 2))
             height = max(2, 2 * round(math.sqrt(50_100_000 / ratio) / 2))
         if config.FAST_DEV_RUN:
-            reduction = min(1.0, 512 / max(width, height))
+            reduction = min(1.0, fast_dev_max_side / max(width, height))
             width, height = (max(2, 2 * round(side * reduction / 2)) for side in (width, height))
 
         cover = config.SENSOR_FIT_MODE == "CROP_HORIZONTAL"
