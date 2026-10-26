@@ -793,3 +793,21 @@ def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatc
             np.testing.assert_allclose(image.pages[0].tags[51041].value, namespace["adc_result"].noise_profile)
         else:
             assert 51041 not in image.pages[0].tags
+
+
+def test_readme_documents_the_notebook():
+    readme = (NOTEBOOK.parents[1] / "README.md").read_text(encoding="utf-8")
+    section = readme.split("## Synthetic camera RAW notebook (PRD_v3)", 1)[1].split("\n## ", 1)[0]
+    for fragment in (
+        NOTEBOOK.name,
+        "src/synthraw/",
+        "Run all",
+        "validation_report.html",
+        "comparison_2k_vs_4k.html",
+        "COMPARISON_SECOND_INPUT",
+        "Scientific boundary",
+        "`Synthetic`",
+        "SYNTHETIC_RAW_LAB_HEAVY_TESTS=1",
+        "Still to verify in Colab",
+    ):
+        assert fragment in section
