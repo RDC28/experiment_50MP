@@ -49,7 +49,7 @@ def test_complete_sidecar_roundtrip_preserves_catalogue_and_identity(registry, t
 def test_corrections_and_nr_reflect_simulation(registry, optical, distortion):
     config = ExperimentConfig(OPTICAL_SIMULATION=optical, DISTORTION=distortion)
     values = fields(SonyARWEmulationBuilder().build(registry, config, width=64, height=48))
-    assert values["DistortionCorrection"]["generated_value"] is (optical and distortion)
+    assert values["DistortionCorrection"]["generated_value"] is False
     assert values["VignettingCorrection"]["generated_value"] is False
     assert values["HighISONoiseReduction"]["generated_value"] == "Off"
     assert values["LongExposureNoiseReduction"]["generated_value"] == "Off"
@@ -95,3 +95,53 @@ def test_unobservable_fabrication_is_explicit_and_never_confident(registry):
 def test_invalid_dimensions(registry, width, height):
     with pytest.raises(ValueError):
         SonyARWEmulationBuilder().build(registry, ExperimentConfig(), width=width, height=height)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_lens_pipeline_records_drive_sidecar(registry, tmp_path, enabled):
+    import numpy as np
+
+    from synthraw.optics import (
+        LensSimulator,
+        OpticalChromaticParameters,
+        OpticalDistortionParameters,
+        OpticalVignettingParameters,
+    )
+
+    config = ExperimentConfig(OPTICAL_SIMULATION=enabled, DISTORTION=True, VIGNETTING=True, CHROMATIC_ABERRATION=True)
+    image = np.ones((8, 10, 3), dtype=np.float32)
+    output = np.lib.format.open_memmap(tmp_path / "optical.npy", mode="w+", shape=image.shape, dtype=image.dtype)
+    try:
+        _, records = LensSimulator().apply(
+            image,
+            config,
+            out=output,
+            strip_rows=3,
+            distortion=OpticalDistortionParameters(k1=0.03, k2=0.01),
+            vignetting=OpticalVignettingParameters(corner_loss_ev=0.7, power=2.0),
+            chromatic=OpticalChromaticParameters(red_scale=1.002, blue_scale=0.998),
+        )
+        values = fields(SonyARWEmulationBuilder().build(registry, config, width=10, height=8, optical_records=records))
+        for family, expected in (
+            ("Distortion", [0.03, 0.01]),
+            ("Vignetting", [0.7, 2.0]),
+            ("ChromaticAberration", [1.002, 0.998]),
+        ):
+            flag = values[family + "Correction"]
+            params = values[family + "CorrParams"]
+            assert flag["generated_value"] is enabled
+            assert flag["provenance"] == "D"
+            assert params["generated_value"] == (expected if enabled else None)
+            if enabled:
+                assert params["provenance"] == "F"
+                assert params["field_record"]["dependencies"]
+                assert "not Sony MakerNote" in params["field_record"]["disclaimer"]
+            else:
+                assert params["unsupported_reason"]
+        if enabled:
+            with pytest.raises(ValueError, match="disagree"):
+                SonyARWEmulationBuilder().build(
+                    registry, ExperimentConfig(), width=10, height=8, optical_records=records
+                )
+    finally:
+        output._mmap.close()

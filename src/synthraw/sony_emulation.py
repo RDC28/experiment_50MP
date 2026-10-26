@@ -24,6 +24,7 @@ class SonyARWEmulationBuilder:
         height: int,
         inputs: Mapping[str, FieldRecord] | None = None,
         arw_compression_emulation: str = "UNCOMPRESSED",
+        optical_records: Mapping[str, Mapping[str, FieldRecord]] | None = None,
     ) -> dict[str, Any]:
         """Retain tag identity, provenance and explicit reasons for all missing values.
 
@@ -46,16 +47,14 @@ class SonyARWEmulationBuilder:
             "AspectRatio": [width, height],
             "HighISONoiseReduction": "Off",
             "LongExposureNoiseReduction": "Off",
-            "DistortionCorrection": config.OPTICAL_SIMULATION and config.DISTORTION,
-            "VignettingCorrection": config.OPTICAL_SIMULATION and config.VIGNETTING,
-            "ChromaticAberrationCorrection": config.OPTICAL_SIMULATION and config.CHROMATIC_ABERRATION,
         }
+        optical = self._optical_fields(config, optical_records)
         for name, record in inputs.items():
             record.validate()
             if name != record.field:
                 raise ValueError("Input key must match FieldRecord.field")
             lower = name.lower()
-            if name in fixed:
+            if name in fixed or name in optical:
                 raise ValueError(f"{name} is determined by the simulation")
             if "serial" in lower or "shuttercount" in lower or name == "SonyModelID":
                 raise ValueError(f"{name} requires a verified identity policy and cannot be supplied")
@@ -82,6 +81,8 @@ class SonyARWEmulationBuilder:
                 # ARW identity is a fictional sidecar claim, not a physical format.
                 provenance = Provenance.FABRICATED if name == "FileFormat" else Provenance.DETERMINISTIC
                 record = FieldRecord(name, fixed[name], provenance, "PRD Sony sidecar simulation policy")
+            elif name in optical:
+                record = optical[name]
             elif name in inputs:
                 record = inputs[name]
             else:
@@ -92,7 +93,7 @@ class SonyARWEmulationBuilder:
                     entry["unsupported_reason"] = "Requires explicit user input; no date or location inference"
                 elif name.endswith("CorrParams"):
                     entry["implementation_state"] = "UNSUPPORTED"
-                    entry["unsupported_reason"] = "No optical simulator correction array has been exported"
+                    entry["unsupported_reason"] = "Optical stage disabled or no applied simulator records supplied"
                 elif "temperature" in lower or "battery" in lower:
                     entry["unsupported_reason"] = "No fabricated value supplied; never inferred from rendered pixels"
                 continue
@@ -114,6 +115,49 @@ class SonyARWEmulationBuilder:
         )
         # Validate the complete sidecar before returning, including arbitrary input values.
         json.dumps(result, allow_nan=False)
+        return result
+
+    @staticmethod
+    def _optical_fields(
+        config: ExperimentConfig,
+        stages: Mapping[str, Mapping[str, FieldRecord]] | None,
+    ) -> dict[str, FieldRecord]:
+        """Export PRD lens-family values from applied stages, never guessed Sony encodings."""
+        result = {}
+        families = (
+            ("distortion", "Distortion", config.DISTORTION, ("k1", "k2")),
+            ("vignetting", "Vignetting", config.VIGNETTING, ("corner_loss_ev", "power")),
+            ("chromatic", "ChromaticAberration", config.CHROMATIC_ABERRATION, ("red_scale", "blue_scale")),
+        )
+        for stage, family, toggle, coefficients in families:
+            records = (stages or {}).get(stage)
+            enabled = False
+            if records is not None:
+                for name, record in records.items():
+                    record.validate()
+                    if record.field != name:
+                        raise ValueError("Optical record key must match FieldRecord.field")
+                if "enabled" not in records or type(records["enabled"].value) is not bool:
+                    raise ValueError("Optical stage requires a boolean enabled record")
+                enabled = records["enabled"].value
+                if enabled != (config.OPTICAL_SIMULATION and toggle):
+                    raise ValueError("Applied optical records disagree with config")
+            flag = family + "Correction"
+            result[flag] = FieldRecord(flag, enabled, Provenance.DETERMINISTIC, "Applied LensSimulator stage state")
+            if not enabled:
+                continue
+            parameters = [records[name] for name in coefficients]
+            # These are synthetic model coefficients, not proprietary Sony binary arrays.
+            name = family + "CorrParams"
+            result[name] = FieldRecord(
+                name,
+                [record.value for record in parameters],
+                Provenance.FABRICATED,
+                "Applied LensSimulator coefficients in order: " + ", ".join(coefficients),
+                dependencies=[f"optics.{stage}.{key}" for key in coefficients],
+                disclaimer="Synthetic forward-model parameters; not Sony MakerNote encoding or lens calibration",
+                alternatives=[{"parameter": key, "field_record": records[key].to_dict()} for key in coefficients],
+            )
         return result
 
     def write(self, path: str | Path, registry: dict[str, Any], config: ExperimentConfig, **kwargs: Any) -> Path:
