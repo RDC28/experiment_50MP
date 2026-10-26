@@ -105,6 +105,14 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "SuperResolutionEngine",
         "HDRReconstructionEngine",
         "resolve_colour_space",
+        "CameraProfileManager",
+        "CameraGeometryEstimator",
+        "ExposurePosteriorEstimator",
+        "WhiteBalanceEstimator",
+        "CameraColourModel",
+        "InverseISPEngine",
+        "LensSimulator",
+        "OpticalBlurParameters",
     }
     assert "fields(ExperimentConfig)" in source
     assert "get_type_hints(ExperimentConfig)" in source
@@ -123,7 +131,7 @@ def test_later_sections_identify_milestone_placeholders(notebook):
             section = cell.source.removeprefix("## ")
         elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
             placeholders.add(section)
-    assert placeholders == set(SECTIONS[7:]) - {"Metadata construction", "DNG export"}
+    assert placeholders == set(SECTIONS[10:]) - {"Metadata construction", "DNG export"}
 
 
 def test_scientific_boundary_is_visible(notebook):
@@ -383,3 +391,66 @@ def test_hdr_cell_writes_tiny_reconstruction_products(notebook, tmp_path, capsys
     assert (run.directory("metadata") / "colour_space.json").is_file()
     assert "Generated HDR area: 25.00%" in capsys.readouterr().out
     assert not list(run.directory("intermediates").glob("hdr_*"))
+
+
+def test_no_camera_placeholders(notebook):
+    assert all("Camera milestone placeholder" not in cell.source for cell in notebook.cells)
+
+
+@pytest.mark.parametrize("optical_enabled", [False, True])
+@pytest.mark.parametrize("manual_wb", [False, True])
+def test_camera_cells_write_tiny_disk_products(notebook, tmp_path, capsys, optical_enabled, manual_wb):
+    import json
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from synthraw.camera_colour import CameraColourModel, InverseISPEngine
+    from synthraw.config import ExperimentConfig
+    from synthraw.provenance import ProvenanceWriter
+    from synthraw.run_layout import RunLayout
+
+    run = RunLayout.create(tmp_path)
+    radiance = np.full((12, 16, 3), (0.4, 0.6, 0.8), dtype=np.float32)
+    radiance[0] *= 8  # HDR headroom must reach inverse ISP unchanged.
+    namespace = dict(
+        np=np,
+        run=run,
+        config=ExperimentConfig(OPTICAL_SIMULATION=optical_enabled),
+        hdr_radiance=radiance,
+        geometry=SimpleNamespace(width=16),
+        ProvenanceWriter=ProvenanceWriter,
+    )
+    for index in (21, 23, 25):
+        source = notebook.cells[index].source
+        if manual_wb and index == 21:
+            source = source.replace("MANUAL_WB = None", 'MANUAL_WB = {"manual_cct": 5500.0, "manual_tint": 0.1}')
+        exec(compile(source, str(NOTEBOOK), "exec"), namespace)
+    expected = (
+        InverseISPEngine()
+        .reconstruct(radiance, CameraColourModel(), white_balance_gains=namespace["white_balance"].gains)
+        .camera_rgb
+    )
+    camera = np.load(run.directory("intermediates") / "05_camera_native_rgb.npy", mmap_mode="r")
+    optical = np.load(run.directory("intermediates") / "06_optical_sensor_rgb.npy", mmap_mode="r")
+    np.testing.assert_allclose(camera, expected, rtol=1e-6)
+    assert isinstance(namespace["camera_native_rgb"], np.memmap)
+    assert isinstance(namespace["optical_sensor_rgb"], np.memmap)
+    assert np.isfinite(optical).all()
+    if not optical_enabled:
+        np.testing.assert_array_equal(optical, camera)
+    else:
+        assert not np.array_equal(optical, camera)
+    for name in (
+        "camera_profile",
+        "white_balance",
+        "exposure_posterior",
+        "camera_geometry",
+        "inverse_isp",
+        "optical_parameters",
+    ):
+        records = json.loads((run.directory("metadata") / f"{name}.json").read_text())
+        assert records and all(record["provenance"] in "DIFM" for record in records)
+    assert namespace["white_balance"].records["CCT"].user_override == manual_wb
+    assert "Seconds       F-number   ISO       Weight" in capsys.readouterr().out
+    assert not list(run.directory("intermediates").glob("synthraw-optics-*"))
