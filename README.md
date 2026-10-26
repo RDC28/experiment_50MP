@@ -8,6 +8,11 @@ Outputs are **synthetic camera-grade masters**: 16-bit TIFF and linear-light Ope
 a rendered source. They are never camera RAW captures, and every report keeps preserved, interpolated,
 inferred, simulated and encoded information apart.
 
+**Current target: [PRD_v3.md](PRD_v3.md)** ("Final PRD: Synthetic Sony-like 50 MP RAW Reconstruction Colab"),
+which supersedes the earlier drafts. It specifies one notebook, `synthetic_camera_raw_50mp_colab.ipynb`, that
+builds a synthetic DNG and a 50 MP 16-bit TIFF through an explicit radiance, camera and sensor chain.
+[PRD.md](PRD.md) remains the specification of the cycle 1 notebooks described below, which keep working unchanged.
+
 ## Status
 
 | PRD phase (section 30) | State |
