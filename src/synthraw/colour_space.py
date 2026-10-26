@@ -82,3 +82,8 @@ def convert_linear_primaries(linear: np.ndarray, resolution: ColourSpaceResoluti
     if values.ndim < 1 or values.shape[-1] != 3 or not np.isfinite(values).all():
         raise ValueError("Expected finite linear RGB with final dimension 3")
     return (values @ np.asarray(resolution.matrix, dtype=np.float32).T).astype(np.float32)
+
+
+def rgb_to_xyz_matrix(transfer: Transfer) -> np.ndarray:
+    """D65 RGB-to-XYZ matrix for a named space; Rec.709 shares the sRGB primaries."""
+    return _RGB_TO_XYZ["SRGB" if transfer == "REC709" else transfer].copy()

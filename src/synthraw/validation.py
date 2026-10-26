@@ -627,3 +627,239 @@ def libraw_reopen_check(
         return [ValidationCheck("libraw_reopen", "DNG structure", True, hard=True, target="Hard pass")]
     except HardValidationError as error:
         return [ValidationCheck("libraw_reopen", "DNG structure", False, hard=True, detail=str(error))]
+
+
+def block_mean(array: np.ndarray, factor: int, *, strip_blocks: int = 64) -> np.ndarray:
+    """Area-average an HW[C] array by an integer factor, reading bounded strips of rows."""
+    if type(factor) is not int or factor < 1:
+        raise ValueError("factor must be a positive integer")
+    height, width = (array.shape[0] // factor) * factor, (array.shape[1] // factor) * factor
+    if height == 0 or width == 0:
+        raise ValueError("array is smaller than one block")
+    rows = []
+    for start in range(0, height, factor * strip_blocks):
+        strip = np.asarray(array[start : min(start + factor * strip_blocks, height), :width], dtype=np.float64)
+        shape = (strip.shape[0] // factor, factor, width // factor, factor) + strip.shape[2:]
+        rows.append(strip.reshape(shape).mean(axis=(1, 3)))
+    return np.concatenate(rows).astype(np.float32)
+
+
+def _xyz_to_lab(xyz: np.ndarray) -> np.ndarray:
+    from skimage.color import xyz2lab
+
+    return xyz2lab(np.clip(xyz, 0, None) / _D65_XYZ[1], illuminant="D65", observer="2")
+
+
+def _smoothstep(linear: np.ndarray) -> np.ndarray:
+    values = np.clip(linear, 0, 1)
+    return values * values * (3 - 2 * values)
+
+
+def _colour_align(xyz: np.ndarray, target_xyz: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Global 3x3 least-squares colour alignment fitted on supported pixels."""
+    matrix, *_ = np.linalg.lstsq(xyz[mask].astype(np.float64), target_xyz[mask].astype(np.float64), rcond=None)
+    return xyz @ matrix, matrix.T
+
+
+@dataclass
+class RoundTripResult:
+    """Colour-managed round-trip comparison at the analysed resolution."""
+
+    checks: list[ValidationCheck]
+    difference: np.ndarray
+    reference_srgb: np.ndarray
+    developed_srgb: np.ndarray
+    supported: np.ndarray
+
+
+class RoundTripValidator:
+    """PRD round trip: developed master versus the source-derived target canvas.
+
+    The developed master is decoded from Adobe RGB (LibRaw's 563/256 gamma) into the
+    source's linear primaries. It is a linear development without a display tone curve,
+    so the gated metrics follow the PRD's "after alignment/tone normalisation": a global
+    3x3 colour alignment fitted on source-supported pixels against the pipeline's
+    scene-linear target, then the same display rendering the pipeline inverted
+    (smoothstep when ``undo_tone``) and the source transfer. Unaligned and colour-only
+    (no tone) metrics are reported alongside, so the normalisation is never hidden.
+    """
+
+    def __init__(self, thresholds: ValidationThresholds | None = None) -> None:
+        self.thresholds = thresholds or ValidationThresholds()
+
+    def validate(
+        self,
+        reference_encoded: np.ndarray,
+        developed: np.ndarray,
+        supported_mask: np.ndarray,
+        *,
+        transfer: str = "SRGB",
+        undo_tone: bool = True,
+        max_side: int = 2048,
+    ) -> RoundTripResult:
+        from skimage.color import deltaE_ciede2000, lab2rgb
+        from skimage.metrics import structural_similarity
+
+        from synthraw.colour_space import rgb_to_xyz_matrix
+        from synthraw.exporters import ADOBE_GAMMA
+        from synthraw.hdr import inverse_smoothstep, inverse_transfer
+
+        if reference_encoded.shape != developed.shape or reference_encoded.shape[:2] != supported_mask.shape:
+            raise ValueError("reference, developed master and support mask must share one grid")
+        if developed.dtype != np.uint16:
+            raise ValueError("developed master must be 16-bit")
+        factor = max(1, math.ceil(max(developed.shape[:2]) / max_side))
+        reference = np.clip(block_mean(reference_encoded, factor), 0, 1)
+        master = np.clip(block_mean(developed, factor) / 65535, 0, 1)
+        supported = block_mean(supported_mask.astype(np.float32), factor) >= 0.999
+        if min(master.shape[:2]) < 7 or np.count_nonzero(supported) < 16:
+            raise ValueError("round trip needs at least 7x7 analysed pixels and 16 supported pixels")
+        to_xyz = rgb_to_xyz_matrix(transfer)
+        display_linear = inverse_transfer(reference, transfer).astype(np.float64)
+        scene_target = inverse_smoothstep(display_linear.astype(np.float32)) if undo_tone else display_linear
+        # Developed Adobe RGB -> XYZ -> source primaries, still linear and without a tone curve.
+        to_source = np.linalg.solve(to_xyz, rgb_to_xyz_matrix("ADOBE_RGB"))
+        master_linear = (master.astype(np.float64) ** ADOBE_GAMMA) @ to_source.T
+        target_lab = _xyz_to_lab(display_linear @ to_xyz.T)
+
+        def metrics(display: np.ndarray) -> tuple[dict[str, float], np.ndarray, np.ndarray]:
+            lab = _xyz_to_lab(np.clip(display, 0, None) @ to_xyz.T)
+            _, ssim_map = structural_similarity(
+                target_lab[..., 0] / 100, lab[..., 0] / 100, data_range=1.0, full=True, win_size=7
+            )
+            delta = deltaE_ciede2000(target_lab, lab)
+            return (
+                {
+                    "supported_ssim": float(ssim_map[supported].mean()),
+                    "whole_ssim": float(ssim_map.mean()),
+                    "median_delta_e00_supported": float(np.median(delta[supported])),
+                    "p95_delta_e00_supported": float(np.percentile(delta[supported], 95)),
+                },
+                lab,
+                delta,
+            )
+
+        unaligned, _, _ = metrics(master_linear)
+        colour_only, _, _ = metrics(_colour_align(master_linear, display_linear, supported)[0])
+        aligned_scene, matrix = _colour_align(master_linear, scene_target, supported)
+        rendered = _smoothstep(aligned_scene) if undo_tone else np.clip(aligned_scene, 0, 1)
+        aligned, aligned_lab, delta = metrics(rendered)
+        thresholds = self.thresholds
+        common = {
+            "analysis_factor": factor,
+            "analysed_shape": list(master.shape[:2]),
+            "supported_fraction": float(supported.mean()),
+            "transfer": transfer,
+        }
+        alignment = "global 3x3 colour matrix on supported pixels, then " + (
+            "the smoothstep display tone the pipeline inverted" if undo_tone else "no tone curve"
+        )
+        checks = [
+            ValidationCheck(
+                "roundtrip_supported_ssim",
+                "Round trip",
+                aligned["supported_ssim"] >= thresholds.roundtrip_supported_ssim,
+                measured={"ssim": aligned["supported_ssim"], **common},
+                target=f">= {thresholds.roundtrip_supported_ssim} after alignment/tone normalisation",
+                detail=alignment,
+            ),
+            ValidationCheck(
+                "roundtrip_whole_ssim",
+                "Round trip",
+                aligned["whole_ssim"] >= thresholds.roundtrip_whole_ssim,
+                measured={"ssim": aligned["whole_ssim"], **common},
+                target=f">= {thresholds.roundtrip_whole_ssim}",
+                detail=alignment,
+            ),
+            ValidationCheck(
+                "colour_delta_e00",
+                "Colour",
+                aligned["median_delta_e00_supported"] <= thresholds.median_delta_e00,
+                measured={
+                    "median_delta_e00": aligned["median_delta_e00_supported"],
+                    "p95_delta_e00": aligned["p95_delta_e00_supported"],
+                    "alignment_matrix": matrix,
+                    **common,
+                },
+                target=f"median <= {thresholds.median_delta_e00} on source-supported pixels after global alignment",
+                detail=alignment,
+            ),
+            ValidationCheck(
+                "roundtrip_unaligned",
+                "Round trip",
+                None,
+                measured={"unaligned": unaligned, "colour_alignment_only": colour_only, **common},
+                target="report only",
+                detail="Colour-managed comparison without alignment, and with colour-only alignment and no tone",
+            ),
+        ]
+        return RoundTripResult(
+            checks,
+            delta.astype(np.float32),
+            reference.astype(np.float32),
+            np.clip(lab2rgb(aligned_lab, illuminant="D65"), 0, 1).astype(np.float32),
+            supported,
+        )
+
+
+class SeamValidator:
+    """PRD SR seam gate from the stored boundary/interior residual diagnostic."""
+
+    def __init__(self, thresholds: ValidationThresholds | None = None) -> None:
+        self.thresholds = thresholds or ValidationThresholds()
+
+    def validate(self, sr_report: Mapping[str, Any]) -> ValidationCheck:
+        seams = sr_report.get("seams")
+        if seams is None:
+            return ValidationCheck(
+                "sr_seam_ratio",
+                "SR seams",
+                None,
+                measured={"tile_count": sr_report.get("tiled", {}).get("tile_count")},
+                target=f"< {self.thresholds.seam_ratio}",
+                detail=f"not applicable: {sr_report.get('seam_unavailable_reason') or 'no seam diagnostic'}",
+            )
+        ratio = float(seams["ratio"])
+        return ValidationCheck(
+            "sr_seam_ratio",
+            "SR seams",
+            ratio < self.thresholds.seam_ratio,
+            measured={k: seams[k] for k in ("boundary_mean", "interior_mean", "ratio")},
+            target=f"< {self.thresholds.seam_ratio}",
+        )
+
+
+class HDRValidator:
+    """PRD HDR rows: zero negative radiance (hard) and the generated area (report only)."""
+
+    def validate(
+        self, radiance: np.ndarray, hdr_report: Mapping[str, Any], *, strip_rows: int = 128
+    ) -> list[ValidationCheck]:
+        negative = nonfinite = 0
+        for strip in _strips(radiance, strip_rows):
+            finite = np.isfinite(strip)
+            nonfinite += int(strip.size - np.count_nonzero(finite))
+            negative += int(np.count_nonzero(np.any(finite & (strip < 0), axis=-1)))
+        return [
+            ValidationCheck(
+                "hdr_negative_radiance",
+                "HDR",
+                negative == 0 and nonfinite == 0,
+                hard=True,
+                measured={"negative_pixels": negative, "nonfinite_samples": nonfinite},
+                target="0 pixels",
+            ),
+            ValidationCheck(
+                "hdr_generated_area",
+                "HDR",
+                None,
+                measured={
+                    "generated_hdr_area_percentage": hdr_report.get("generated_hdr_area_percentage"),
+                    "backend": hdr_report.get("backend"),
+                    "gamut_clipped_pixel_percentage": hdr_report.get("gamut_mapping", {}).get(
+                        "affected_pixel_percentage"
+                    ),
+                },
+                target="report percentage, no arbitrary pass",
+            ),
+        ]
