@@ -130,6 +130,10 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "PreviewWriter",
         "bundle_run",
         "deliver_bundle",
+        "validate_and_report",
+        "compare_and_report",
+        "make_downsampled_source",
+        "run_pipeline",
     }
     assert "fields(ExperimentConfig)" in source
     assert "get_type_hints(ExperimentConfig)" in source
@@ -140,17 +144,46 @@ def test_foundation_uses_public_package_interfaces(notebook):
         assert fragment in source
 
 
-def test_only_validation_milestone_placeholders_remain(notebook):
-    section = None
-    placeholders = set()
+def test_no_milestone_placeholders_remain(notebook):
+    for cell in notebook.cells:
+        assert "milestone placeholder" not in cell.source
+        assert "Pending validation milestone" not in cell.source
+        assert "Integration milestone" not in cell.source
+
+
+def section_code(notebook, title):
+    """Concatenated code of one '## title' section."""
+    section, sources = None, []
     for cell in notebook.cells:
         if cell.cell_type == "markdown" and cell.source.startswith("## "):
-            section = cell.source.removeprefix("## ")
-        elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
-            assert "Validation milestone placeholder:" in cell.source
-            placeholders.add(section)
-    assert placeholders == {"RAW round-trip development", "Validation suite", "2K/4K comparison"}
-    assert all("Integration milestone" not in cell.source for cell in notebook.cells)
+            section = cell.source.splitlines()[0].removeprefix("## ")
+        elif cell.cell_type == "code" and section == title:
+            sources.append(cell.source)
+    return "\n".join(sources)
+
+
+def test_validation_and_comparison_run_as_part_of_run_all(notebook):
+    roundtrip = section_code(notebook, "RAW round-trip development")
+    assert "LibRawValidator().validate(dng_path, adc_mosaic, dng_metadata, develop=True)" in roundtrip
+    validation = section_code(notebook, "Validation suite")
+    for fragment in (
+        "ProvenanceWriter().write_metadata(",
+        "write_run_provenance(",
+        "validate_and_report(run.root",
+        "config.WRITE_VALIDATION_REPORT",
+    ):
+        assert fragment in validation
+    # Validation reads metadata.json and provenance.json, so both are frozen before it runs.
+    assert validation.index("write_run_provenance(") < validation.index("validate_and_report(run.root")
+    comparison = section_code(notebook, "2K/4K comparison")
+    for fragment in (
+        "COMPARISON_SECOND_INPUT = None",
+        "make_downsampled_source(source_original",
+        "low_source_derived=low_source_derived",
+        "run_pipeline(",
+        "compare_and_report(",
+    ):
+        assert fragment in comparison
 
 
 def test_notebook_ends_with_bundle_zip_delivery(notebook):
@@ -158,8 +191,7 @@ def test_notebook_ends_with_bundle_zip_delivery(notebook):
     assert last.cell_type == "code"
     for fragment in (
         "BUNDLE_EXCLUDE_LARGE_ARRAYS = False",
-        "write_run_provenance(",
-        "ProvenanceWriter().write_metadata(",
+        'validation_status == "FAILED"',
         "bundle_run(run.root, exclude_large_arrays=BUNDLE_EXCLUDE_LARGE_ARRAYS)",
         "deliver_bundle(bundle_path, drive_dir=drive_dir)",
     ):

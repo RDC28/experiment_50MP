@@ -67,7 +67,14 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
     matplotlib.use("Agg")
     runs = tmp_path / "runs"
     create = RunLayout.create.__func__
-    monkeypatch.setattr(RunLayout, "create", classmethod(lambda cls, _, **kwargs: create(cls, runs, **kwargs)))
+    # Redirect only the notebook's Colab run root; the 2K/4K comparison run keeps its own folder.
+    monkeypatch.setattr(
+        RunLayout,
+        "create",
+        classmethod(
+            lambda cls, out, **kwargs: create(cls, runs if str(out) == "/content/synthraw_runs" else out, **kwargs)
+        ),
+    )
     # FAST_DEV_RUN at 96 px keeps every array tiny on the Mac.
     monkeypatch.setattr(TargetGeometryPlanner, "plan", partialmethod(TargetGeometryPlanner.plan, fast_dev_max_side=96))
     drive = tmp_path / "drive"
@@ -87,11 +94,15 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
             )
             namespace["controls"] = {}
 
-    (root,) = (path for path in runs.iterdir() if path.is_dir())
+    (root,) = (path for path in runs.iterdir() if path.is_dir() and not path.name.endswith("_comparison"))
     produced = {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()}
     assert PRD_TREE <= produced
     assert not any(name.startswith("raw/.") for name in produced)
-    assert json.loads((root / "validation" / "run_report.json").read_text())["status"] == "SUCCESS"
+    run_report = json.loads((root / "validation" / "run_report.json").read_text())
+    assert run_report["status"] == "SUCCESS" and run_report["validation"] == "PASSED"
+    assert run_report["comparison_2k_vs_4k"]["status"] == "COMPLETED"
+    for name in ("validation_results.json", "validation_report.html", "comparison_2k_vs_4k.html"):
+        assert f"validation/{name}" in produced
 
     mosaic = np.load(root / "raw" / "sensor_mosaic_uint16.npy")
     with rawpy.imread(str(root / "raw" / "synthetic_50mp.dng")) as raw:
