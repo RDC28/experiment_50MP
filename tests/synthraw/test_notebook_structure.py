@@ -103,6 +103,8 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "RunLayout",
         "TargetGeometryPlanner",
         "SuperResolutionEngine",
+        "HDRReconstructionEngine",
+        "resolve_colour_space",
     }
     assert "fields(ExperimentConfig)" in source
     assert "get_type_hints(ExperimentConfig)" in source
@@ -121,7 +123,7 @@ def test_later_sections_identify_milestone_placeholders(notebook):
             section = cell.source.removeprefix("## ")
         elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
             placeholders.add(section)
-    assert placeholders == set(SECTIONS[6:]) - {"Metadata construction", "DNG export"}
+    assert placeholders == set(SECTIONS[7:]) - {"Metadata construction", "DNG export"}
 
 
 def test_scientific_boundary_is_visible(notebook):
@@ -316,3 +318,68 @@ def test_sr_cell_writes_disk_products(notebook, tmp_path, mode):
     assert report["seams"]["residual_map_path"]
     provenance = json.loads((run.directory("metadata") / "sr_provenance.json").read_text())
     assert provenance[0]["provenance"] == "F"
+
+
+@pytest.mark.parametrize("hdr_enabled", [True, False])
+@pytest.mark.parametrize("has_seams", [True, False])
+def test_hdr_cell_writes_tiny_reconstruction_products(notebook, tmp_path, capsys, hdr_enabled, has_seams):
+    # Execute this cell alone with 8 x 12 pixels, never a notebook or model.
+    import json
+    from types import SimpleNamespace
+
+    import matplotlib
+    import numpy as np
+    from PIL import Image
+
+    from synthraw.config import ExperimentConfig
+    from synthraw.hdr import HDRReconstructionEngine
+    from synthraw.input_audit import InputInspector
+    from synthraw.provenance import ProvenanceWriter
+    from synthraw.run_layout import RunLayout
+
+    matplotlib.use("Agg")
+    rgb = np.full((8, 12, 3), 0.5, dtype=np.float32)
+    rgb[0] = 1
+    rgb[-1] = 0
+    source = tmp_path / "input.png"
+    Image.fromarray((rgb * 255).astype(np.uint8)).save(source)
+    run = RunLayout.create(tmp_path / "runs")
+    sr_support = np.ones((8, 12), dtype=bool)
+    np.save(run.directory("confidence") / "source_supported_mask.npy", sr_support)
+    seams = None
+    if has_seams:
+        seam_path = run.directory("validation") / "tile_seam_map.npy"
+        np.save(seam_path, np.zeros((8, 12), dtype=np.float32))
+        seams = SimpleNamespace(residual_map_path=seam_path)
+    namespace = dict(
+        Path=Path,
+        ProvenanceWriter=ProvenanceWriter,
+        audit=InputInspector().inspect(source),
+        sr_rgb=rgb,
+        sr_result=SimpleNamespace(seams=seams, seam_unavailable_reason="Single tile: no internal tile boundaries"),
+        run=run,
+        config=ExperimentConfig(HDR_ENABLED=hdr_enabled),
+    )
+    cell = next(cell for cell in notebook.cells if cell.cell_type == "code" and "hdr_engine = " in cell.source)
+    exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+    linear = np.load(run.directory("intermediates") / "03_scene_linear.npy")
+    reference = HDRReconstructionEngine().linearize(rgb, tmp_path / "reference.npy")
+    np.testing.assert_allclose(linear, reference)
+    radiance = np.load(run.directory("intermediates") / "04_hdr_radiance.npy")
+    assert radiance.shape == rgb.shape
+    assert np.isfinite(radiance).all() and (radiance >= 0).all()
+    np.testing.assert_allclose(radiance[0], linear[0] * (8 if hdr_enabled else 1))
+    np.testing.assert_array_equal(np.load(run.directory("confidence") / "sr_source_supported_mask.npy"), sr_support)
+    for name in ("source_supported_mask", "highlight_fabricated_mask", "shadow_fabricated_mask", "hdr_confidence"):
+        assert np.load(run.directory("confidence") / f"{name}.npy").shape == (8, 12)
+    assert not np.load(run.directory("confidence") / "source_supported_mask.npy")[0].any()
+    for name in ("input_histograms", "clipping_masks", "tile_seam_map"):
+        with Image.open(run.directory("validation") / f"{name}.png") as image:
+            assert max(image.size) <= 700
+            image.verify()
+    report = json.loads((run.directory("metadata") / "hdr_reconstruction.json").read_text())
+    assert report["generated_hdr_area_percentage"] == 25
+    assert report["gamut_mapping"]["policy"] == "CLIP"
+    assert (run.directory("metadata") / "colour_space.json").is_file()
+    assert "Generated HDR area: 25.00%" in capsys.readouterr().out
+    assert not list(run.directory("intermediates").glob("hdr_*"))
