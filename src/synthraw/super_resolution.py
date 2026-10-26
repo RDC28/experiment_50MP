@@ -399,26 +399,39 @@ def resize_exact(
     *,
     width: int,
     height: int,
+    source_box: tuple[float, float, float, float] | None = None,
 ) -> Path:
     """Resize SR to exact content dimensions with bounded-memory Lanczos-3.
 
     PRD model selection requires an exact resize after x2/x4 inference. Pixel
     centres align across grids; downsampling widens the antialiasing kernel.
-    Edge samples clamp to the image border. Only source rows and one output
+    Optional source_box uses pixel-edge coordinates (left, top, right, bottom),
+    allowing the geometry planner's fractional crop without early rounding.
+    Filtering can use surrounding source pixels; samples outside the image
+    clamp to its border. Only source rows and one output
     row are materialised, so a disk-backed 50 MP input stays disk-backed.
     """
     if source.ndim != 3 or source.shape[2] != 3 or min(source.shape[:2]) < 1:
         raise ValueError("source must be nonempty HWC RGB")
     if any(type(value) is not int or value < 1 for value in (width, height)):
         raise ValueError("target dimensions must be positive integers")
+    source_height, source_width = source.shape[:2]
+    box = np.asarray(source_box if source_box is not None else (0, 0, source_width, source_height), dtype=float)
+    if box.shape != (4,) or not np.isfinite(box).all():
+        raise ValueError("source box must contain four finite coordinates")
+    left, top, right, bottom = box
+    if not (0 <= left < right <= source_width and 0 <= top < bottom <= source_height):
+        raise ValueError("source box must lie inside the source image")
     path = Path(output_path)
     if path.exists():
         raise FileExistsError(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    def kernel(input_size: int, output_size: int, positions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        factor = max(1.0, input_size / output_size)
-        centres = (positions + 0.5) * input_size / output_size - 0.5
+    def kernel(
+        input_size: int, output_size: int, positions: np.ndarray, start: float, stop: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        factor = max(1.0, (stop - start) / output_size)
+        centres = start + (positions + 0.5) * (stop - start) / output_size - 0.5
         radius = int(np.ceil(3 * factor))
         indices = np.floor(centres).astype(np.int64)[:, None] + np.arange(-radius + 1, radius + 1)
         distance = (centres[:, None] - indices) / factor
@@ -427,13 +440,12 @@ def resize_exact(
         weights /= weights.sum(axis=1, keepdims=True)
         return np.clip(indices, 0, input_size - 1), weights
 
-    source_height, source_width = source.shape[:2]
-    columns, horizontal = kernel(source_width, width, np.arange(width))
+    columns, horizontal = kernel(source_width, width, np.arange(width), left, right)
     output = None
     try:
         output = np.lib.format.open_memmap(path, mode="w+", dtype=np.float32, shape=(height, width, 3))
         for y in range(height):
-            rows, vertical = kernel(source_height, height, np.array([y]))
+            rows, vertical = kernel(source_height, height, np.array([y]), top, bottom)
             row = np.zeros((width, 3), dtype=np.float64)
             for index, weight in zip(rows[0], vertical[0], strict=True):
                 if weight == 0:

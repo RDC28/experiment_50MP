@@ -65,3 +65,56 @@ def test_existing_source_is_never_overwritten(tmp_path):
     with pytest.raises(FileExistsError):
         resize_exact(np.load(path, mmap_mode="r"), path, width=3, height=3)
     assert path.read_bytes() == original
+
+
+def test_integer_crop_keeps_exact_source_pixels(tmp_path):
+    source = np.random.default_rng(42).random((12, 18, 3)).astype(np.float32)
+    path = resize_exact(source, tmp_path / "crop.npy", width=9, height=7, source_box=(3, 2, 12, 9))
+    np.testing.assert_allclose(np.load(path), source[2:9, 3:12], atol=1e-7)
+
+
+def test_fractional_crop_preserves_pixel_centre_alignment(tmp_path):
+    y, x = np.indices((32, 48), dtype=np.float32)
+    source = np.stack((x / 47, y / 31, (x + y) / 78), axis=-1)
+    box = (8.25, 6.75, 38.75, 25.25)
+    path = resize_exact(source, tmp_path / "crop.npy", width=24, height=16, source_box=box)
+    result = np.load(path)
+    expected_x = (box[0] + (np.arange(24) + 0.5) * (box[2] - box[0]) / 24 - 0.5) / 47
+    expected_y = (box[1] + (np.arange(16) + 0.5) * (box[3] - box[1]) / 16 - 0.5) / 31
+    np.testing.assert_allclose(result[..., 0], np.broadcast_to(expected_x, (16, 24)), atol=0.001)
+    np.testing.assert_allclose(result[..., 1], np.broadcast_to(expected_y[:, None], (16, 24)), atol=0.001)
+
+
+def test_geometry_crop_maps_from_sr_grid_to_sensor_content(tmp_path):
+    from synthraw.config import ExperimentConfig
+    from synthraw.geometry import TargetGeometryPlanner
+
+    config = ExperimentConfig(FAST_DEV_RUN=True, SENSOR_FIT_MODE="CROP_HORIZONTAL")
+    plan = TargetGeometryPlanner().plan(48, 20, config)
+    # Model output lives on an x4 grid. Crop edges must be scaled, never rounded.
+    sr = np.full((80, 192, 3), 0.4, dtype=np.float32)
+    box = tuple(edge * 4 for edge in plan.crop_box)
+    left, top, right, bottom = map(round, plan.content_box)
+    path = resize_exact(sr, tmp_path / "crop.npy", width=right - left, height=bottom - top, source_box=box)
+    result = np.load(path, mmap_mode="r")
+    assert result.shape == (plan.height, plan.width, 3)
+    np.testing.assert_allclose(result, 0.4, atol=1e-7)
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        (-0.1, 0, 3, 3),
+        (0, 0, 5, 3),
+        (0, 0, 3, 5),
+        (2, 0, 1, 3),
+        (0, 2, 3, 2),
+        (0, 0, float("nan"), 3),
+        (0, 0, 3, float("inf")),
+        (0, 0, 3),
+    ],
+)
+def test_invalid_crop_is_rejected_before_output_creation(tmp_path, box):
+    with pytest.raises(ValueError, match="source box"):
+        resize_exact(np.zeros((4, 4, 3)), tmp_path / "crop.npy", width=3, height=3, source_box=box)
+    assert not list(tmp_path.iterdir())
