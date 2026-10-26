@@ -117,6 +117,7 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "Provenance",
         "ElectronSignalSimulator",
         "SensorNoiseSimulator",
+        "CFAMosaicer",
     }
     assert "fields(ExperimentConfig)" in source
     assert "get_type_hints(ExperimentConfig)" in source
@@ -135,7 +136,7 @@ def test_later_sections_identify_milestone_placeholders(notebook):
             section = cell.source.removeprefix("## ")
         elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
             placeholders.add(section)
-    assert placeholders == set(SECTIONS[11:]) - {"Metadata construction", "DNG export"}
+    assert placeholders == set(SECTIONS[12:]) - {"Metadata construction", "DNG export"}
 
 
 def test_scientific_boundary_is_visible(notebook):
@@ -520,3 +521,55 @@ def test_electron_cell_writes_tiny_sensor_products(notebook, tmp_path, shot_nois
     assert records["applied_row_fpn_e"]["provenance"] == "F"
     assert records["conversion_gain_e_per_dn"]["provenance"] == ("M" if calibrated_gain else "F")
     assert records["applied_dsnu_e"]["value"] == records["conversion_gain_e_per_dn"]["value"]
+
+
+@pytest.mark.parametrize("phase", ["RGGB", "BGGR", "GRBG", "GBRG"])
+@pytest.mark.parametrize("strip_rows", [1, 5])
+def test_cfa_cell_writes_tiny_sensor_mosaics(notebook, tmp_path, phase, strip_rows):
+    import json
+
+    import numpy as np
+
+    from synthraw.camera_profile import CameraProfileManager
+    from synthraw.dng_metadata import CFA_PATTERNS
+    from synthraw.provenance import FieldRecord, Provenance
+    from synthraw.run_layout import RunLayout
+
+    profile = CameraProfileManager().build()
+    profile.sensor["cfa_pattern"] = FieldRecord("cfa_pattern", phase, Provenance.FABRICATED, "Test phase")
+    clean = np.arange(7 * 10 * 3, dtype=np.float64).reshape(7, 10, 3)
+    noisy = clean - 100.5  # Signed electron excursions must survive until ADC.
+    run = RunLayout.create(tmp_path)
+    namespace = dict(
+        np=np,
+        run=run,
+        camera_profile=profile,
+        sensor_parameters=profile.sensor,
+        sensor_expected_electrons=clean,
+        sensor_noisy_electrons=noisy,
+        SENSOR_STRIP_ROWS=strip_rows,
+        FieldRecord=FieldRecord,
+        Provenance=Provenance,
+    )
+    cell = notebook.cells[29]
+    assert "milestone placeholder" not in cell.source
+    exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+    for name, source, filename in (
+        ("sensor_clean_cfa", clean, "09_clean_cfa.npy"),
+        ("sensor_noisy_cfa", noisy, "10_noisy_cfa.npy"),
+    ):
+        expected = np.empty((7, 10))
+        for row in range(7):
+            for column in range(10):
+                expected[row, column] = source[row, column, CFA_PATTERNS[phase][2 * (row % 2) + column % 2]]
+        np.testing.assert_array_equal(np.load(run.directory("intermediates") / filename), expected)
+        assert isinstance(namespace[name], np.memmap)
+        planes = namespace[f"{name}_planes"]
+        assert set(planes) == {"R", "G1", "G2", "B"}
+        assert all(np.shares_memory(plane, namespace[name]) for plane in planes.values())
+    records = {
+        item["field"]: item for item in json.loads((run.directory("metadata") / "sensor_profile.json").read_text())
+    }
+    assert records["applied_cfa_phase"]["value"] == phase
+    assert records["applied_cfa_phase"]["provenance"] == "D"
+    assert records["applied_cfa_phase"]["dependencies"] == ["cfa_pattern"]
