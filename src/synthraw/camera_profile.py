@@ -1,4 +1,4 @@
-"""Built-in IMAGE_ONLY profiles for PRD_v3's camera and sensor specification."""
+"""Built-in and user-supplied reference profiles for PRD_v3's camera and sensor specification."""
 
 from __future__ import annotations
 
@@ -32,10 +32,22 @@ class CameraProfile:
 class CameraProfileManager:
     """Construct IMAGE_ONLY priors without loading RAWs or allocating sensor arrays."""
 
-    def build(self, name: str = "SONY_A1II_LIKE") -> CameraProfile:
+    def build(
+        self,
+        name: str = "SONY_A1II_LIKE",
+        *,
+        source: str = "IMAGE_ONLY",
+        reference_raw: str | Path | None = None,
+    ) -> CameraProfile:
         """Return a fresh profile; virtual geometries never claim native Sony status."""
         if name not in PROFILE_NAMES:
             raise ValueError(f"Unknown camera profile: {name}")
+        if source not in ("IMAGE_ONLY", "REFERENCE_RAW"):
+            raise ValueError("Supported profile sources are IMAGE_ONLY and REFERENCE_RAW")
+        if source == "REFERENCE_RAW" and reference_raw is None:
+            raise ValueError("REFERENCE_RAW requires a user-supplied reference_raw file")
+        if source == "IMAGE_ONLY" and reference_raw is not None:
+            raise ValueError("Select REFERENCE_RAW to use a reference_raw file")
         virtual = name != "SONY_A1II_LIKE"
         bits = 16 if name == "VIRTUAL_16BIT_SENSOR" else 14
         width, height = (10872, 4608) if name == "CINEMA_50MP_VIRTUAL" else (8640, 5760)
@@ -96,4 +108,69 @@ class CameraProfileManager:
         ):
             add(sensor, field, value, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
             add(sensor, f"{field}_range", interval, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
-        return CameraProfile(camera, sensor)
+        profile = CameraProfile(camera, sensor)
+        if source == "REFERENCE_RAW":
+            self._read_reference(profile, Path(reference_raw))
+        return profile
+
+    @staticmethod
+    def _read_reference(profile: CameraProfile, path: Path) -> None:
+        """Read exposed decoder measurements only; retain unmeasured PRD priors."""
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        import numpy as np
+        import rawpy
+
+        def measured(records: dict[str, FieldRecord], field: str, value: Any) -> None:
+            records[field] = FieldRecord(
+                field,
+                value,
+                Provenance.MEASURED,
+                "User-supplied reference RAW via LibRaw/rawpy",
+                dependencies=[str(path)],
+                disclaimer="Measured from the supplied reference file, not from the synthetic exposure.",
+            )
+
+        with rawpy.imread(str(path)) as raw:
+            pattern = raw.raw_pattern
+            if pattern is None or pattern.shape != (2, 2):
+                raise ValueError("Reference RAW must expose a 2x2 Bayer CFA")
+            phase = "".join(chr(raw.color_desc[int(index)]) for index in pattern.ravel())
+            if phase not in ("RGGB", "BGGR", "GRBG", "GBRG"):
+                raise ValueError("Reference RAW must expose an RGB Bayer CFA")
+            levels = np.asarray(raw.black_level_per_channel, dtype=float)
+            white = float(raw.white_level)
+            wb = np.asarray(raw.camera_whitebalance, dtype=float)
+            if not np.isfinite(levels).all() or np.any(levels < 0) or not np.all(levels < white):
+                raise ValueError("Reference RAW has invalid black/white levels")
+            if wb.size < 3 or not np.isfinite(wb[:3]).all() or np.any(wb[:3] <= 0):
+                raise ValueError("Reference RAW has no valid camera white balance")
+            for field, value in {
+                "sensor_width": raw.sizes.raw_width,
+                "sensor_height": raw.sizes.raw_height,
+                "active_area": [
+                    raw.sizes.top_margin,
+                    raw.sizes.left_margin,
+                    raw.sizes.top_margin + raw.sizes.height,
+                    raw.sizes.left_margin + raw.sizes.width,
+                ],
+                "default_crop_origin": [0, 0],
+                "default_crop_size": [raw.sizes.width, raw.sizes.height],
+                "cfa_pattern": phase,
+                "BlackLevel": levels.tolist(),
+                "WhiteLevel": raw.white_level,
+            }.items():
+                measured(profile.sensor, field, value)
+            measured(profile.camera, "camera_whitebalance", wb.tolist())
+            measured(profile.camera, "AsShotNeutral", (wb[1] / wb[:3]).tolist())
+            # These are LibRaw transforms, not the original dual-illuminant DNG tags.
+            for field, matrix in (
+                ("libraw_color_matrix", raw.color_matrix),
+                ("libraw_rgb_xyz_matrix", raw.rgb_xyz_matrix),
+            ):
+                matrix = np.asarray(matrix)
+                if np.isfinite(matrix).all() and np.any(matrix):
+                    measured(profile.camera, field, matrix.tolist())
+        profile.camera["profile_source"] = FieldRecord(
+            "profile_source", "REFERENCE_RAW", Provenance.DETERMINISTIC, "Explicit user profile selection"
+        )
