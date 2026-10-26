@@ -102,6 +102,7 @@ def test_foundation_uses_public_package_interfaces(notebook):
         "RandomStreams",
         "RunLayout",
         "TargetGeometryPlanner",
+        "SuperResolutionEngine",
     }
     assert "fields(ExperimentConfig)" in source
     assert "get_type_hints(ExperimentConfig)" in source
@@ -120,7 +121,7 @@ def test_later_sections_identify_milestone_placeholders(notebook):
             section = cell.source.removeprefix("## ")
         elif cell.cell_type == "code" and "milestone placeholder:" in cell.source:
             placeholders.add(section)
-    assert placeholders == set(SECTIONS[5:]) - {"Metadata construction", "DNG export"}
+    assert placeholders == set(SECTIONS[6:]) - {"Metadata construction", "DNG export"}
 
 
 def test_scientific_boundary_is_visible(notebook):
@@ -270,3 +271,48 @@ def test_notebook_export_publishes_only_validated_raw(notebook, tmp_path, monkey
         assert export(mosaic, records, config, run) == destination
         LibRawValidator().validate(destination, mosaic, records, develop=True)
     assert list(run.directory("raw").iterdir()) == [destination]
+
+
+@pytest.mark.parametrize("mode", ["OUTPAINT_VERTICAL", "CROP_HORIZONTAL", "FIT_WITH_SENSOR_MARGINS"])
+def test_sr_cell_writes_disk_products(notebook, tmp_path, mode):
+    # Execute only the SR cell with a tiny image and bounded FAST_DEV geometry.
+    import json
+    from types import SimpleNamespace
+
+    import numpy as np
+    from PIL import Image
+
+    from synthraw.config import ExperimentConfig
+    from synthraw.environment import EnvironmentReport, TileParameters
+    from synthraw.geometry import TargetGeometryPlanner
+    from synthraw.run_layout import RunLayout
+
+    source = np.full((20, 48, 3), 128, dtype=np.uint8)
+    source[:, :12, 0] = 64
+    source_path = tmp_path / "source.png"
+    Image.fromarray(source).save(source_path)
+    config = ExperimentConfig(SR_BACKEND="LANCZOS", SENSOR_FIT_MODE=mode, FAST_DEV_RUN=True)
+    run = RunLayout.create(tmp_path / "runs")
+    geometry = TargetGeometryPlanner().plan(48, 20, config)
+    namespace = dict(
+        np=np,  # Imported by the prerequisite RAW gate cell.
+        source_path=source_path,
+        audit=SimpleNamespace(width=48, height=20),
+        config=config,
+        run=run,
+        geometry=geometry,
+        environment=EnvironmentReport(None, None, None, None, 1024**3, 1024**3, 1, TileParameters(16, 4, True, False)),
+    )
+    cell = next(cell for cell in notebook.cells if cell.cell_type == "code" and "sr_result = " in cell.source)
+    exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+    np.testing.assert_allclose(np.load(run.directory("intermediates") / "01_input_rgb.npy"), source / 255)
+    assert isinstance(namespace["sr_rgb"], np.memmap)
+    assert namespace["sr_rgb"].shape == (geometry.height, geometry.width, 3)
+    for name in ("generated_detail_mask", "source_supported_mask"):
+        assert np.load(run.directory("confidence") / f"{name}.npy").shape == (geometry.height, geometry.width)
+    report = json.loads((run.directory("metadata") / "sr_reconstruction.json").read_text())
+    assert report["tiled"]["backend"] == "LANCZOS"
+    assert report["tiled"]["benchmark_tile_count"] == 3
+    assert report["seams"]["residual_map_path"]
+    provenance = json.loads((run.directory("metadata") / "sr_provenance.json").read_text())
+    assert provenance[0]["provenance"] == "F"
