@@ -132,13 +132,23 @@ class ValidationFigureWriter:
         return written
 
     def _roundtrip(self, plt: Any, run: ValidationRun) -> Any:
+        from matplotlib.colors import ListedColormap
+        from matplotlib.patches import Patch
+
         result = run.roundtrip
-        figure, axes = plt.subplots(1, 4, figsize=(14, 3.4), layout="constrained")
         if result is None:
+            figure, axes = plt.subplots(1, 4, figsize=(12, 1.6), layout="constrained")
             for ax in axes:
                 _placeholder(ax, "round trip not measured (no developed TIFF)")
             return figure
         delta = _subsample(result.difference, self.max_side)
+        supported = _subsample(result.supported, self.max_side).astype(bool)
+        # Panel boxes follow the image aspect so the row carries no empty band above or below.
+        aspect = delta.shape[0] / max(delta.shape[1], 1)
+        panel_width = 3.2 / max(aspect, 1.0)
+        size = (4 * panel_width + 1.0, panel_width * aspect + 0.8)
+        figure, axes = plt.subplots(1, 4, figsize=size, layout="constrained")
+        figure.get_layout_engine().set(wspace=0.06)
         panels = (
             ("source-derived target", _subsample(result.reference_srgb, self.max_side)),
             ("developed, aligned", _subsample(result.developed_srgb, self.max_side)),
@@ -146,14 +156,31 @@ class ValidationFigureWriter:
         for ax, (title, image) in zip(axes[:2], panels, strict=True):
             ax.imshow(np.clip(image, 0, 1), interpolation="nearest")
             ax.set_title(title, fontsize=9)
-            ax.set_axis_off()
         shown = axes[2].imshow(delta, cmap="magma", vmin=0, vmax=max(5.0, float(np.percentile(delta, 99))))
         axes[2].set_title("deltaE00 map", fontsize=9)
-        axes[2].set_axis_off()
-        figure.colorbar(shown, ax=axes[2], fraction=0.046)
-        axes[3].imshow(_subsample(result.supported, self.max_side), cmap="gray", vmin=0, vmax=1)
-        axes[3].set_title("source-supported region", fontsize=9)
-        axes[3].set_axis_off()
+        # An inset in axes coordinates tracks the drawn image box, so the bar is exactly the panel height.
+        colourbar = figure.colorbar(shown, cax=axes[2].inset_axes((1.03, 0.0, 0.04, 1.0)))
+        colourbar.set_label("deltaE00", fontsize=8)
+        colourbar.ax.tick_params(labelsize=7)
+        colours = ("#e8833a", "#3a78c2")
+        axes[3].imshow(supported, cmap=ListedColormap(colours), vmin=0, vmax=1, interpolation="nearest")
+        axes[3].set_title("source-supported region (scored)", fontsize=9)
+        share = float(supported.mean())
+        axes[3].legend(
+            handles=[
+                Patch(color=colours[1], label=f"source-supported {share:.0%}"),
+                Patch(color=colours[0], label=f"generated / excluded {1 - share:.0%}"),
+            ],
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.02),
+            ncol=2,
+            fontsize=7,
+            frameon=False,
+            handlelength=1.2,
+            columnspacing=1.0,
+        )
+        for ax in axes:
+            ax.set_axis_off()
         return figure
 
     def _cfa_planes(self, plt: Any, root: Path, phase: str) -> Any:

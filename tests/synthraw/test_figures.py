@@ -64,3 +64,17 @@ def test_subsampling_keeps_the_cfa_phase_and_bounds_size():
     assert crop.shape == (16, 16)
     top, left = divmod(int(crop[0, 0]), 600)
     assert top % 2 == 0 and left % 2 == 0
+
+
+def test_roundtrip_figure_is_tight_and_labels_supported_versus_generated(validated, tmp_path):
+    root = shutil.copytree(validated.root, tmp_path / "copy")
+    path = ValidationFigureWriter().write(dataclasses.replace(validated, root=root))["roundtrip_difference.png"]
+    pixels = _image(path).astype(int)
+    height, width = pixels.shape[:2]
+    # Four 40x96 panels in one row: no empty band above or below the images.
+    assert height / width < 0.2, (height, width)
+    rows_with_ink = np.flatnonzero((np.abs(pixels - 255).sum(axis=-1) > 30).any(axis=1))
+    assert rows_with_ink[0] < 0.1 * height and rows_with_ink[-1] > 0.9 * height
+    # The supported-region panel uses two distinct legend colours, not a thin black outline.
+    for colour in ((0x3A, 0x78, 0xC2), (0xE8, 0x83, 0x3A)):
+        assert (np.abs(pixels - colour).sum(axis=-1) < 12).sum() > 200, colour
