@@ -22,8 +22,12 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
 **Running it in Colab**
 
 1. Open the notebook in Colab and pick a GPU runtime (Runtime > Change runtime type). The setup cell installs
-   the package from GitHub at `REPO_REF`. For a reproducible release, set `REPO_REF` to a full 40-character
-   commit SHA instead of the branch name.
+   the package from GitHub at `REPO_REF`. `REPO_REF` defaults to the development branch
+   `fm/exp50mp-v3-synthetic-raw`, which is deleted once it is merged. The cell tries `REPO_REF` first; if that
+   branch no longer exists it warns and installs `main`, and `INSTALLED_REF` records what was installed. A
+   release should pin `REPO_REF` to the full 40-character SHA of the merged commit on `main`: a pinned SHA is
+   installed exactly or the cell fails, it never falls back. Any other value (a tag, a short SHA, another branch)
+   is rejected.
 2. Set the configuration panel. Every control is an `ExperimentConfig` field. The ones you will usually
    change are: `INPUT_MODE` (`UPLOAD`, `PATH` or `DRIVE`, with `INPUT_PATH`), `OUTPUT_GEOMETRY`
    (`SONY_A1II_NATIVE` 8640 x 5760 or `CINEMA_50MP_VIRTUAL` about 50.1 MP at the source aspect ratio),

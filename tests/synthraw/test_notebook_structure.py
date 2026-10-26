@@ -60,15 +60,69 @@ def test_install_cell_is_first_code_and_ref_is_explicit(notebook):
         if isinstance(target, ast.Name)
     }
     ref = assignments["REPO_REF"]
-    assert ref == "fm/exp50mp-v3-synthetic-raw" or re.fullmatch(r"[0-9a-fA-F]{40}", ref)
-    assert "git+https://github.com/RDC28/experiment_50MP.git@{REPO_REF}" in source
+    assert ref in ("fm/exp50mp-v3-synthetic-raw", "main") or re.fullmatch(r"[0-9a-fA-F]{40}", ref)
+    assert assignments["REPO_URL"] == "https://github.com/RDC28/experiment_50MP.git"
+    assert 'f"git+{REPO_URL}@{ref}"' in source
     assert any(
         isinstance(node, ast.List)
         and [value.value for value in node.elts if isinstance(value, ast.Constant)][:3] == ["-m", "pip", "install"]
         for node in ast.walk(tree)
     )
     assert "synthraw" in source
-    assert "commit SHA" in source
+    assert "merged commit" in source
+    assert "40-character commit SHA" in source
+
+
+def _run_install_cell(source, ref, failing_refs, monkeypatch):
+    """Execute the setup cell with REPO_REF replaced and pip mocked; returns (namespace, installed refs)."""
+    calls = []
+
+    def fake_call(command):
+        target = command[-1].rsplit("@", 1)[1]
+        calls.append(target)
+        return 1 if target in failing_refs else 0
+
+    monkeypatch.setattr("subprocess.call", fake_call)
+    monkeypatch.setattr("subprocess.check_call", lambda *args, **kwargs: pytest.fail("use subprocess.call"))
+    patched = re.sub(r'^REPO_REF = ".*"$', f"REPO_REF = {ref!r}", source, count=1, flags=re.MULTILINE)
+    assert patched != source or ref == "fm/exp50mp-v3-synthetic-raw"
+    namespace = {}
+    exec(compile(patched, "setup_cell", "exec"), namespace)
+    return namespace, calls
+
+
+@pytest.fixture
+def install_source(notebook):
+    return next(cell.source for cell in notebook.cells if cell.cell_type == "code")
+
+
+def test_install_cell_tries_repo_ref_first(install_source, monkeypatch):
+    namespace, calls = _run_install_cell(install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch)
+    assert calls == ["fm/exp50mp-v3-synthetic-raw"]
+    assert namespace["INSTALLED_REF"] == "fm/exp50mp-v3-synthetic-raw"
+
+
+def test_install_cell_falls_back_to_main_when_branch_is_merged(install_source, monkeypatch):
+    with pytest.warns(UserWarning, match="merged commit SHA"):
+        namespace, calls = _run_install_cell(
+            install_source, "fm/exp50mp-v3-synthetic-raw", {"fm/exp50mp-v3-synthetic-raw"}, monkeypatch
+        )
+    assert calls == ["fm/exp50mp-v3-synthetic-raw", "main"]
+    assert namespace["INSTALLED_REF"] == "main"
+
+
+def test_install_cell_pinned_sha_never_falls_back(install_source, monkeypatch):
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    namespace, calls = _run_install_cell(install_source, sha, set(), monkeypatch)
+    assert calls == [sha] and namespace["INSTALLED_REF"] == sha
+    with pytest.raises(RuntimeError, match="check REPO_REF"):
+        _run_install_cell(install_source, sha, {sha}, monkeypatch)
+
+
+@pytest.mark.parametrize("ref", ["v1.0", "some-branch", "0123456", "0123456789abcdef0123456789abcdef0123456g"])
+def test_install_cell_rejects_unpinned_refs(install_source, monkeypatch, ref):
+    with pytest.raises(ValueError, match="40-character commit SHA"):
+        _run_install_cell(install_source, ref, set(), monkeypatch)
 
 
 def test_all_cells_are_unexecuted_valid_python(notebook):
@@ -811,5 +865,7 @@ def test_readme_documents_the_notebook():
         "`Synthetic`",
         "SYNTHETIC_RAW_LAB_HEAVY_TESTS=1",
         "Still to verify in Colab",
+        "merged commit on `main`",
+        "never falls back",
     ):
         assert fragment in section
