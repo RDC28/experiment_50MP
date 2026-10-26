@@ -641,7 +641,8 @@ def test_adc_cell_writes_tiny_codes_and_applied_profile(notebook, tmp_path, bits
 
 @pytest.mark.parametrize("bits", [14, 16])
 @pytest.mark.parametrize("phase", ["RGGB", "BGGR", "GRBG", "GBRG"])
-def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatch, bits, phase):
+@pytest.mark.parametrize("shot_noise", [True, False])
+def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatch, bits, phase, shot_noise):
     from dataclasses import replace
     from types import SimpleNamespace
 
@@ -659,7 +660,7 @@ def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatc
     from synthraw.sensor import SensorNoiseSimulator
 
     monkeypatch.setattr("synthraw.sony_registry.shutil.which", lambda _: None)
-    config = ExperimentConfig(ADC_BITS=bits)
+    config = ExperimentConfig(ADC_BITS=bits, SHOT_NOISE=shot_noise)
     geometry = replace(
         TargetGeometryPlanner().plan(64, 48),
         width=64,
@@ -718,7 +719,10 @@ def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatc
     )
     assert namespace["dng_metadata"] is not None
     records = namespace["dng_metadata"]
-    assert records["NoiseProfile"].value == namespace["adc_result"].noise_profile
+    if shot_noise:
+        assert records["NoiseProfile"].value == namespace["adc_result"].noise_profile
+    else:
+        assert "NoiseProfile" not in records
     assert records["BlackLevel"].value == namespace["adc_result"].applied_parameters["black_level"]
     assert records["WhiteLevel"].value == namespace["adc_result"].applied_parameters["white_level"]
     np.testing.assert_allclose(records["AsShotNeutral"].value, (0.5, 1, 2 / 3))
@@ -726,13 +730,7 @@ def test_sensor_cells_export_applied_adc_metadata(notebook, tmp_path, monkeypatc
     exec(compile(export.source, str(NOTEBOOK), "exec"), namespace)
     with tifffile.TiffFile(namespace["dng_path"]) as image:
         np.testing.assert_array_equal(image.asarray(), namespace["adc_mosaic"])
-        np.testing.assert_allclose(image.pages[0].tags[51041].value, namespace["adc_result"].noise_profile)
-
-
-def test_metadata_cell_rejects_unrepresentable_adc_noise_profile(notebook):
-    from types import SimpleNamespace
-
-    cell = next(c for c in notebook.cells if c.id == "8176dfe4")
-    namespace = {"adc_result": SimpleNamespace(noise_profile=None)}
-    with pytest.raises(ValueError, match="enable SHOT_NOISE"):
-        exec(compile(cell.source, str(NOTEBOOK), "exec"), namespace)
+        if shot_noise:
+            np.testing.assert_allclose(image.pages[0].tags[51041].value, namespace["adc_result"].noise_profile)
+        else:
+            assert 51041 not in image.pages[0].tags

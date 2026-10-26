@@ -71,7 +71,7 @@ class DNGMetadataBuilder:
         color_matrix1: Any = ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
         color_matrix2: Any = ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
         as_shot_neutral: tuple[float, float, float] = (1, 1, 1),
-        noise_profile: tuple[float, ...] = (0.001, 0.000001),
+        noise_profile: tuple[float, ...] | None = (0.001, 0.000001),
         software_version: str = "0.1.0",
         exposure: Mapping[str, FieldRecord] | None = None,
         lens: Mapping[str, FieldRecord] | None = None,
@@ -79,7 +79,8 @@ class DNGMetadataBuilder:
         """Construct allocation-free metadata for a rectangular Bayer sensor.
 
         NoiseProfile must come from the same noise model applied to the pixels;
-        the defaults only describe a trivial synthetic milestone fixture.
+        the defaults only describe a trivial synthetic milestone fixture. Pass None
+        to omit the tag when disabled shot noise cannot satisfy DNG's S > 0.
         """
         config = config or ExperimentConfig()
         if cfa_phase not in CFA_PATTERNS:
@@ -112,7 +113,6 @@ class DNGMetadataBuilder:
             ("CFALayout", 1, "SHORT"),
             ("BlackLevelRepeatDim", (1, 1), "SHORT[2]"),
             ("WhiteLevel", (1 << config.ADC_BITS) - 1 if white_level is None else white_level, "LONG"),
-            ("NoiseProfile", tuple(noise_profile), f"DOUBLE[{len(noise_profile)}]"),
             ("NoiseReductionApplied", 0, "RATIONAL"),
             ("DefaultCropOrigin", geometry.default_crop_origin, "LONG[2]"),
             ("DefaultCropSize", geometry.default_crop_size, "LONG[2]"),
@@ -123,6 +123,8 @@ class DNGMetadataBuilder:
             ("ImageDescription", DISCLOSURE, "ASCII"),
         ):
             add(name, value, dtype)
+        if noise_profile is not None:
+            add("NoiseProfile", tuple(noise_profile), f"DOUBLE[{len(noise_profile)}]")
         model, unique = {
             "SONY_A1II_LIKE": ("Sony Alpha 1 II-like Synthetic Sensor", "Synthetic Sony Alpha 1 II-like 50MP v1"),
             "CINEMA_50MP_VIRTUAL": ("Virtual Cinema 50MP Synthetic Sensor", "Synthetic Virtual Cinema 50MP v1"),
@@ -307,11 +309,12 @@ class DNGMetadataBuilder:
             array = np.asarray(value(name), dtype=float)
             if array.shape != (3,) or not np.isfinite(array).all() or (array <= 0).any():
                 raise ValueError(f"{name} requires three positive values")
-        noise = np.asarray(value("NoiseProfile"), dtype=float)
-        if noise.shape not in ((2,), (6,)) or not np.isfinite(noise).all():
-            raise ValueError("NoiseProfile requires one or three finite S/O pairs")
-        if (noise[::2] <= 0).any() or (noise[1::2] < 0).any():
-            raise ValueError("NoiseProfile requires S > 0 and O >= 0")
+        if "NoiseProfile" in records:
+            noise = np.asarray(value("NoiseProfile"), dtype=float)
+            if noise.shape not in ((2,), (6,)) or not np.isfinite(noise).all():
+                raise ValueError("NoiseProfile requires one or three finite S/O pairs")
+            if (noise[::2] <= 0).any() or (noise[1::2] < 0).any():
+                raise ValueError("NoiseProfile requires S > 0 and O >= 0")
         for name in ("BaselineNoise", "BaselineSharpness"):
             if not np.isfinite(value(name)) or value(name) <= 0:
                 raise ValueError(f"{name} must be positive")
