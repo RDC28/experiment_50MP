@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -22,10 +22,65 @@ class TiledSRResult:
     estimated_seconds: float
     effective_tile_size: int
     retry_reasons: tuple[str, ...] = ()
+    backend: str | None = None
+    fallback_reasons: tuple[str, ...] = ()
 
 
 class SuperResolutionEngine:
     """Execute optional RGB model callables on bounded, overlapping tiles."""
+
+    def reconstruct(
+        self,
+        source: np.ndarray,
+        output_path: str | Path,
+        *,
+        backend: str = "SWINIR",
+        models: Mapping[str, Callable[[np.ndarray], np.ndarray]] | None = None,
+        scale: int,
+        tiles: TileParameters,
+    ) -> TiledSRResult:
+        """Run the PRD fidelity fallback chain with caller-loaded optional models.
+
+        Model callables must implement the requested scale. Loading, manifest
+        validation and checkpoint licence gates belong to the caller. Lanczos
+        needs only Pillow and resizes float channels without 8-bit quantisation.
+        OOM retry happens within each backend before proceeding to the next one.
+        """
+        chains = {
+            "SWINIR": ("SWINIR", "REAL_ESRGAN", "LANCZOS"),
+            "HAT": ("HAT", "REAL_ESRGAN", "LANCZOS"),
+            "REAL_ESRGAN": ("REAL_ESRGAN", "LANCZOS"),
+            "LANCZOS": ("LANCZOS",),
+        }
+        if backend not in chains:
+            raise ValueError(f"Unsupported fidelity backend: {backend}")
+        models = models or {}
+        reasons = []
+
+        def lanczos(patch: np.ndarray) -> np.ndarray:
+            from PIL import Image
+
+            size = (patch.shape[1] * scale, patch.shape[0] * scale)
+            channels = [
+                np.asarray(Image.fromarray(patch[..., channel]).resize(size, Image.Resampling.LANCZOS))
+                for channel in range(3)
+            ]
+            return np.clip(np.stack(channels, axis=2), 0, 1)
+
+        for candidate in chains[backend]:
+            model = lanczos if candidate == "LANCZOS" else models.get(candidate)
+            if model is None:
+                reasons.append(f"{candidate}: backend unavailable")
+                continue
+            try:
+                result = self.reconstruct_tiles(source, output_path, model, scale=scale, tiles=tiles)
+            except (MemoryError, RuntimeError) as error:
+                if candidate == "LANCZOS":
+                    raise
+                reasons.append(f"{candidate}: {type(error).__name__}: {error}")
+                continue
+            return replace(result, backend=candidate, fallback_reasons=tuple(reasons))
+        raise RuntimeError("No SR backend succeeded")
 
     def reconstruct_tiles(
         self,

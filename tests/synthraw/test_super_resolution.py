@@ -242,3 +242,61 @@ def test_source_fidelity_rejects_invalid_inputs(invalid):
         source[-1, -1] = np.nan
     with pytest.raises(ValueError):
         diagnose_source_fidelity(sr, source)
+
+
+@pytest.mark.parametrize("backend", ["SWINIR", "HAT", "REAL_ESRGAN", "LANCZOS"])
+def test_backend_unavailable_falls_back_to_real_lanczos(tmp_path, backend):
+    source = np.full((5, 7, 3), 0.375, dtype=np.float32)
+    result = SuperResolutionEngine().reconstruct(
+        source, tmp_path / "sr.npy", backend=backend, scale=2, tiles=TileParameters(4, 1, True, False)
+    )
+    assert result.backend == "LANCZOS"
+    assert len(result.fallback_reasons) == {"SWINIR": 2, "HAT": 2, "REAL_ESRGAN": 1, "LANCZOS": 0}[backend]
+    output = np.load(result.path)
+    assert output.shape == (10, 14, 3)
+    np.testing.assert_allclose(output, 0.375, atol=1e-6)
+
+
+def test_backend_oom_exhaustion_uses_esrgan(tmp_path):
+    calls = []
+
+    def unavailable(patch):
+        calls.append(patch.shape)
+        raise RuntimeError("CUDA out of memory")
+
+    result = SuperResolutionEngine().reconstruct(
+        np.full((5, 6, 3), 0.5, dtype=np.float32),
+        tmp_path / "sr.npy",
+        models={"SWINIR": unavailable, "REAL_ESRGAN": lambda patch: patch},
+        scale=1,
+        tiles=TileParameters(4, 1, True, False),
+    )
+    assert len(calls) == 2
+    assert result.backend == "REAL_ESRGAN"
+    assert "CUDA out of memory" in result.fallback_reasons[0]
+    np.testing.assert_allclose(np.load(result.path), 0.5)
+    assert list(tmp_path.iterdir()) == [result.path]
+
+
+def test_successful_primary_never_calls_fallback(tmp_path):
+    def forbidden(patch):
+        pytest.fail("Fallback ran after successful primary")
+
+    result = SuperResolutionEngine().reconstruct(
+        np.zeros((3, 4, 3), dtype=np.float32),
+        tmp_path / "sr.npy",
+        models={"HAT": lambda patch: patch, "REAL_ESRGAN": forbidden},
+        backend="HAT",
+        scale=1,
+        tiles=TileParameters(4, 1, True, False),
+    )
+    assert result.backend == "HAT"
+    assert result.fallback_reasons == ()
+
+
+def test_fallback_does_not_hide_output_collision(tmp_path):
+    path = tmp_path / "sr.npy"
+    path.write_bytes(b"preserve")
+    with pytest.raises(FileExistsError):
+        SuperResolutionEngine().reconstruct(np.zeros((2, 2, 3)), path, scale=2, tiles=TileParameters(4, 1, True, False))
+    assert path.read_bytes() == b"preserve"
