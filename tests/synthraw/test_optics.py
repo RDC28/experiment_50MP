@@ -141,3 +141,57 @@ def test_distortion_rejects_invalid_parameters_before_writing(kwargs):
     with pytest.raises(ValueError):
         LensSimulator().distort_radiance(source, OpticalDistortionParameters(**kwargs), out=out)
     np.testing.assert_array_equal(out, -10)
+
+
+def test_vignetting_analytic_attenuation_symmetry_and_colour():
+    from synthraw.optics import OpticalVignettingParameters
+
+    source = np.broadcast_to([-2.0, 4.0, 16.0], (9, 11, 3)).copy()
+    p = OpticalVignettingParameters(enabled=True, corner_loss_ev=2, power=2)
+    actual = LensSimulator().vignette_radiance(source, p, strip_rows=2)
+    y, x = np.mgrid[:9, :11]
+    radius2 = (((x - 5) / 5) ** 2 + ((y - 4) / 4) ** 2) / 2
+    np.testing.assert_allclose(actual, source * np.exp2(-2 * radius2**2)[:, :, None])
+    np.testing.assert_array_equal(actual[4, 5], source[4, 5])
+    np.testing.assert_array_equal(actual[0, 0], source[0, 0] / 4)
+    np.testing.assert_array_equal(actual, actual[::-1, ::-1])
+    assert np.all(np.diff(actual[4, 5:, 2]) <= 0)
+
+
+@pytest.mark.parametrize("shape", [(1, 1, 3), (1, 9, 3), (7, 1, 3), (12, 14, 3)])
+def test_vignetting_default_and_strip_memmap_equivalence(shape, tmp_path):
+    from synthraw.optics import OpticalVignettingParameters
+
+    source = np.random.default_rng(4).normal(size=shape).astype(np.float32)
+    simulator = LensSimulator()
+    identity = simulator.vignette_radiance(source)
+    np.testing.assert_array_equal(identity, source)
+    assert not np.shares_memory(identity, source)
+    p = OpticalVignettingParameters(enabled=True, corner_loss_ev=1.5, power=0.5)
+    expected = simulator.vignette_radiance(source, p, strip_rows=100)
+    out = np.memmap(tmp_path / "vignetting.bin", mode="w+", shape=shape, dtype=source.dtype)
+    assert simulator.vignette_radiance(source, p, strip_rows=1, out=out) is out
+    np.testing.assert_array_equal(out, expected)
+    np.testing.assert_array_equal(simulator.vignette_radiance(source, OpticalVignettingParameters(True, 0)), source)
+
+
+def test_vignetting_records_are_fabricated():
+    from synthraw.optics import OpticalVignettingParameters
+
+    records = LensSimulator().vignetting_records(OpticalVignettingParameters(enabled=True))
+    assert records["enabled"].value is True
+    assert records["corner_loss_ev"].value == 1
+    assert all(record.provenance == "F" for record in records.values())
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"enabled": 1}, {"corner_loss_ev": -1}, {"corner_loss_ev": float("inf")}, {"power": 0}, {"power": True}]
+)
+def test_vignetting_rejects_invalid_parameters_before_writing(kwargs):
+    from synthraw.optics import OpticalVignettingParameters
+
+    source = np.ones((5, 5, 3))
+    out = np.full_like(source, -10)
+    with pytest.raises(ValueError):
+        LensSimulator().vignette_radiance(source, OpticalVignettingParameters(**kwargs), out=out)
+    np.testing.assert_array_equal(out, -10)

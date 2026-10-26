@@ -80,6 +80,29 @@ class OpticalDistortionParameters:
                 raise ValueError("radial coefficients must avoid foldovers within the frame")
 
 
+@dataclass(frozen=True)
+class OpticalVignettingParameters:
+    """Synthetic radial falloff, specified as attenuation in stops at corners.
+
+    Transmission is 2**(-corner_loss_ev * (r² / 2)**power), with r measured
+    in half-frame coordinates. This is a hypothesis, not lens calibration.
+    """
+
+    enabled: bool = False
+    corner_loss_ev: float = 1.0
+    power: float = 1.0
+
+    def validate(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be boolean")
+        for name in ("corner_loss_ev", "power"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            if value < 0 or (name == "power" and value == 0):
+                raise ValueError(f"{name} is outside the physical domain")
+
+
 class LensSimulator:
     """Strip-friendly optical stages in PRD order, before CFA sampling."""
 
@@ -183,4 +206,45 @@ class LensSimulator:
         return {
             name: FieldRecord(name, value, Provenance.FABRICATED, "Synthetic Gaussian optical PSF approximation")
             for name, value in values.items()
+        }
+
+    def vignette_radiance(
+        self,
+        radiance: np.ndarray,
+        parameters: OpticalVignettingParameters | None = None,
+        *,
+        strip_rows: int = 128,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Attenuate radiance after distortion and before chromatic effects/CFA.
+
+        A scalar transmission preserves channel ratios, signed values and HDR
+        headroom. Coordinates and transmission occupy at most one strip.
+        Supply an output memmap to avoid a full-frame resident allocation.
+        """
+        parameters = parameters or OpticalVignettingParameters()
+        parameters.validate()
+        self._validate_radiance(radiance, strip_rows, out)
+        result = np.empty_like(radiance) if out is None else out
+        height, width = radiance.shape[:2]
+        cx, cy = (width - 1) / 2, (height - 1) / 2
+        x2 = ((np.arange(width) - cx) / max(cx, 1)) ** 2
+        for start in range(0, height, strip_rows):
+            stop = min(start + strip_rows, height)
+            if not parameters.enabled or parameters.corner_loss_ev == 0:
+                result[start:stop] = radiance[start:stop]
+                continue
+            y2 = ((np.arange(start, stop) - cy) / max(cy, 1)) ** 2
+            radius2 = (y2[:, None] + x2[None, :]) / 2
+            transmission = np.exp2(-parameters.corner_loss_ev * radius2**parameters.power)
+            result[start:stop] = radiance[start:stop] * transmission[:, :, None]
+        return result
+
+    def vignetting_records(self, parameters: OpticalVignettingParameters | None = None) -> dict[str, FieldRecord]:
+        """Record enabled attenuation and its fabricated radial hypothesis."""
+        parameters = parameters or OpticalVignettingParameters()
+        parameters.validate()
+        return {
+            name: FieldRecord(name, value, Provenance.FABRICATED, "Synthetic radial vignetting; not lens calibration")
+            for name, value in vars(parameters).items()
         }
