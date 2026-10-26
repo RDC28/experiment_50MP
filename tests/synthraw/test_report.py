@@ -64,7 +64,7 @@ def test_tiny_end_to_end_run_writes_a_self_contained_passed_report(reported):
     # The measured round-trip baseline is reported, not just a pass mark.
     ssim = next(c for c in run.checks if c.name == "roundtrip_supported_ssim").measured["ssim"]
     assert f"ssim={ssim:.4g}" in text
-    assert "<em>" not in text and "—" not in text
+    assert "<em>" not in text and "\u2014" not in text
 
 
 def test_failed_hard_gate_yields_a_failed_report(reported, tmp_path):

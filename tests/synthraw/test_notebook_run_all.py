@@ -17,7 +17,7 @@ import pytest
 import rawpy
 import tifffile
 from PIL import Image
-from test_pipeline import PRD_TREE
+from test_synthraw_pipeline import PRD_TREE
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SYNTHETIC_RAW_LAB_HEAVY_TESTS") != "1",

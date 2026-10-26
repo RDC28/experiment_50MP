@@ -29,7 +29,7 @@ def test_every_checklist_item_and_toggle_has_a_state():
     for name in items + toggles:
         assert name in rows, name
         assert rows[name].startswith(STATES), (name, rows[name])
-    assert "—" not in (ROOT / "docs/prd_v3_checklist.md").read_text(encoding="utf-8")
+    assert "\u2014" not in (ROOT / "docs/prd_v3_checklist.md").read_text(encoding="utf-8")
 
 
 def test_experimental_items_are_gated_stubs():
