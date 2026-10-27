@@ -8,6 +8,109 @@ Outputs are **synthetic camera-grade masters**: 16-bit TIFF and linear-light Ope
 a rendered source. They are never camera RAW captures, and every report keeps preserved, interpolated,
 inferred, simulated and encoded information apart.
 
+**Current target: [PRD_v3.md](PRD_v3.md)** ("Final PRD: Synthetic Sony-like 50 MP RAW Reconstruction Colab"),
+the target that follows cycle 1. It specifies one notebook, `synthetic_camera_raw_50mp_colab.ipynb`, that
+builds a synthetic DNG and a 50 MP 16-bit TIFF through an explicit radiance, camera and sensor chain.
+[PRD.md](PRD.md) remains the specification of the cycle 1 notebooks described below, which keep working unchanged.
+
+## Synthetic camera RAW notebook (PRD_v3)
+
+`notebooks/synthetic_camera_raw_50mp_colab.ipynb` is the PRD_v3 deliverable. It is backed by the `synthraw`
+package in `src/synthraw/` (installed as the top-level package `synthraw` next to `synthetic_raw_lab`), which
+uses the PRD class names, and by the tests in `tests/synthraw/`.
+
+**Running it in Colab**
+
+1. Open the notebook in Colab and pick a GPU runtime (Runtime > Change runtime type). The setup cell installs
+   the package from GitHub at `REPO_REF`. `REPO_REF` defaults to the development branch
+   `fm/exp50mp-v3-synthetic-raw`, which is deleted once it is merged. The cell tries `REPO_REF` first; if that
+   branch no longer exists it warns and installs `main`, and `INSTALLED_REF` records what was installed. A
+   release should pin `REPO_REF` to the full 40-character SHA of the merged commit on `main`: a pinned SHA is
+   installed exactly or the cell fails, it never falls back. Any other value (a tag, a short SHA, another branch)
+   is rejected.
+2. Set the configuration panel. Every control is an `ExperimentConfig` field. The ones you will usually
+   change are: `INPUT_MODE` (`UPLOAD`, `PATH` or `DRIVE`, with `INPUT_PATH`), `OUTPUT_GEOMETRY`
+   (`SONY_A1II_NATIVE` 8640 x 5760 or `CINEMA_50MP_VIRTUAL` about 50.1 MP at the source aspect ratio),
+   `SR_BACKEND`, `HDR_ENABLED`, the sensor noise and optics switches, and the scene, noise and body seeds.
+   `FAST_DEV_RUN` shrinks the planned sensor for a quick check. Learned SR weights are downloaded only inside
+   Colab. SwinIR and Real-ESRGAN are permissively licensed and pinned to a repository revision and a sha256
+   (`src/synthraw/model_manifest.py`), so they download without any acceptance flag. Licence-gated backends
+   and the experimental stubs stay disabled unless you set `ACCEPT_SR_MODEL_LICENCE = True` in the SR cell.
+   Backends without a pinned checkpoint fall back and record why. Both 2K and 4K sources run the pinned x4
+   checkpoint and then an exact resize, so they use the same backend. `SR_BACKEND = "LANCZOS"` needs no weights.
+3. Runtime > Run all. A tiny RAW gate runs first: 64 x 48 DNG fixtures must reopen through LibRaw before any
+   reconstruction starts. The chain then runs: input audit, target geometry, SR, HDR/scene-linear,
+   camera geometry and exposure posterior, inverse ISP, optics, electrons and noise, CFA, ADC, metadata, DNG,
+   LibRaw development, the TIFF/EXR masters, validation, the 2K/4K comparison and packaging. Each section
+   runs one stage of a `synthraw.pipeline.PipelineRun`, the same code `run_pipeline` uses.
+4. Everything goes into one `/content/synthraw_runs/run_YYYYMMDD_HHMMSS/` folder. The notebook ends by
+   building `<run>.zip` without the full-resolution `intermediates/` and `confidence/` arrays
+   (`BUNDLE_EXCLUDE_LARGE_ARRAYS = True`). It offers the zip as a browser download unless it is larger than
+   `BROWSER_DOWNLOAD_MAX_MB`. It copies the whole run folder, intermediates included, to Drive before writing
+   `run_report.json`, mounting Drive first (the usual Colab prompt) when it is not mounted yet. If the mount
+   is declined or fails, or the copy fails (for example a full Drive), the run still completes, and the cell
+   output, `run_report.json` and the zip warn that the full-resolution intermediates exist only on the Colab
+   runtime. After the zip is built, the final report, bundle manifest and log, and the zip itself, are copied
+   to Drive too; if that last copy fails the cell prints a warning.
+
+**Outputs** (under the run folder)
+
+| Folder | Contents |
+|---|---|
+| `raw/` | `synthetic_50mp.dng`: a CFA DNG with `Make = "Synthetic"` and a NoiseProfile matching the simulated ADC |
+| `masters/` | `developed_50mp_16bit.tif` (LibRaw development, Adobe RGB), `scene_linear_50mp.exr`, `preview_8bit.png` |
+| `metadata/` | `metadata.json` and `provenance.json` (every field tagged D/I/F/M with its dependencies), `dng_metadata.json`, `sony_arw_emulation.json`, `sony_tag_registry.json` |
+| `intermediates/`, `confidence/` | stage arrays `01_` to `11_`, source-supported and generated-area masks |
+| `validation/` | `validation_results.json`, `validation_report.html`, nine figures, `comparison_2k_vs_4k.html` and `.json`, `libraw_roundtrip.json`, `run_report.json` (`SUCCESS` or `FAILED`) |
+| `logs/` | environment, model manifest, checkpoints, bundle manifest |
+
+`validation_report.html` is self-contained. It answers the PRD's four questions, lists the hard gates and
+their results, shows measured values next to the configured targets (round-trip SSIM and median deltaE00,
+seams, the flat-field noise fit against the NoiseProfile, colour matrices, demosaic variants, -4..+4 EV and
+white balance renders, determinism and seeds), and reports the generated and source-supported area
+percentages. The hard gates include NoiseProfile agreement with the flat-field fit, the demosaic variants and
+the -4..+4 EV and white balance stress tests. If any hard gate fails, both the report and `run_report.json`
+say FAILED. QA targets that are missed (round trip, deltaE00, seams, the noise-fit R^2) are listed with the
+value measured, and thresholds are never adjusted to make a run pass.
+
+The 2K/4K section runs a second source through the same settings and seeds, so source resolution is the only
+thing that changes. It compares the locked settings (a hard gate), the difference map, edge and texture
+agreement on named crops, the exposure posterior, white balance, HDR masks and DNG statistics, and sets
+`ESTIMATOR_UNSTABLE` when an estimate moves beyond its tolerance. Set `COMPARISON_SECOND_INPUT` to the
+other-resolution export of the same composition. If you leave it empty, the notebook makes a half-resolution
+copy of the input and the report labels it as derived. The second run doubles compute. It is written to
+`<run>_comparison/` and is not bundled.
+
+**Exposure.** The leading ISO hypothesis of the exposure posterior sets the analogue gain, so the DNG ISO and
+the simulated noise agree: a higher ISO collects fewer photoelectrons for the same DN and is noisier. The
+exposure scale maps the top of the reconstructed HDR headroom (`2^HDR_HIGHLIGHT_EV`) to full well divided by
+that gain (the ADC ceiling), so the reconstructed highlights stay below `WhiteLevel` in the DNG and the TIFF
+instead of surviving only in the EXR.
+The DNG therefore develops darker by default; raise exposure in the RAW developer to bring the midtones up.
+
+**Scientific boundary.** The output is a synthetic sensor reconstruction of a hypothetical exposure. It is
+never a genuine camera capture. Every metadata field carries a provenance class: D (deterministic),
+I (inferred), F (fabricated, never given a confidence) or M (measured). The DNG `Make` is `Synthetic`, never
+`SONY`. No Sony MakerNote blocks or realistic Sony serials are written, and no capture date or GPS is
+inferred. The Sony ARW emulation is a JSON description only. The developed TIFF looks flatter and less
+saturated than the source. This is inherent, not a colour bug: the inverse ISP removes the source's display
+tone curve to recover scene-linear values, and a linear RAW development does not put it back. The
+round-trip metrics measure the difference after global alignment and tone normalisation, and also report it
+without them.
+
+**Verified so far.** Locally, on tiny fixtures only (no notebook execution, model inference or 50 MP
+arrays), the `tests/synthraw` suite and ruff pass. The suite covers every stage and a tiny end-to-end
+`run_pipeline` run on 96 x 40 and 48 x 20 PNGs for both geometries with the Lanczos backend. That run
+produces the PRD output tree, a DNG that LibRaw reopens bit-identically, `validation_report.html` with every
+hard gate passing, and `comparison_2k_vs_4k.html`. The notebook "Run all" test
+(`tests/synthraw/test_notebook_run_all.py`) runs by default: it executes every cell after the pip install on
+a 48 x 20 PNG with Colab mocked. **Still to verify in Colab:** a full-size 50 MP run, learned SR (SwinIR, HAT,
+Real-ESRGAN) with downloaded weights, GPU memory fallbacks, and the validation and comparison reports
+produced at full resolution.
+
+[docs/prd_v3_checklist.md](docs/prd_v3_checklist.md) maps every item of the PRD delivery checklist and every
+toggle row to its module, tests and state: tested locally, pending Colab, gated stub or not implemented.
+
 ## Status
 
 | PRD phase (section 30) | State |
@@ -51,6 +154,7 @@ notebooks/02_Night_Scenery_50MP.ipynb  Phase 3 Nighttime Scenery
 notebooks/03_Universal_50MP.ipynb  Phase 4 Universal Reconstruction
 notebooks/05_Synthetic_Sensor_Research.ipynb  Phase 5
 notebooks/06_Evaluation.ipynb  Phase 6 Evaluation and Optimisation
+notebooks/synthetic_camera_raw_50mp_colab.ipynb  PRD_v3 synthetic camera RAW notebook (see above)
 evidence/colab_runs/           report.md and manifest.json of the captain's Colab runs (no images), collected by notebook 06
 src/                           the shared package, imported as synthetic_raw_lab
   config.py                    parameters with defaults, accepted values, effects and warnings (PRD 6, 22.2)
@@ -97,7 +201,8 @@ src/                           the shared package, imported as synthetic_raw_lab
   run_collection.py            reads run folders and zips of notebooks 00 to 06, comparison tables, identical-crop sheets
   evaluation_report.py         Markdown reports of the ablation and reference-test runs
   final_report.py              the final experiment report: PRD 34 answers, PRD 33 outcome, best Colab configuration
-tests/                         pytest suite; notebook execution and real-network tests are opt-in
+src/synthraw/                  the PRD_v3 package, imported as synthraw (PRD_v3 class names)
+tests/                         pytest suite; cycle 1 notebook execution and real-network tests are opt-in
 inputs/{human,night,universal}/  read-only copies of ingested sources (not in Git)
 outputs/{human,night,universal}/  full-resolution masters per run (not in Git)
 weights/                       downloaded model weights (not in Git)

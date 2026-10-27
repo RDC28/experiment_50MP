@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<taginfo>
+  <table name="Sony::Main" g0="MakerNotes" g1="Sony">
+    <tag id="0xb000" name="FileFormat" type="int8u" count="4" writable="true">
+      <values><key id="5 0 0 0"><val lang="en">ARW 5.0</val></key></values>
+    </tag>
+    <tag id="0x0115" name="SerialNumber" type="string" writable="false"/>
+  </table>
+  <table name="SonyIDC::Main" g0="SonyIDC">
+    <tag id="1" name="Quality" type="int16u" writable="true"/>
+  </table>
+  <table name="Exif::Main" g0="EXIF">
+    <tag id="1" name="SonyRawFileType" type="int16u" writable="true"/>
+    <tag id="2" name="ExposureTime" type="rational64u" writable="true"/>
+  </table>
+  <table name="Sony::Other" g1="Sony">
+    <tag id="1" name="Quality" type="int32u"/>
+  </table>
+  <table name="ARW::Header"><tag id="0" name="Version" type="int8u" writable="false"/></table>
+</taginfo>
