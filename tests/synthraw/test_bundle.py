@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from synthraw.bundle import bundle_run, deliver_bundle, drive_run_folder
+from synthraw.bundle import bundle_run, copy_run_to_drive, deliver_bundle, drive_run_folder
 from synthraw.pipeline import open_execution_log
 from synthraw.run_layout import RunLayout
 
@@ -110,19 +110,22 @@ def test_large_zip_skips_browser_download_and_drive_keeps_the_full_run(run, tmp_
     google.colab = colab
     monkeypatch.setitem(sys.modules, "google", google)
     monkeypatch.setitem(sys.modules, "google.colab", colab)
-    bundle = bundle_run(run.root, exclude_large_arrays=True)
     drive = tmp_path / "drive"
     drive.mkdir()
+    assert copy_run_to_drive(run.root, drive) == (drive / run.root.name, None)
+    bundle = bundle_run(run.root, exclude_large_arrays=True)
     size = bundle.stat().st_size
-    status = deliver_bundle(bundle, drive_dir=drive, run_root=run.root, max_download_bytes=size - 1)
+    status = deliver_bundle(bundle, drive_dir=drive, max_download_bytes=size - 1)
     assert downloads == [] and status["download"].startswith("skipped")
     assert (drive / bundle.name).read_bytes() == bundle.read_bytes()
     with zipfile.ZipFile(bundle) as archive:
         bundled = set(archive.namelist())
     copied = {path.relative_to(drive / run.root.name) for path in (drive / run.root.name).rglob("*") if path.is_file()}
-    assert copied == {path.relative_to(run.root) for path in run.root.rglob("*") if path.is_file()}
+    assert copied == {path.relative_to(run.root) for path in run.root.rglob("*") if path.is_file()} - {
+        Path("logs/bundle_manifest.json")
+    }
     assert any(f"{run.root.name}/{name.as_posix()}" not in bundled for name in copied)
-    assert deliver_bundle(bundle, drive_dir=drive, run_root=run.root, max_download_bytes=size)["download"] == "offered"
+    assert deliver_bundle(bundle, drive_dir=drive, max_download_bytes=size)["download"] == "offered"
     assert downloads == [str(bundle)]
 
 
@@ -172,21 +175,26 @@ def test_declined_drive_mount_warns_and_never_raises(tmp_path, monkeypatch):
     assert drive_run_folder(tmp_path / "drive", mount=False) == (None, None)
 
 
-@pytest.mark.parametrize("failing", ["copy2", "copytree"])
-def test_failed_drive_copy_is_reported_not_raised(run, tmp_path, monkeypatch, failing):
+def _no_space(*args, **kwargs):
+    raise OSError(28, "No space left on device")
+
+
+def test_failed_drive_run_copy_returns_a_warning(run, tmp_path, monkeypatch):
+    monkeypatch.setattr("synthraw.bundle.shutil.copytree", _no_space)
+    folder, warning = copy_run_to_drive(run.root, tmp_path)
+    assert folder is None
+    assert "No space left on device" in warning and "exist only on this Colab runtime" in warning
+
+
+def test_failed_drive_zip_copy_is_reported_not_raised(run, tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "google.colab", None)
-
-    def quota(*args, **kwargs):
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(f"synthraw.bundle.shutil.{failing}", quota)
+    monkeypatch.setattr("synthraw.bundle.shutil.copy2", _no_space)
     bundle = bundle_run(run.root, exclude_large_arrays=True)
     drive = tmp_path / "drive"
     drive.mkdir()
-    status = deliver_bundle(bundle, drive_dir=drive, run_root=run.root)
-    assert "No space left on device" in status["drive_error"]
-    assert "exist only on this Colab runtime" in status["warning"]
-    assert "drive_run_copy" not in status
+    status = deliver_bundle(bundle, drive_dir=drive)
+    assert status["drive_copy"].startswith("failed: OSError")
+    assert "No space left on device" in status["warning"] and bundle.name in status["warning"]
 
 
 def test_execution_log_rebinding_closes_previous_run(tmp_path):

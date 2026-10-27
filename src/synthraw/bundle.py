@@ -81,19 +81,30 @@ def drive_run_folder(mount_path: str | Path, *, mount: bool) -> tuple[Path | Non
     return folder, None
 
 
+def copy_run_to_drive(run_root: str | Path, drive_dir: str | Path) -> tuple[Path | None, str | None]:
+    """Copy the whole run folder, full-resolution intermediates included, into ``drive_dir``.
+
+    Run it before the run report and the zip are written so a failure warning can go into both.
+    A failed copy (quota, I/O) returns a warning instead of raising.
+    """
+    run_root = Path(run_root)
+    try:
+        return Path(shutil.copytree(run_root, Path(drive_dir) / run_root.name, dirs_exist_ok=True)), None
+    except OSError as error:
+        return None, f"Copying the run folder to Google Drive failed ({type(error).__name__}: {error}); {RUNTIME_ONLY}"
+
+
 def deliver_bundle(
     bundle: str | Path,
     *,
     drive_dir: str | Path | None = None,
-    run_root: str | Path | None = None,
     max_download_bytes: int = MAX_BROWSER_DOWNLOAD_BYTES,
 ) -> dict[str, Any]:
-    """Offer the zip via google.colab.files and copy it, plus the full ``run_root`` tree, to mounted Drive.
+    """Offer the zip via google.colab.files and copy it to a mounted Drive folder.
 
-    A zip larger than ``max_download_bytes`` is not offered to the browser. The Drive copy of
-    ``run_root`` keeps every full-resolution intermediate a lightweight bundle omits. No delivery
-    channel is required: unavailable channels are reported, not raised. A failed Drive copy (quota,
-    I/O) sets ``status["warning"]``.
+    A zip larger than ``max_download_bytes`` is not offered to the browser. No delivery channel is
+    required: unavailable channels are reported, not raised. A failed Drive copy (quota, I/O) sets
+    ``status["warning"]``.
     """
     bundle = Path(bundle)
     size = bundle.stat().st_size
@@ -116,12 +127,12 @@ def deliver_bundle(
         if drive.is_dir():
             try:
                 status["drive_copy"] = str(shutil.copy2(bundle, drive / bundle.name))
-                if run_root is not None:
-                    run_root = Path(run_root)
-                    status["drive_run_copy"] = str(shutil.copytree(run_root, drive / run_root.name, dirs_exist_ok=True))
             except OSError as error:
-                status["drive_error"] = f"{type(error).__name__}: {error}"
-                status["warning"] = f"Copying to Google Drive failed ({status['drive_error']}); {RUNTIME_ONLY}"
+                status["drive_copy"] = f"failed: {type(error).__name__}: {error}"
+                status["warning"] = (
+                    f"Copying {bundle.name} to Google Drive failed ({type(error).__name__}: {error}); "
+                    "download the zip from this Colab runtime before it recycles"
+                )
         else:
             status["drive_copy"] = f"skipped: {drive} is not a mounted directory"
     return status

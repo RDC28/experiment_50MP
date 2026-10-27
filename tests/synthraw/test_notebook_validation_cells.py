@@ -6,6 +6,7 @@ run against genuine run state without executing Colab code or downloading anythi
 
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -125,6 +126,10 @@ def test_failed_drive_copy_warns_and_is_recorded_without_failing_the_run(cells, 
     assert run_report["status"] == "SUCCESS"
     (warning,) = run_report["warnings"]
     assert "quota exceeded" in warning and "exist only on this Colab runtime" in warning
-    assert namespace["delivery"]["drive_copy"] == str(
-        tmp_path / "drive" / "MyDrive" / "synthraw_runs" / namespace["bundle_path"].name
-    )
+    drive_zip = tmp_path / "drive" / "MyDrive" / "synthraw_runs" / namespace["bundle_path"].name
+    assert namespace["delivery"]["drive_copy"] == str(drive_zip)
+    # The delivered zip carries the same report, warning included.
+    for bundle in (namespace["bundle_path"], drive_zip):
+        with zipfile.ZipFile(bundle) as archive:
+            delivered = json.loads(archive.read(f"{namespace['run'].root.name}/validation/run_report.json"))
+        assert delivered == run_report

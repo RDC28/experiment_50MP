@@ -139,6 +139,7 @@ class PipelineRun:
         self.options = options
         self.fallbacks: list[str] = []
         self.checkpoints: list[dict[str, Any]] = []
+        self.outputs: dict[str, list[str]] = {}
         self.groups: dict[str, list[FieldRecord]] = {}
         self.logger = open_execution_log(layout, f"synthraw.pipeline.{layout.root.name}.{id(self)}")
 
@@ -213,11 +214,12 @@ class PipelineRun:
     def run_stage(self, name: str) -> None:
         """Run, checkpoint and free one ``STAGES`` entry in chain order; a failure stops the whole chain.
 
-        Each checkpoint records the files its stage created. Running a stage again (for example after
-        editing a notebook hypothesis) deletes those files for it and every later stage, and discards their
-        checkpoints and fallbacks, so the later stages must run again before a run report. A failed attempt
-        removes the files it created. Files this run did not create are never deleted, so stage writers
-        still refuse to overwrite them.
+        The files each stage creates are recorded. Running a stage again (for example after editing a
+        notebook hypothesis) moves its previous files aside and replaces them only when the stage succeeds;
+        a failed attempt removes what it wrote and restores them. Later stages are marked stale (their
+        checkpoints and fallbacks are dropped, so they must run again before a run report) but keep their
+        files until they are re-run. Files this run did not create are never moved, so stage writers still
+        refuse to overwrite them.
         """
         if name not in STAGES:
             raise ValueError(f"Unknown pipeline stage: {name}")
@@ -225,12 +227,15 @@ class PipelineRun:
         completed = [checkpoint["stage"] for checkpoint in self.checkpoints]
         if completed[:index] != list(STAGES[:index]):
             raise RuntimeError(f"Stage {name} needs {list(STAGES[:index])} completed first; completed {completed}")
-        for checkpoint in self.checkpoints[index:]:
-            for relative in checkpoint["outputs"]:
-                (self.run.root / relative).unlink(missing_ok=True)
         del self.checkpoints[index:]
         self.fallbacks = [message for checkpoint in self.checkpoints for message in checkpoint["fallbacks"]]
         recorded = len(self.fallbacks)
+        root = self.run.root
+        aside = root / f".rerun_{name}"
+        previous = [relative for relative in self.outputs.pop(name, []) if (root / relative).is_file()]
+        for relative in previous:
+            (aside / relative).parent.mkdir(parents=True, exist_ok=True)
+            (root / relative).replace(aside / relative)
         existing = self._files()
         self.log(f"stage {name}: start")
         started = time.perf_counter()
@@ -240,14 +245,16 @@ class PipelineRun:
             self.logger.error(f"stage {name}: FAILED: {type(error).__name__}: {error}")
             for path in self._files() - existing:
                 path.unlink(missing_ok=True)
+            for relative in previous:
+                (aside / relative).replace(root / relative)
+            self.outputs[name] = previous
             raise
         finally:
+            shutil.rmtree(aside, ignore_errors=True)
             release_memory()
         seconds = time.perf_counter() - started
-        outputs = sorted(str(path.relative_to(self.run.root)) for path in self._files() - existing)
-        self.checkpoints.append(
-            {"stage": name, "seconds": seconds, "fallbacks": self.fallbacks[recorded:], "outputs": outputs}
-        )
+        self.outputs[name] = sorted(str(path.relative_to(root)) for path in self._files() - existing)
+        self.checkpoints.append({"stage": name, "seconds": seconds, "fallbacks": self.fallbacks[recorded:]})
         _write_json(self.path("logs", "checkpoints.json"), {"completed": self.checkpoints})
         self.log(f"stage {name}: done in {seconds:.3f} s")
 
@@ -318,11 +325,6 @@ class PipelineRun:
             self.run.root,
             accept_licence=self.options["accept_licence"],
         )
-        canvas = self.sr_result.canvas
-        sr_mask = canvas.source_supported_mask.replace(
-            canvas.source_supported_mask.with_name("sr_source_supported_mask.npy")
-        )
-        self.sr_result = replace(self.sr_result, canvas=replace(canvas, source_supported_mask=sr_mask))
         tiled = self.sr_result.tiled
         self.fallbacks.extend(f"SR {reason}" for reason in tiled.fallback_reasons + tiled.retry_reasons)
         _write_json(self.path("metadata", "sr_reconstruction.json"), asdict(self.sr_result))
@@ -691,6 +693,8 @@ class PipelineRun:
     def libraw_reopen(self) -> None:
         from synthraw.libraw_validator import LibRawValidator
 
+        if not getattr(self, "staged_dng", None) or not self.staged_dng.is_file():
+            raise RuntimeError("LibRaw reopen needs a newly staged DNG: re-run the DNG export cell first")
         mosaic = np.load(self.path("raw", "sensor_mosaic_uint16.npy"), mmap_mode="r")
         try:
             LibRawValidator().validate(self.staged_dng, mosaic, self.dng_records, develop=True)

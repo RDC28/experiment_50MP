@@ -493,34 +493,74 @@ def test_rerunning_stages_after_editing_a_hypothesis_refreshes_the_run(source_pn
     assert check.passed, check.measured["violations"]
 
 
-@pytest.mark.parametrize("first", ["input_audit", "super_resolution", "hdr"])
-def test_rerunning_an_early_stage_replaces_its_outputs(source_png, tmp_path, first):
-    """Regression: input audit, SR and HDR wrote create-only files, so re-running their cells failed."""
+@pytest.mark.parametrize("name", STAGES)
+def test_rerunning_any_stage_keeps_every_published_output(source_png, tmp_path, name):
+    """Regression: reruns hit create-only writers, deleted published outputs first, or consumed the staged DNG."""
     from synthraw.pipeline import PipelineRun
-    from synthraw.validation_runner import ValidationRunner
+
+    config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="LANCZOS")
+    pipeline = PipelineRun.create(source_png, config, tmp_path / "runs", fast_dev_max_side=96, strip_rows=16)
+    root = pipeline.run.root
+
+    def published():
+        return {path.relative_to(root) for path in root.rglob("*") if path.is_file()}
+
+    try:
+        for stage in STAGES:
+            pipeline.run_stage(stage)
+        pipeline.write_report()
+        tree = published()
+        sr_mask = (root / "confidence/sr_source_supported_mask.npy").read_bytes()
+        first = name
+        if name == "libraw_reopen":
+            # Its staged DNG was published by the earlier run, so it asks for DNG export instead.
+            with pytest.raises(RuntimeError, match="re-run the DNG export cell"):
+                pipeline.run_stage(name)
+            assert published() == tree
+            first = "dng_export"
+        pipeline.run_stage(first)
+        # The rerun replaced its own outputs; later stages are stale but keep their files.
+        assert published() >= tree
+        if first != STAGES[-1]:
+            with pytest.raises(RuntimeError, match="every pipeline stage"):
+                pipeline.write_report()
+        for stage in STAGES[STAGES.index(first) + 1 :]:
+            pipeline.run_stage(stage)
+        report = pipeline.write_report()
+    finally:
+        pipeline.close()
+    assert report["stages"] == list(STAGES)
+    assert published() == tree
+    assert not list(root.glob(".rerun_*"))
+    assert (root / "confidence/sr_source_supported_mask.npy").read_bytes() == sr_mask
+    with rawpy.imread(str(root / "raw/synthetic_50mp.dng")) as raw:
+        assert np.array_equal(raw.raw_image, np.load(root / "raw/sensor_mosaic_uint16.npy"))
+
+
+def test_failed_rerun_restores_the_previous_outputs(source_png, tmp_path, monkeypatch):
+    from synthraw.pipeline import PipelineRun
 
     config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="LANCZOS")
     pipeline = PipelineRun.create(source_png, config, tmp_path / "runs", fast_dev_max_side=96, strip_rows=16)
     root = pipeline.run.root
     try:
-        for name in STAGES:
-            pipeline.run_stage(name)
-        tree = {path.relative_to(root) for path in root.rglob("*") if path.is_file()}
-        sr_mask = (root / "confidence/sr_source_supported_mask.npy").read_bytes()
-        for name in STAGES[STAGES.index(first) :]:
-            pipeline.run_stage(name)
-        report = pipeline.write_report()
+        for stage in STAGES:
+            pipeline.run_stage(stage)
+        before = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        pipeline.run_stage("dng_export")
+
+        def reject(self, path, mosaic, records, *, develop=False):
+            raise HardValidationError("LibRaw cannot reopen file")
+
+        monkeypatch.setattr(LibRawValidator, "validate", reject)
+        with pytest.raises(HardValidationError):
+            pipeline.run_stage("libraw_reopen")
     finally:
         pipeline.close()
-    assert report["stages"] == list(STAGES)
-    assert {path.relative_to(root) for path in root.rglob("*") if path.is_file()} == tree | {
-        Path("validation/run_report.json")
-    }
-    # SR owns its support mask; HDR writes its own source_supported_mask beside it.
-    assert (root / "confidence/sr_source_supported_mask.npy").read_bytes() == sr_mask
-    sr_report = json.loads((root / "metadata/sr_reconstruction.json").read_text())
-    assert sr_report["canvas"]["source_supported_mask"].endswith("sr_source_supported_mask.npy")
-    assert ValidationRunner().run(root).status == "PASSED"
+    after = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    for relative in ("raw/synthetic_50mp.dng", "validation/libraw_roundtrip.json", "masters/developed_50mp_16bit.tif"):
+        assert after[Path(relative)] == before[Path(relative)]
+    assert not list(root.glob(".rerun_*")) and not list((root / "raw").glob(".dng_export*"))
 
 
 def test_stage_refuses_to_overwrite_files_it_did_not_create(source_png, tmp_path):

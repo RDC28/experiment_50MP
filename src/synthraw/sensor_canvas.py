@@ -45,7 +45,7 @@ def place_sensor_canvas(
     paths = (
         directory / "intermediates/02_sr_rgb.npy",
         directory / "confidence/generated_detail_mask.npy",
-        directory / "confidence/source_supported_mask.npy",
+        directory / "confidence/sr_source_supported_mask.npy",
     )
     if any(path.exists() for path in paths):
         raise FileExistsError("canvas products must be new")
