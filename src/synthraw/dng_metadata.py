@@ -22,6 +22,8 @@ _EXPOSURE_TYPES = {
 }
 # Exposure-posterior fields accepted by DNGMetadataBuilder.build(exposure=...).
 EXPOSURE_FIELDS = frozenset(_EXPOSURE_TYPES)
+# TIFF Compression codes for ExperimentConfig.DNG_COMPRESSION; 7 is lossless JPEG (ITU T.81 SOF3).
+COMPRESSION_CODES = {"UNCOMPRESSED": 1, "LOSSLESS": 7}
 
 _LENS_TYPES = {
     "LensInfo": "RATIONAL[4]",
@@ -109,7 +111,7 @@ class DNGMetadataBuilder:
             ("BitsPerSample", 16, "SHORT"),
             ("SamplesPerPixel", 1, "SHORT"),
             ("PhotometricInterpretation", 32803, "SHORT"),
-            ("Compression", 1, "SHORT"),
+            ("Compression", COMPRESSION_CODES[config.DNG_COMPRESSION], "SHORT"),
             ("CFARepeatPatternDim", (2, 2), "SHORT[2]"),
             ("CFAPlaneColor", (0, 1, 2), "BYTE[3]"),
             ("CFALayout", 1, "SHORT"),
@@ -199,11 +201,15 @@ class DNGMetadataBuilder:
 
         if value("Make") != "Synthetic" or value("ImageDescription") != DISCLOSURE:
             raise ValueError("Synthetic identity and disclosure are mandatory")
+        if not config.GENERATE_SYNTHETIC_EXIF:
+            for name in sorted(records.keys() & (_EXPOSURE_TYPES.keys() | _LENS_TYPES.keys())):
+                if not records[name].user_override:
+                    raise ValueError(f"{name} is synthetic capture EXIF, but GENERATE_SYNTHETIC_EXIF is False")
         for name, expected in (
             ("BitsPerSample", 16),
             ("SamplesPerPixel", 1),
             ("PhotometricInterpretation", 32803),
-            ("Compression", 1),
+            ("Compression", COMPRESSION_CODES[config.DNG_COMPRESSION]),
             ("NoiseReductionApplied", 0),
         ):
             if type(value(name)) is not int or value(name) != expected:

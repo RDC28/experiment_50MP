@@ -8,7 +8,7 @@ import pytest
 
 from synthraw.config import ExperimentConfig
 from synthraw.provenance import FieldRecord, Provenance
-from synthraw.sony_emulation import SonyARWEmulationBuilder, capture_inputs
+from synthraw.sony_emulation import CAPTURE_FIELDS, SonyARWEmulationBuilder, capture_inputs
 from synthraw.sony_registry import SonyMetadataRegistry
 
 
@@ -98,6 +98,7 @@ def test_capture_inputs_populate_exposure_shutter_and_wb_from_run_records(regist
         "WhiteBalance": ("Color Temperature/Color Filter" if manual else "Auto", estimated),
         "ColorTemperature": (round(wb.records["CCT"].value), estimated),
     }
+    assert inputs.keys() == expected.keys() == CAPTURE_FIELDS
     for name, (value, provenance) in expected.items():
         entry = values[name]
         assert entry["implementation_state"] == "EMULATED" and entry["unsupported_reason"] is None, name
@@ -197,3 +198,23 @@ def test_lens_pipeline_records_drive_sidecar(registry, tmp_path, enabled):
                 )
     finally:
         output._mmap.close()
+
+
+def test_without_synthetic_exif_capture_fields_stay_unknown_unless_user_supplied(registry):
+    config = ExperimentConfig(GENERATE_SYNTHETIC_EXIF=False)
+    inferred = {"SonyISO": FieldRecord("SonyISO", 100, Provenance.INFERRED, "exposure posterior")}
+    with pytest.raises(ValueError, match="GENERATE_SYNTHETIC_EXIF"):
+        SonyARWEmulationBuilder().build(registry, config, width=64, height=48, inputs=inferred)
+    user = {"SonyISO": FieldRecord("SonyISO", 400, Provenance.FABRICATED, "manual exposure", user_override=True)}
+    values = fields(SonyARWEmulationBuilder().build(registry, config, width=64, height=48, inputs=user))
+    assert values["SonyISO"]["generated_value"] == 400 and values["SonyISO"]["implementation_state"] == "EMULATED"
+    assert values["SonyFNumber"]["generated_value"] is None
+    switch_reason = "GENERATE_SYNTHETIC_EXIF is False: no inferred or fabricated capture value is written"
+    for name in CAPTURE_FIELDS - {"SonyISO"}:
+        assert values[name]["generated_value"] is None and values[name]["unsupported_reason"] == switch_reason, name
+    # Fields the switch does not suppress keep the reason they have with the switch on.
+    enabled = fields(SonyARWEmulationBuilder().build(registry, ExperimentConfig(), width=64, height=48))
+    for name in ("FocusMode", "Quality", "ReleaseMode", "SonyRawFileType", "CreativeStyle"):
+        assert values[name]["unsupported_reason"] == enabled[name]["unsupported_reason"] != switch_reason, name
+    # Simulation facts are not capture EXIF and stay populated.
+    assert values["SonyRawImageSize"]["generated_value"] == [64, 48]

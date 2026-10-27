@@ -27,21 +27,29 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
    branch no longer exists it warns and installs `main`, and `INSTALLED_REF` records what was installed. A
    release should pin `REPO_REF` to the full 40-character SHA of the merged commit on `main`: a pinned SHA is
    installed exactly or the cell fails, it never falls back. Any other value (a tag, a short SHA, another branch)
-   is rejected.
+   is rejected. On Colab the same cell installs a pinned current ExifTool release (`EXIFTOOL_VERSION` in
+   `src/synthraw/sony_registry.py`) from the exiftool.org download link. The archive must match its pinned
+   sha256 before it is unpacked, and ExifTool runs with the system Perl, so `sony_tag_registry.json` is built
+   from that release's Sony catalogue and records the ExifTool version. If the download or the verification
+   fails, ExifTool counts as absent: the run continues with the bundled seed (`seed_only: true`, with the reason
+   in `fallback_reason`) and lists that fallback in `run_report.json`. An installed ExifTool whose catalogue
+   query fails (an error, a timeout, bad XML or no Sony fields) stops the run instead.
 2. Set the configuration panel. Every control is an `ExperimentConfig` field. The ones you will usually
    change are: `INPUT_MODE` (`UPLOAD`, `PATH` or `DRIVE`, with `INPUT_PATH`), `OUTPUT_GEOMETRY`
    (`SONY_A1II_NATIVE` 8640 x 5760 or `CINEMA_50MP_VIRTUAL` about 50.1 MP at the source aspect ratio),
    `SR_BACKEND`, `HDR_ENABLED`, the sensor noise and optics switches, and the scene, noise and body seeds.
+   `DNG_COMPRESSION`, `N_SENSOR_REALISATIONS` and `GENERATE_SYNTHETIC_EXIF` are described below the outputs.
    `FAST_DEV_RUN` shrinks the planned sensor for a quick check. Learned SR weights are downloaded only inside
    Colab. SwinIR and Real-ESRGAN are permissively licensed and pinned to a repository revision and a sha256
    (`src/synthraw/model_manifest.py`), so they download without any acceptance flag. Licence-gated backends
    and the experimental stubs stay disabled unless you set `ACCEPT_SR_MODEL_LICENCE = True` in the SR cell.
    Backends without a pinned checkpoint fall back and record why. Both 2K and 4K sources run the pinned x4
    checkpoint and then an exact resize, so they use the same backend. `SR_BACKEND = "LANCZOS"` needs no weights.
-3. Runtime > Run all. A tiny RAW gate runs first: 64 x 48 DNG fixtures must reopen through LibRaw before any
-   reconstruction starts. The chain then runs: input audit, target geometry, SR, HDR/scene-linear,
-   camera geometry and exposure posterior, inverse ISP, optics, electrons and noise, CFA, ADC, metadata, DNG,
-   LibRaw development, the TIFF/EXR masters, validation, the 2K/4K comparison and packaging. Each section
+3. Runtime > Run all. A tiny RAW gate runs first: 64 x 48 DNG fixtures, uncompressed and lossless, must reopen
+   through LibRaw before any reconstruction starts. The chain then runs: input audit, target geometry, SR,
+   HDR/scene-linear, camera geometry and exposure posterior, inverse ISP, optics, electrons and noise, CFA, ADC,
+   metadata, DNG, LibRaw development, any further sensor noise realisations, the TIFF/EXR masters, validation,
+   the 2K/4K comparison and packaging. Each section
    runs one stage of a `synthraw.pipeline.PipelineRun`, the same code `run_pipeline` uses.
 4. Everything goes into one `/content/synthraw_runs/run_YYYYMMDD_HHMMSS/` folder. The notebook ends by
    building `<run>.zip` without the full-resolution `intermediates/` and `confidence/` arrays
@@ -57,11 +65,11 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
 
 | Folder | Contents |
 |---|---|
-| `raw/` | `synthetic_50mp.dng`: a CFA DNG with `Make = "Synthetic"` and a NoiseProfile matching the simulated ADC |
+| `raw/` | `synthetic_50mp.dng`: a CFA DNG with `Make = "Synthetic"` and a NoiseProfile matching the simulated ADC; `synthetic_50mp_realisation_NNN.dng` for each further noise realisation |
 | `masters/` | `developed_50mp_16bit.tif` (LibRaw development, Adobe RGB), `scene_linear_50mp.exr`, `preview_8bit.png` |
 | `metadata/` | `metadata.json` and `provenance.json` (every field tagged D/I/F/M with its dependencies), `dng_metadata.json`, `sony_arw_emulation.json`, `sony_tag_registry.json` |
 | `intermediates/`, `confidence/` | stage arrays `01_` to `11_`, source-supported and generated-area masks |
-| `validation/` | `validation_results.json`, `validation_report.html`, nine figures, `comparison_2k_vs_4k.html` and `.json`, `libraw_roundtrip.json`, `run_report.json` (`SUCCESS` or `FAILED`) |
+| `validation/` | `validation_results.json`, `validation_report.html`, nine figures, `comparison_2k_vs_4k.html` and `.json`, `libraw_roundtrip.json`, `sensor_realisations.json`, `run_report.json` (`SUCCESS` or `FAILED`) |
 | `logs/` | environment, model manifest, checkpoints, bundle manifest |
 
 `validation_report.html` is self-contained. It answers the PRD's four questions, lists the hard gates and
@@ -80,6 +88,29 @@ agreement on named crops, the exposure posterior, white balance, HDR masks and D
 other-resolution export of the same composition. If you leave it empty, the notebook makes a half-resolution
 copy of the input and the report labels it as derived. The second run doubles compute. It is written to
 `<run>_comparison/` and is not bundled.
+
+**DNG compression.** `DNG_COMPRESSION = "UNCOMPRESSED"` (the default, easiest to inspect) writes row
+strips. `"LOSSLESS"` writes lossless JPEG tiles (DNG `Compression = 7`, at most 256 x 256 photosites each,
+needing `imagecodecs`). Either file passes the same gates: the writer decodes every strip or tile again, and
+LibRaw must reopen the DNG with pixels identical to `raw/sensor_mosaic_uint16.npy`. `libraw_roundtrip.json`
+records the mode and the file size next to the mosaic size. This is DNG compression only; Sony's own
+compressed ARW bitstream is not recreated.
+
+**Sensor noise realisations.** `N_SENSOR_REALISATIONS = N` simulates N independent shot and read noise
+draws of the same exposure and sensor body. Realisation 1 is `synthetic_50mp.dng` with `SENSOR_NOISE_SEED`.
+Realisations 2 to N rerun the noise, CFA and ADC stages with seeds derived from `SENSOR_NOISE_SEED`, and each
+is written as its own LibRaw-validated DNG with the same metadata. The seeds are recorded in
+`sensor_realisations.json` (with each file's sha256 and its mean and RMS difference from realisation 1), in
+`run_report.json` and in the sensor profile. Setting `SENSOR_NOISE_SEED` to a recorded seed reproduces that
+realisation. The validation report's `sensor_realisations` hard gate reopens every file and checks its hash
+and seed. Each realisation of a 50 MP run needs the time and disk space of the sensor stages again.
+
+**Synthetic EXIF.** `GENERATE_SYNTHETIC_EXIF = False` keeps inferred and fabricated capture settings
+(exposure time, f-number, ISO, exposure bias and the Sony exposure and white balance fields) out of the DNG
+and `sony_arw_emulation.json`. Those sidecar fields stay empty with the reason recorded. The exposure and
+white balance hypotheses still drive the simulation and stay in `metadata.json`, and values you enter
+explicitly (`MANUAL` exposure, a manual white balance) are still written. `FABRICATE_UNOBSERVABLE_EXIF`
+requires `GENERATE_SYNTHETIC_EXIF`.
 
 **Exposure.** The leading ISO hypothesis of the exposure posterior sets the analogue gain, so the DNG ISO and
 the simulated noise agree: a higher ISO collects fewer photoelectrons for the same DN and is noisier. The
@@ -102,10 +133,12 @@ without them.
 arrays), the `tests/synthraw` suite and ruff pass. The suite covers every stage and a tiny end-to-end
 `run_pipeline` run on 96 x 40 and 48 x 20 PNGs for both geometries with the Lanczos backend. That run
 produces the PRD output tree, a DNG that LibRaw reopens bit-identically, `validation_report.html` with every
-hard gate passing, and `comparison_2k_vs_4k.html`. The notebook "Run all" test
+hard gate passing, and `comparison_2k_vs_4k.html`. Tiny runs also cover the lossless DNG (identical LibRaw
+pixels and developed TIFF), three noise realisations and `GENERATE_SYNTHETIC_EXIF = False`. The notebook "Run all" test
 (`tests/synthraw/test_notebook_run_all.py`) runs by default: it executes every cell after the pip install on
 a 48 x 20 PNG with Colab mocked. **Still to verify in Colab:** a full-size 50 MP run, learned SR (SwinIR, HAT,
-Real-ESRGAN) with downloaded weights, GPU memory fallbacks, and the validation and comparison reports
+Real-ESRGAN) with downloaded weights, GPU memory fallbacks, the pinned ExifTool download and dynamic Sony registry
+on a stock Colab runtime (tested locally with the download mocked), and the validation and comparison reports
 produced at full resolution.
 
 [docs/prd_v3_checklist.md](docs/prd_v3_checklist.md) maps every item of the PRD delivery checklist and every

@@ -2,7 +2,7 @@
 
 This page maps every item of the PRD_v3 "final Claude Code delivery checklist" and every row of the toggle
 acceptance table to its implementation and tests. Each claim was checked against the code on
-`fm/exp50mp-v3-synthetic-raw`. Modules are in `src/synthraw/`, tests in `tests/synthraw/`.
+`fm/exp50mp-v3-followups`. Modules are in `src/synthraw/`, tests in `tests/synthraw/`.
 
 States:
 
@@ -49,12 +49,12 @@ development laptop.
 | Real CFA mosaic | Tested locally | `cfa.CFAMosaicer` (RGGB), `validation.CFAValidator` | `test_cfa.py`, `test_validation.py` |
 | 14-bit Sony-like ADC | Tested locally | `adc.ADCSimulator`, `validation.ADCContractValidator` | `test_adc.py`, `test_validation.py` |
 | Experimental 16-bit ADC | Tested locally | `ADC_BITS=16` or `EXPERIMENTAL_16BIT_SENSOR` → `VIRTUAL_16BIT_SENSOR` profile (`config`, `camera_profile`) | `test_synthraw_config.py`, `test_camera_profile.py`, `test_adc.py` |
-| DNG stored compatibly as `uint16` | Tested locally | `dng_writer.DNGWriter` (16-bit storage, uncompressed) | `test_dng_writer.py`, `test_raw_gate.py` |
+| DNG stored compatibly as `uint16` | Tested locally | `dng_writer.DNGWriter` (16-bit storage; uncompressed strips by default, or lossless JPEG tiles with `DNG_COMPRESSION = "LOSSLESS"`) | `test_dng_writer.py`, `test_raw_gate.py`, `test_synthraw_pipeline.py` |
 | Standards-based DNG metadata | Tested locally | `dng_metadata.DNGMetadataBuilder` (`Make = "Synthetic"`, NoiseProfile, matrices) | `test_dng_metadata.py` |
-| Dynamic ExifTool Sony metadata registry | Tested locally (parser); pending Colab | `sony_registry.SonyMetadataRegistry` parses `exiftool -listx` when ExifTool is installed. The notebook does not install ExifTool, so a stock Colab runtime records the bundled seed with `seed_only: true` | `test_sony_registry.py` |
+| Dynamic ExifTool Sony metadata registry | Tested locally (parser, fail-loud catalogue errors, pinned install with the download mocked); the real download pending Colab | The notebook setup cell calls `sony_registry.install_exiftool` on Colab: it downloads the pinned ExifTool release (`EXIFTOOL_VERSION`), verifies `EXIFTOOL_SHA256` before unpacking and runs it with the system Perl. `sony_registry.SonyMetadataRegistry` parses `exiftool -listx` and records the ExifTool version. Only an absent ExifTool, including a failed download or hash check, returns the bundled seed with `seed_only: true` and the reason in `fallback_reason`, and the run lists the fallback. An installed ExifTool that fails (`-ver` or `-listx` error, timeout, bad XML, no Sony fields) raises | `test_sony_registry.py`, `test_notebook_structure.py`, `test_synthraw_pipeline.py` |
 | `sony_arw_emulation.json` | Tested locally | `sony_emulation.SonyARWEmulationBuilder`; `capture_inputs` fills the exposure, shutter and WB families from the run's records | `test_sony_emulation.py`, `test_synthraw_pipeline.py` |
 | No fake proprietary ARW requirement | Tested locally | ARW emulation is JSON only; no MakerNote blocks, no realistic Sony serials | `test_sony_emulation.py`, `test_dng_metadata.py` |
-| Independent LibRaw reopen | Tested locally | `libraw_validator.LibRawValidator` (hard gate), `validation.libraw_reopen_check` | `test_raw_gate.py`, `test_synthraw_pipeline.py`, `test_validation_runner.py` |
+| Independent LibRaw reopen | Tested locally | `libraw_validator.LibRawValidator` (hard gate, both DNG compressions and every noise realisation), `validation.libraw_reopen_check`, `validation.sensor_realisations_check` | `test_raw_gate.py`, `test_dng_writer.py`, `test_synthraw_pipeline.py`, `test_validation_runner.py` |
 | Multiple demosaic tests | Tested locally | `validation.DemosaicValidator` (LibRaw demosaic variants; AHD and the additional algorithms are hard gates) | `test_validation.py` |
 | ±4 EV stress test | Tested locally | `validation.EditabilityValidator` (-4..+4 EV, hard gate) | `test_validation.py` |
 | WB stress test | Tested locally | `validation.EditabilityValidator` (cool, neutral, warm via LibRaw `user_wb`, hard gate) | `test_validation.py` |
@@ -97,12 +97,12 @@ gated stubs in `synthraw.experimental`, each tested in `test_experimental.py`. N
 download or load a model. Pinning one needs a repository revision, a sha256 and a licence review in
 `model_manifest.py`.
 
-## Other configuration gaps
+## Other configuration fields
 
-These `ExperimentConfig` fields are not in the checklist or the toggle table, but are accepted without effect:
+These `ExperimentConfig` fields are not in the checklist or the toggle table:
 
-| Field | State |
-|---|---|
-| `DNG_COMPRESSION` | Not implemented: the PRD's optional validated lossless DNG mode is not written. Only `UNCOMPRESSED` is offered, so `LOSSLESS` is rejected (`test_synthraw_config.py`) |
-| `N_SENSOR_REALISATIONS` | Not implemented: validated as positive, but a run always simulates one realisation |
-| `GENERATE_SYNTHETIC_EXIF` | Not implemented as a switch: synthetic EXIF is always generated, as the default `True` describes |
+| Field | State | Implementation | Tests |
+|---|---|---|---|
+| `DNG_COMPRESSION` | Tested locally | PRD optional validated lossless mode. `LOSSLESS` writes lossless JPEG tiles (`Compression = 7`, at most 256 x 256, never wider or taller than the image, which LibRaw needs). `DNGWriter` decodes every tile again, and the LibRaw gate requires pixels identical to the uncompressed mosaic. `UNCOMPRESSED` stays the default. The RAW gate cell tests both | `test_dng_writer.py`, `test_synthraw_pipeline.py`, `test_notebook_structure.py`, `test_synthraw_config.py` |
+| `N_SENSOR_REALISATIONS` | Tested locally | `sensor_realisations` pipeline stage: realisation 1 is the primary DNG with `SENSOR_NOISE_SEED`; realisations 2..N rerun noise, CFA and ADC with seeds from `sensor.realisation_noise_seeds`, each a LibRaw-validated DNG in `raw/`. Seeds go to `validation/sensor_realisations.json`, `run_report.json` and the sensor profile; `validation.sensor_realisations_check` is a hard gate | `test_sensor.py`, `test_synthraw_pipeline.py`, `test_validation_runner.py` |
+| `GENERATE_SYNTHETIC_EXIF` | Tested locally | `False` keeps inferred and fabricated capture EXIF out of the DNG (`DNGMetadataBuilder` rejects it) and the Sony sidecar (fields stay empty with the reason). User-supplied values are still written; `FABRICATE_UNOBSERVABLE_EXIF` requires it | `test_dng_metadata.py`, `test_sony_emulation.py`, `test_synthraw_pipeline.py`, `test_synthraw_config.py` |

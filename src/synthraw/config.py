@@ -50,8 +50,10 @@ class ExperimentConfig:
     DIFFRACTION: bool = False
     DEFOCUS: bool = False
     DNG_STORAGE_BITS: int = 16
-    # The PRD's optional lossless DNG mode is not implemented, so it is not offered.
-    DNG_COMPRESSION: Literal["UNCOMPRESSED"] = "UNCOMPRESSED"
+    # LOSSLESS writes lossless JPEG (Compression 7) tiles; UNCOMPRESSED stays the inspectable default.
+    DNG_COMPRESSION: Literal["UNCOMPRESSED", "LOSSLESS"] = "UNCOMPRESSED"
+    # False keeps inferred and fabricated capture EXIF (exposure, lens, WB settings) out of the DNG and the
+    # Sony sidecar; the simulation still uses the hypotheses, and explicit user values are still written.
     GENERATE_SYNTHETIC_EXIF: bool = True
     FABRICATE_UNOBSERVABLE_EXIF: bool = False
     WRITE_DNG: bool = True
@@ -98,6 +100,8 @@ class ExperimentConfig:
             raise ValueError("DNG_STORAGE_BITS must be 16")
         if self.N_SENSOR_REALISATIONS < 1:
             raise ValueError("N_SENSOR_REALISATIONS must be positive")
+        if self.FABRICATE_UNOBSERVABLE_EXIF and not self.GENERATE_SYNTHETIC_EXIF:
+            raise ValueError("FABRICATE_UNOBSERVABLE_EXIF requires GENERATE_SYNTHETIC_EXIF")
         if self.INPUT_PATH is not None and (not isinstance(self.INPUT_PATH, str) or not self.INPUT_PATH.strip()):
             raise ValueError("INPUT_PATH must be a nonempty string or None")
         if self.INPUT_MODE in ("PATH", "DRIVE") and self.INPUT_PATH is None:

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from synthraw.config import ExperimentConfig
-from synthraw.sensor import ElectronSignalSimulator, SensorNoiseSimulator
+from synthraw.sensor import ElectronSignalSimulator, SensorNoiseSimulator, realisation_noise_seeds
 
 
 @pytest.mark.parametrize("rows", [1, 3, 32])
@@ -164,3 +164,22 @@ def test_noise_invalid_input_is_atomic():
     with pytest.raises(ValueError):
         SensorNoiseSimulator().simulate(expected, ExperimentConfig(), read_noise_e=2, out=out, strip_rows=1)
     np.testing.assert_array_equal(out, -99)
+
+
+def test_realisation_seeds_keep_the_base_seed_first_and_are_independent_and_reproducible():
+    seeds = realisation_noise_seeds(42001, 5)
+    assert seeds[0] == 42001 and len(set(seeds)) == 5
+    assert seeds == realisation_noise_seeds(42001, 5)
+    assert realisation_noise_seeds(42001, 3) == seeds[:3]
+    assert all(type(seed) is int and 0 <= seed < 2**63 for seed in seeds)
+    # Neighbouring base seeds share no later realisation.
+    assert not set(seeds[1:]) & set(realisation_noise_seeds(42002, 5))
+    # A recorded seed is a valid SENSOR_NOISE_SEED, so that realisation can be rerun on its own.
+    assert ExperimentConfig(SENSOR_NOISE_SEED=seeds[4]).SENSOR_NOISE_SEED == seeds[4]
+    assert realisation_noise_seeds(7, 1) == (7,)
+
+
+@pytest.mark.parametrize(("seed", "count"), [(-1, 2), (True, 2), (1.5, 2), (1, 0), (1, True)])
+def test_realisation_seeds_reject_invalid_arguments(seed, count):
+    with pytest.raises(ValueError):
+        realisation_noise_seeds(seed, count)

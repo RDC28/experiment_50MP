@@ -98,7 +98,16 @@ def test_all_documented_choices_construct():
                 )
 
 
-def test_unimplemented_lossless_dng_compression_is_not_offered():
-    assert get_args(get_type_hints(ExperimentConfig)["DNG_COMPRESSION"]) == ("UNCOMPRESSED",)
+def test_dng_compression_offers_uncompressed_default_and_lossless():
+    assert get_args(get_type_hints(ExperimentConfig)["DNG_COMPRESSION"]) == ("UNCOMPRESSED", "LOSSLESS")
+    assert ExperimentConfig().DNG_COMPRESSION == "UNCOMPRESSED"
+    assert ExperimentConfig(DNG_COMPRESSION="LOSSLESS").DNG_COMPRESSION == "LOSSLESS"
     with pytest.raises(ValueError, match="DNG_COMPRESSION"):
-        ExperimentConfig(DNG_COMPRESSION="LOSSLESS")
+        ExperimentConfig(DNG_COMPRESSION="LOSSY")
+
+
+def test_unobservable_exif_fabrication_requires_synthetic_exif():
+    ExperimentConfig(GENERATE_SYNTHETIC_EXIF=False)
+    ExperimentConfig(FABRICATE_UNOBSERVABLE_EXIF=True)
+    with pytest.raises(ValueError, match="GENERATE_SYNTHETIC_EXIF"):
+        ExperimentConfig(GENERATE_SYNTHETIC_EXIF=False, FABRICATE_UNOBSERVABLE_EXIF=True)

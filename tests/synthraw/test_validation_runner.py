@@ -40,6 +40,7 @@ EXPECTED_ROWS = {
     "determinism",
     "noise_seed_structure",
     "body_seed_signature",
+    "sensor_realisations",
     "rawtherapee_neutral_render",
 }
 
@@ -196,3 +197,51 @@ def test_reference_run_determinism_and_missing_tiff(run_root, tmp_path):
     np.save(mosaic, np.load(mosaic) + 1)
     rows = {check.name: check for check in ValidationRunner().run(root, reference_run=run_root).checks}
     assert rows["pipeline_determinism"].passed is False
+
+
+@pytest.fixture(scope="module")
+def realisations_root(tmp_path_factory):
+    """Lossless DNGs with three noise realisations, validated as one run."""
+    tmp_path = tmp_path_factory.mktemp("realisations_run")
+    rows, cols = np.mgrid[0:20, 0:48]
+    pixels = np.stack([255 * cols / 47, 255 * rows / 19, 128 + 100 * np.sin(cols / 6)], axis=-1)
+    source = tmp_path / "source.png"
+    Image.fromarray(np.clip(np.round(pixels), 0, 255).astype(np.uint8)).save(source)
+    config = ExperimentConfig(
+        FAST_DEV_RUN=True, SR_BACKEND="LANCZOS", N_SENSOR_REALISATIONS=3, DNG_COMPRESSION="LOSSLESS"
+    )
+    return run_pipeline(
+        source, config, tmp_path / "runs", timestamp=datetime(2026, 1, 2, 3, 4, 5), fast_dev_max_side=96
+    ).root
+
+
+def test_lossless_multi_realisation_run_passes_every_hard_gate(realisations_root, tmp_path):
+    root = _copy(realisations_root, tmp_path)
+    run = ValidationRunner().run(root)
+    assert [check.name for check in run.checks if check.passed is False] == [] and run.status == "PASSED"
+    row = next(check for check in run.checks if check.name == "sensor_realisations")
+    assert row.hard and row.measured["count"] == 3 and len(set(row.measured["seeds"])) == 3
+    differences = row.measured["differences"]
+    assert [entry["index"] for entry in differences] == [1, 2, 3]
+    assert differences[0]["rms_difference_from_primary_dn"] == 0
+    assert all(entry["rms_difference_from_primary_dn"] > 0 for entry in differences[1:])
+
+
+@pytest.mark.parametrize("tamper", ["replaced", "missing", "seed"])
+def test_tampered_realisations_fail_their_hard_gate(realisations_root, tmp_path, tamper):
+    root = _copy(realisations_root, tmp_path)
+    second = root / "raw" / "synthetic_50mp_realisation_002.dng"
+    record = root / "validation" / "sensor_realisations.json"
+    if tamper == "replaced":
+        shutil.copyfile(root / "raw" / "synthetic_50mp_realisation_003.dng", second)
+    elif tamper == "missing":
+        second.unlink()
+    else:
+        payload = json.loads(record.read_text())
+        payload["realisations"][1]["sensor_noise_seed"] += 1
+        record.write_text(json.dumps(payload))
+    run = ValidationRunner().run(root)
+    assert run.status == "FAILED"
+    assert json.loads((root / "validation" / RESULTS_NAME).read_text())["hard_failures"] == ["sensor_realisations"]
+    row = next(check for check in run.checks if check.name == "sensor_realisations")
+    assert {"replaced": "sha256", "missing": "is missing", "seed": "recorded seeds"}[tamper] in row.detail

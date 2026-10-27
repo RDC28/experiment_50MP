@@ -39,6 +39,7 @@ from synthraw.validation import (
     ValidationThresholds,
     hard_failures,
     libraw_reopen_check,
+    sensor_realisations_check,
 )
 
 RESULTS_NAME = "validation_results.json"
@@ -259,6 +260,7 @@ class ValidationRunner:
 
         say("determinism and seed checks")
         checks.extend(SensorSeedValidator().validate(config))
+        checks.append(sensor_realisations_check(root, config, mosaic))
         if reference_run is not None:
             other = Path(reference_run)
             checks.append(

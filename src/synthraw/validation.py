@@ -7,6 +7,8 @@ targets carry pass/fail against configurable thresholds, and report-only metrics
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from collections.abc import Iterable, Mapping
@@ -21,7 +23,7 @@ from synthraw.cfa import CFAMosaicer
 from synthraw.config import ExperimentConfig
 from synthraw.dng_metadata import CFA_PATTERNS, DNGFieldRecord
 from synthraw.libraw_validator import HardValidationError, LibRawValidator
-from synthraw.sensor import SensorNoiseSimulator
+from synthraw.sensor import SensorNoiseSimulator, realisation_noise_seeds
 
 # Linear sRGB (D65) to XYZ, matching LibRaw's rgb_xyz used by LibRawValidator.
 _SRGB_TO_XYZ = np.array(
@@ -618,6 +620,72 @@ def libraw_reopen_check(
         return [ValidationCheck("libraw_reopen", "DNG structure", True, hard=True, target="Hard pass")]
     except HardValidationError as error:
         return [ValidationCheck("libraw_reopen", "DNG structure", False, hard=True, detail=str(error))]
+
+
+def sensor_realisations_check(root: str | Path, config: ExperimentConfig, mosaic: np.ndarray) -> ValidationCheck:
+    """Hard gate on validation/sensor_realisations.json: every recorded noise realisation is published and intact.
+
+    The seeds must be the ones ``N_SENSOR_REALISATIONS`` and ``SENSOR_NOISE_SEED`` derive, each DNG must match
+    its recorded sha256 and reopen in LibRaw at the primary mosaic size. The difference from the primary mosaic
+    is measured again from the decoded pixels and reported.
+    """
+    import rawpy
+
+    root = Path(root)
+    problems: list[str] = []
+    measured: dict[str, Any] = {}
+    path = root / "validation" / "sensor_realisations.json"
+    entries = json.loads(path.read_text())["realisations"] if path.is_file() else []
+    if not entries:
+        problems.append("validation/sensor_realisations.json is missing or empty")
+    seeds = [entry["sensor_noise_seed"] for entry in entries]
+    expected_seeds = list(realisation_noise_seeds(config.SENSOR_NOISE_SEED, config.N_SENSOR_REALISATIONS))
+    if seeds != expected_seeds:
+        problems.append(f"recorded seeds {seeds} differ from the configured {expected_seeds}")
+    measured.update(count=len(entries), seeds=seeds)
+    differences = []
+    for entry in entries:
+        dng = root / entry["dng"]
+        if not dng.is_file():
+            problems.append(f"{entry['dng']} is missing")
+            continue
+        digest = hashlib.sha256()
+        with dng.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        if digest.hexdigest() != entry["sha256"]:
+            problems.append(f"{entry['dng']} differs from its recorded sha256")
+        try:
+            with rawpy.imread(str(dng)) as raw:
+                decoded = raw.raw_image
+                if decoded.shape != mosaic.shape:
+                    problems.append(f"{entry['dng']} decodes to {decoded.shape}, not {mosaic.shape}")
+                    continue
+                total = squares = 0.0
+                for start in range(0, mosaic.shape[0], 128):
+                    difference = decoded[start : start + 128].astype(np.float64) - mosaic[start : start + 128]
+                    total += float(difference.sum())
+                    squares += float(np.square(difference).sum())
+        except Exception as error:  # LibRaw raises its own error hierarchy.
+            problems.append(f"{entry['dng']} did not reopen in LibRaw: {error}")
+            continue
+        differences.append(
+            {
+                "index": entry["index"],
+                "mean_difference_from_primary_dn": total / mosaic.size,
+                "rms_difference_from_primary_dn": math.sqrt(squares / mosaic.size),
+            }
+        )
+    measured["differences"] = differences
+    return ValidationCheck(
+        "sensor_realisations",
+        "Sensor stochasticity",
+        not problems,
+        hard=True,
+        measured=measured,
+        target=f"{config.N_SENSOR_REALISATIONS} published realisation(s) with recorded seeds reopen in LibRaw",
+        detail="; ".join(problems),
+    )
 
 
 def block_mean(array: np.ndarray, factor: int, *, strip_blocks: int = 64) -> np.ndarray:
