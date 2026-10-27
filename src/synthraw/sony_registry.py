@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -143,7 +144,7 @@ def install_exiftool(directory: str | Path) -> Path | None:
             raise ValueError(f"sha256 {digest} does not match the pinned {EXIFTOOL_SHA256}")
         with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
             tar.extractall(root, filter="data")
-    except (OSError, ValueError, tarfile.TarError) as error:
+    except (OSError, http.client.HTTPException, ValueError, tarfile.TarError) as error:
         reason = f"Pinned ExifTool {EXIFTOOL_VERSION} could not be installed: {type(error).__name__}: {error}"
         os.environ[EXIFTOOL_UNAVAILABLE_ENV] = reason
         warnings.warn(f"{reason}; the Sony tag registry uses the bundled seed.", stacklevel=2)

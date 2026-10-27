@@ -1,6 +1,7 @@
 """Tiny, offline Sony catalogue fixtures for PRD_v3 metadata discovery."""
 
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -184,8 +185,23 @@ def _offline(url, timeout):
     raise urllib.error.URLError("offline")
 
 
+class _Truncated(io.BytesIO):
+    def read(self, *args):
+        raise http.client.IncompleteRead(b"partial", 7_900_000)
+
+
+def _truncated(url, timeout):
+    return _Truncated()
+
+
+def _malformed(url, timeout):
+    raise http.client.BadStatusLine("garbage")
+
+
 @pytest.mark.parametrize(
-    "urlopen, reason", [(_tampered, "sha256 "), (_offline, "URLError")], ids=["hash-mismatch", "download-failure"]
+    "urlopen, reason",
+    [(_tampered, "sha256 "), (_offline, "URLError"), (_truncated, "IncompleteRead"), (_malformed, "BadStatusLine")],
+    ids=["hash-mismatch", "download-failure", "truncated-download", "malformed-response"],
 )
 def test_failed_exiftool_install_counts_as_absent_with_the_reason_recorded(environment, tmp_path, urlopen, reason):
     path = os.environ["PATH"]
