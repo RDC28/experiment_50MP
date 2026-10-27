@@ -84,8 +84,9 @@ def drive_run_folder(mount_path: str | Path, *, mount: bool) -> tuple[Path | Non
 def copy_run_to_drive(run_root: str | Path, drive_dir: str | Path) -> tuple[Path | None, str | None]:
     """Copy the whole run folder, full-resolution intermediates included, into ``drive_dir``.
 
-    Run it before the run report and the zip are written so a failure warning can go into both.
-    A failed copy (quota, I/O) returns a warning instead of raising.
+    Run it before the run report and the zip are written so a failure warning can go into both;
+    ``sync_to_drive`` then copies the files written afterwards. A failed copy (quota, I/O) returns a
+    warning instead of raising.
     """
     run_root = Path(run_root)
     try:
@@ -94,21 +95,38 @@ def copy_run_to_drive(run_root: str | Path, drive_dir: str | Path) -> tuple[Path
         return None, f"Copying the run folder to Google Drive failed ({type(error).__name__}: {error}); {RUNTIME_ONLY}"
 
 
-def deliver_bundle(
-    bundle: str | Path,
-    *,
-    drive_dir: str | Path | None = None,
-    max_download_bytes: int = MAX_BROWSER_DOWNLOAD_BYTES,
-) -> dict[str, Any]:
-    """Offer the zip via google.colab.files and copy it to a mounted Drive folder.
+# Files written after ``copy_run_to_drive``: the run report, the bundle manifest and the finished log.
+FINAL_RUN_FILES = ("validation/run_report.json", "logs/bundle_manifest.json", "logs/execution.log")
 
-    A zip larger than ``max_download_bytes`` is not offered to the browser. No delivery channel is
-    required: unavailable channels are reported, not raised. A failed Drive copy (quota, I/O) sets
-    ``status["warning"]``.
+
+def sync_to_drive(run_root: str | Path, drive_dir: str | Path, bundle: str | Path) -> str | None:
+    """Copy ``FINAL_RUN_FILES`` into the Drive run folder and the bundle zip beside it.
+
+    A failed copy (quota, I/O) returns a warning instead of raising.
+    """
+    run_root, drive, bundle = Path(run_root), Path(drive_dir), Path(bundle)
+    try:
+        for name in FINAL_RUN_FILES:
+            target = drive / run_root.name / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(run_root / name, target)
+        shutil.copy2(bundle, drive / bundle.name)
+    except OSError as error:
+        return (
+            f"Copying the run report, logs and {bundle.name} to Google Drive failed ({type(error).__name__}: "
+            f"{error}); download the zip from this Colab runtime before it recycles"
+        )
+    return None
+
+
+def deliver_bundle(bundle: str | Path, *, max_download_bytes: int = MAX_BROWSER_DOWNLOAD_BYTES) -> dict[str, Any]:
+    """Offer the zip via google.colab.files when present; report, never raise, when it is unavailable.
+
+    A zip larger than ``max_download_bytes`` is not offered to the browser.
     """
     bundle = Path(bundle)
     size = bundle.stat().st_size
-    status: dict[str, Any] = {"bundle": str(bundle), "download": "unavailable", "drive_copy": None}
+    status: dict[str, Any] = {"bundle": str(bundle), "download": "unavailable"}
     try:
         from google.colab import files
     except ImportError:
@@ -122,17 +140,4 @@ def deliver_bundle(
         else:
             files.download(str(bundle))
             status["download"] = "offered"
-    if drive_dir is not None:
-        drive = Path(drive_dir)
-        if drive.is_dir():
-            try:
-                status["drive_copy"] = str(shutil.copy2(bundle, drive / bundle.name))
-            except OSError as error:
-                status["drive_copy"] = f"failed: {type(error).__name__}: {error}"
-                status["warning"] = (
-                    f"Copying {bundle.name} to Google Drive failed ({type(error).__name__}: {error}); "
-                    "download the zip from this Colab runtime before it recycles"
-                )
-        else:
-            status["drive_copy"] = f"skipped: {drive} is not a mounted directory"
     return status

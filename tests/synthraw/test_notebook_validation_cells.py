@@ -126,8 +126,10 @@ def test_failed_drive_copy_warns_and_is_recorded_without_failing_the_run(cells, 
     assert run_report["status"] == "SUCCESS"
     (warning,) = run_report["warnings"]
     assert "quota exceeded" in warning and "exist only on this Colab runtime" in warning
-    drive_zip = tmp_path / "drive" / "MyDrive" / "synthraw_runs" / namespace["bundle_path"].name
-    assert namespace["delivery"]["drive_copy"] == str(drive_zip)
+    drive_runs = tmp_path / "drive" / "MyDrive" / "synthraw_runs"
+    drive_zip = drive_runs / namespace["bundle_path"].name
+    final_report = drive_runs / namespace["run"].root.name / "validation" / "run_report.json"
+    assert json.loads(final_report.read_text()) == run_report
     # The delivered zip carries the same report, warning included.
     for bundle in (namespace["bundle_path"], drive_zip):
         with zipfile.ZipFile(bundle) as archive:

@@ -8,7 +8,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from synthraw.bundle import bundle_run, copy_run_to_drive, deliver_bundle, drive_run_folder
+from synthraw.bundle import (
+    FINAL_RUN_FILES,
+    bundle_run,
+    copy_run_to_drive,
+    deliver_bundle,
+    drive_run_folder,
+    sync_to_drive,
+)
 from synthraw.pipeline import open_execution_log
 from synthraw.run_layout import RunLayout
 
@@ -74,17 +81,14 @@ def test_failed_bundle_leaves_no_partial_zip(run, monkeypatch):
     assert sorted(path.name for path in run.root.parent.iterdir()) == [run.root.name]
 
 
-def test_delivery_without_colab_or_drive_is_reported(tmp_path, monkeypatch):
+def test_delivery_without_colab_is_reported(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "google.colab", None)
     bundle = tmp_path / "run.zip"
     bundle.write_bytes(b"zip")
-    status = deliver_bundle(bundle, drive_dir=tmp_path / "unmounted")
-    assert status["download"] == "unavailable"
-    assert status["drive_copy"].startswith("skipped")
-    assert deliver_bundle(bundle)["drive_copy"] is None
+    assert deliver_bundle(bundle)["download"] == "unavailable"
 
 
-def test_delivery_offers_download_and_copies_to_drive(tmp_path, monkeypatch):
+def test_delivery_offers_download(tmp_path, monkeypatch):
     downloads = []
     google = types.ModuleType("google")
     colab = types.ModuleType("google.colab")
@@ -94,12 +98,9 @@ def test_delivery_offers_download_and_copies_to_drive(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "google.colab", colab)
     bundle = tmp_path / "run.zip"
     bundle.write_bytes(b"zip")
-    drive = tmp_path / "drive"
-    drive.mkdir()
-    status = deliver_bundle(bundle, drive_dir=drive)
+    status = deliver_bundle(bundle)
     assert downloads == [str(bundle)]
     assert status["download"] == "offered"
-    assert (drive / "run.zip").read_bytes() == b"zip"
 
 
 def test_large_zip_skips_browser_download_and_drive_keeps_the_full_run(run, tmp_path, monkeypatch):
@@ -112,20 +113,26 @@ def test_large_zip_skips_browser_download_and_drive_keeps_the_full_run(run, tmp_
     monkeypatch.setitem(sys.modules, "google.colab", colab)
     drive = tmp_path / "drive"
     drive.mkdir()
+    (run.directory("logs") / "execution.log").write_text("stage done\n", "utf-8")
     assert copy_run_to_drive(run.root, drive) == (drive / run.root.name, None)
+    # Written after the run folder copy: the report, the manifest and the end of the log.
+    (run.directory("validation") / "run_report.json").write_text('{"status": "SUCCESS"}', "utf-8")
     bundle = bundle_run(run.root, exclude_large_arrays=True)
+    with (run.directory("logs") / "execution.log").open("a", encoding="utf-8") as log:
+        log.write("Bundle written\n")
+    assert sync_to_drive(run.root, drive, bundle) is None
     size = bundle.stat().st_size
-    status = deliver_bundle(bundle, drive_dir=drive, max_download_bytes=size - 1)
+    status = deliver_bundle(bundle, max_download_bytes=size - 1)
     assert downloads == [] and status["download"].startswith("skipped")
     assert (drive / bundle.name).read_bytes() == bundle.read_bytes()
     with zipfile.ZipFile(bundle) as archive:
         bundled = set(archive.namelist())
     copied = {path.relative_to(drive / run.root.name) for path in (drive / run.root.name).rglob("*") if path.is_file()}
-    assert copied == {path.relative_to(run.root) for path in run.root.rglob("*") if path.is_file()} - {
-        Path("logs/bundle_manifest.json")
-    }
+    assert copied == {path.relative_to(run.root) for path in run.root.rglob("*") if path.is_file()}
+    for name in FINAL_RUN_FILES:
+        assert (drive / run.root.name / name).read_bytes() == (run.root / name).read_bytes()
     assert any(f"{run.root.name}/{name.as_posix()}" not in bundled for name in copied)
-    assert deliver_bundle(bundle, drive_dir=drive, max_download_bytes=size)["download"] == "offered"
+    assert deliver_bundle(bundle, max_download_bytes=size)["download"] == "offered"
     assert downloads == [str(bundle)]
 
 
@@ -186,15 +193,13 @@ def test_failed_drive_run_copy_returns_a_warning(run, tmp_path, monkeypatch):
     assert "No space left on device" in warning and "exist only on this Colab runtime" in warning
 
 
-def test_failed_drive_zip_copy_is_reported_not_raised(run, tmp_path, monkeypatch):
-    monkeypatch.setitem(sys.modules, "google.colab", None)
-    monkeypatch.setattr("synthraw.bundle.shutil.copy2", _no_space)
+def test_failed_final_drive_sync_returns_a_warning(run, tmp_path, monkeypatch):
+    (run.directory("validation") / "run_report.json").write_text("{}", "utf-8")
+    (run.directory("logs") / "execution.log").write_text("log\n", "utf-8")
     bundle = bundle_run(run.root, exclude_large_arrays=True)
-    drive = tmp_path / "drive"
-    drive.mkdir()
-    status = deliver_bundle(bundle, drive_dir=drive)
-    assert status["drive_copy"].startswith("failed: OSError")
-    assert "No space left on device" in status["warning"] and bundle.name in status["warning"]
+    monkeypatch.setattr("synthraw.bundle.shutil.copy2", _no_space)
+    warning = sync_to_drive(run.root, tmp_path / "drive", bundle)
+    assert "No space left on device" in warning and bundle.name in warning
 
 
 def test_execution_log_rebinding_closes_previous_run(tmp_path):

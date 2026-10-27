@@ -134,5 +134,7 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
     assert large and not large & names
     assert names == (produced - large) | {"logs/bundle_manifest.json"}
     # The browser zip is light; the Drive copy of the run folder keeps every full-resolution intermediate.
-    for name in large | {"raw/synthetic_50mp.dng"}:
+    # It also ends with the final run report, bundle manifest and complete log written after that copy.
+    finals = {"validation/run_report.json", "logs/bundle_manifest.json", "logs/execution.log"}
+    for name in large | finals | {"raw/synthetic_50mp.dng"}:
         assert (drive_runs / root.name / name).read_bytes() == (root / name).read_bytes()
