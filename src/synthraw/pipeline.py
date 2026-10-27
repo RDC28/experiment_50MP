@@ -48,6 +48,7 @@ STAGES = (
     "metadata",
     "dng_export",
     "libraw_reopen",
+    "sensor_realisations",
     "raw_development_tiff",
     "exr_preview",
     "provenance",
@@ -65,6 +66,8 @@ class PipelineResult:
     preview_path: Path
     stages: tuple[str, ...]
     fallbacks: tuple[str, ...] = field(default_factory=tuple)
+    # Further noise realisations (N_SENSOR_REALISATIONS > 1), each LibRaw-validated like dng_path.
+    realisation_dngs: tuple[Path, ...] = field(default_factory=tuple)
 
 
 def is_out_of_memory(error: BaseException) -> bool:
@@ -281,7 +284,11 @@ class PipelineRun:
             "fallbacks": self.fallbacks,
             "warnings": list(warnings),
             "dng": "raw/synthetic_50mp.dng",
+            "dng_compression": self.config.DNG_COMPRESSION,
             "libraw_reopened": True,
+            "sensor_realisations": [
+                {name: entry[name] for name in ("index", "sensor_noise_seed", "dng")} for entry in self.realisations
+            ],
         }
         _write_json(self.path("validation", "run_report.json"), report)
         self.log(f"run report {report['status']}; validation {validation_status}")
@@ -469,7 +476,7 @@ class PipelineRun:
 
     def electrons_noise(self) -> None:
         from synthraw.exposure import exposure_and_gain
-        from synthraw.sensor import ElectronSignalSimulator, SensorNoiseSimulator
+        from synthraw.sensor import ElectronSignalSimulator, realisation_noise_seeds
 
         sensor = self.camera_profile.sensor
         full_well = sensor["full_well_electrons"].value
@@ -511,10 +518,7 @@ class PipelineRun:
         )
         expected.flush()
         noisy = _new_memmap(self.path("intermediates", "08_noisy_electrons.npy"), np.float64, optical.shape)
-        SensorNoiseSimulator().simulate(
-            expected, self.config, **self.noise_parameters, strip_rows=self.strip_rows, out=noisy
-        )
-        noisy.flush()
+        self._simulate_noise(expected, self.config, noisy)
         for applied, original in (
             ("read_noise_e", "read_noise_electrons"),
             ("prnu_sigma", "prnu_sigma"),
@@ -563,20 +567,56 @@ class PipelineRun:
             sensor[f"applied_{name}"] = FieldRecord(
                 f"applied_{name}", value, Provenance.DETERMINISTIC, "Explicit simulation configuration"
             )
+        self.realisation_seeds = realisation_noise_seeds(
+            self.config.SENSOR_NOISE_SEED, self.config.N_SENSOR_REALISATIONS
+        )
+        sensor["applied_sensor_noise_realisation_seeds"] = FieldRecord(
+            "applied_sensor_noise_realisation_seeds",
+            list(self.realisation_seeds),
+            Provenance.DETERMINISTIC,
+            "SENSOR_NOISE_SEED of each noise realisation; the first is the published DNG, later ones are derived",
+            dependencies=["applied_SENSOR_NOISE_SEED"],
+        )
 
-    def cfa(self) -> None:
+    def _simulate_noise(self, expected: np.ndarray, config: ExperimentConfig, out: np.memmap) -> None:
+        from synthraw.sensor import SensorNoiseSimulator
+
+        SensorNoiseSimulator().simulate(expected, config, **self.noise_parameters, strip_rows=self.strip_rows, out=out)
+        out.flush()
+
+    def _mosaic(self, electrons: np.ndarray, out: np.memmap) -> None:
         from synthraw.cfa import CFAMosaicer
 
+        CFAMosaicer(self.cfa_phase).mosaic(electrons, strip_rows=self.strip_rows, out=out)
+        out.flush()
+
+    def _digitise(self, noisy_cfa: np.ndarray, config: ExperimentConfig, out: np.memmap) -> Any:
+        from synthraw.adc import ADCSimulator
+
+        sensor = self.camera_profile.sensor
+        result = ADCSimulator().simulate(
+            noisy_cfa,
+            config,
+            conversion_gain_e_per_dn=self.conversion_gain,
+            read_noise_e=self.noise_parameters["read_noise_e"],
+            analogue_gain=self.analogue_gain,
+            black_level=sensor["BlackLevel"].value,
+            white_level=sensor["WhiteLevel"].value,
+            strip_rows=self.strip_rows,
+            out=out,
+        )
+        out.flush()
+        return result
+
+    def cfa(self) -> None:
         self.cfa_phase = self.camera_profile.sensor["cfa_pattern"].value
-        mosaicer = CFAMosaicer(self.cfa_phase)
         for source_name, target_name in (
             ("07_expected_electrons.npy", "09_clean_cfa.npy"),
             ("08_noisy_electrons.npy", "10_noisy_cfa.npy"),
         ):
             electrons = np.load(self.path("intermediates", source_name), mmap_mode="r")
             mosaic = _new_memmap(self.path("intermediates", target_name), electrons.dtype, electrons.shape[:2])
-            mosaicer.mosaic(electrons, strip_rows=self.strip_rows, out=mosaic)
-            mosaic.flush()
+            self._mosaic(electrons, mosaic)
             del electrons, mosaic
         self.camera_profile.sensor["applied_cfa_phase"] = FieldRecord(
             "applied_cfa_phase",
@@ -587,23 +627,10 @@ class PipelineRun:
         )
 
     def adc(self) -> None:
-        from synthraw.adc import ADCSimulator
-
         sensor = self.camera_profile.sensor
         noisy = np.load(self.path("intermediates", "10_noisy_cfa.npy"), mmap_mode="r")
         codes = _new_memmap(self.path("intermediates", "11_adc_codes.npy"), np.uint16, noisy.shape)
-        self.adc_result = ADCSimulator().simulate(
-            noisy,
-            self.config,
-            conversion_gain_e_per_dn=self.conversion_gain,
-            read_noise_e=self.noise_parameters["read_noise_e"],
-            analogue_gain=self.analogue_gain,
-            black_level=sensor["BlackLevel"].value,
-            white_level=sensor["WhiteLevel"].value,
-            strip_rows=self.strip_rows,
-            out=codes,
-        )
-        codes.flush()
+        self.adc_result = self._digitise(noisy, self.config, codes)
         public = _new_memmap(self.path("raw", "sensor_mosaic_uint16.npy"), np.uint16, codes.shape)
         for start in range(0, codes.shape[0], self.strip_rows):
             public[start : start + self.strip_rows] = codes[start : start + self.strip_rows]
@@ -631,6 +658,12 @@ class PipelineRun:
         from synthraw.sony_registry import SonyMetadataRegistry
 
         colour = self.colour_model.metadata()
+
+        def capture_exif(records: dict[str, FieldRecord]) -> dict[str, FieldRecord]:
+            # Without GENERATE_SYNTHETIC_EXIF only explicit user values become capture EXIF.
+            synthetic = self.config.GENERATE_SYNTHETIC_EXIF
+            return {name: record for name, record in records.items() if synthetic or record.user_override}
+
         self.dng_records = DNGMetadataBuilder().build(
             self.geometry_plan,
             self.config,
@@ -643,20 +676,26 @@ class PipelineRun:
             noise_profile=self.adc_result.noise_profile,
             software_version=SOFTWARE_VERSION,
             # BaselineExposure stays a DNG profile prior; the posterior copy is kept in metadata.json.
-            exposure={name: record for name, record in self.exposure.records.items() if name in EXPOSURE_FIELDS},
+            exposure=capture_exif(
+                {name: record for name, record in self.exposure.records.items() if name in EXPOSURE_FIELDS}
+            ),
         )
         metadata_dir = self.run.directory("metadata")
         registry = SonyMetadataRegistry().build()
+        if registry["seed_only"]:
+            self.fallback(f"Sony tag registry: bundled seed only ({registry['fallback_reason']})")
         emulation = SonyARWEmulationBuilder().build(
             registry,
             self.config,
             width=self.geometry_plan.width,
             height=self.geometry_plan.height,
-            inputs=capture_inputs(
-                registry,
-                exposure=self.exposure.records,
-                white_balance=self.white_balance.records,
-                camera=self.camera_profile.camera,
+            inputs=capture_exif(
+                capture_inputs(
+                    registry,
+                    exposure=self.exposure.records,
+                    white_balance=self.white_balance.records,
+                    camera=self.camera_profile.camera,
+                )
             ),
             optical_records=self.optical_records,
         )
@@ -705,9 +744,88 @@ class PipelineRun:
             self.path("validation", "libraw_roundtrip.json"),
             {
                 "dng": self.dng_path.name,
+                "compression": self.config.DNG_COMPRESSION,
+                "dng_bytes": self.dng_path.stat().st_size,
+                "mosaic_bytes": mosaic.nbytes,
                 "libraw_reopened": True,
                 "pixels_identical": True,
                 "metadata_matched": ["dimensions", "CFAPattern", "BlackLevel", "WhiteLevel", "AsShotNeutral"],
+            },
+        )
+
+    def sensor_realisations(self) -> None:
+        """Publish N_SENSOR_REALISATIONS - 1 further LibRaw-validated DNGs of the same exposure and sensor body.
+
+        Each realisation reruns the noise, CFA and ADC stages from ``07_expected_electrons.npy`` with its own
+        recorded SENSOR_NOISE_SEED; the body seed, exposure and every DNG field are shared with the primary DNG.
+        Work arrays live in a temporary folder that is removed after each realisation.
+        """
+        from synthraw.dng_writer import DNGWriter
+        from synthraw.libraw_validator import LibRawValidator
+
+        primary = np.load(self.path("raw", "sensor_mosaic_uint16.npy"), mmap_mode="r")
+        expected = np.load(self.path("intermediates", "07_expected_electrons.npy"), mmap_mode="r")
+        realisations = [
+            {
+                "index": 1,
+                "sensor_noise_seed": self.realisation_seeds[0],
+                "dng": str(self.dng_path.relative_to(self.run.root)),
+                "sha256": _sha256(self.dng_path),
+                "libraw_reopened": True,
+                "pixels_identical": True,
+                "mean_difference_from_primary_dn": 0.0,
+                "rms_difference_from_primary_dn": 0.0,
+            }
+        ]
+        for index, seed in enumerate(self.realisation_seeds[1:], 2):
+            config = replace(self.config, SENSOR_NOISE_SEED=seed)
+            destination = self.path("raw", f"synthetic_50mp_realisation_{index:03d}.dng")
+            with tempfile.TemporaryDirectory(
+                prefix=f".realisation_{index:03d}_", dir=self.run.directory("raw")
+            ) as work:
+                work = Path(work)
+                noisy = _new_memmap(work / "noisy_electrons.npy", np.float64, expected.shape)
+                self._simulate_noise(expected, config, noisy)
+                noisy_cfa = _new_memmap(work / "noisy_cfa.npy", np.float64, expected.shape[:2])
+                self._mosaic(noisy, noisy_cfa)
+                del noisy
+                codes = _new_memmap(work / "adc_codes.npy", np.uint16, primary.shape)
+                result = self._digitise(noisy_cfa, config, codes)
+                del noisy_cfa
+                if result.noise_profile != self.adc_result.noise_profile:
+                    raise RuntimeError("A sensor realisation changed the ADC NoiseProfile")
+                staged = DNGWriter().write(work / destination.name, codes, self.dng_records, self.config)
+                LibRawValidator().validate(staged, codes, self.dng_records)
+                total = squares = 0.0
+                for start in range(0, primary.shape[0], self.strip_rows):
+                    rows = slice(start, start + self.strip_rows)
+                    difference = codes[rows].astype(np.float64) - primary[rows]
+                    total += float(difference.sum())
+                    squares += float(np.square(difference).sum())
+                del codes, result
+                staged.replace(destination)
+            realisations.append(
+                {
+                    "index": index,
+                    "sensor_noise_seed": seed,
+                    "dng": str(destination.relative_to(self.run.root)),
+                    "sha256": _sha256(destination),
+                    "libraw_reopened": True,
+                    "pixels_identical": True,
+                    "mean_difference_from_primary_dn": total / primary.size,
+                    "rms_difference_from_primary_dn": float(np.sqrt(squares / primary.size)),
+                }
+            )
+            self.log(f"sensor realisation {index}: seed {seed}; {destination.name} validated by LibRaw")
+        self.realisations = realisations
+        _write_json(
+            self.path("validation", "sensor_realisations.json"),
+            {
+                "count": len(realisations),
+                "sensor_body_seed": self.config.SENSOR_BODY_SEED,
+                "seed_derivation": "realisation 1 uses SENSOR_NOISE_SEED; realisation k >= 2 uses "
+                "SeedSequence([SENSOR_NOISE_SEED, k]).generate_state(1, uint64)[0] >> 1",
+                "realisations": realisations,
             },
         )
 
@@ -899,6 +1017,7 @@ def run_pipeline(
             state.preview_path,
             tuple(report["stages"]),
             tuple(state.fallbacks),
+            tuple(state.run.root / entry["dng"] for entry in state.realisations[1:]),
         )
     except HardValidationError as error:
         state.logger.error(f"HARD FAILURE: {error}; no success report written")

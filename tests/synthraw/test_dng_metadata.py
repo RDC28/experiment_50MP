@@ -255,3 +255,21 @@ def test_mutated_lens_range_rejected(geometry):
     fields["FocalLength"].value = 85
     with pytest.raises(ValueError, match="outside selected lens range"):
         builder.validate(fields, ExperimentConfig())
+
+
+def test_without_synthetic_exif_only_user_capture_fields_are_accepted(geometry):
+    from synthraw.provenance import FieldRecord
+
+    config = ExperimentConfig(GENERATE_SYNTHETIC_EXIF=False)
+    plain = DNGMetadataBuilder().build(geometry, config)
+    assert not {"ExposureTime", "FNumber", "PhotographicSensitivity", "ShutterSpeedValue"} & plain.keys()
+    inferred = {"ExposureTime": FieldRecord("ExposureTime", 1 / 128, Provenance.INFERRED, "exposure posterior")}
+    with pytest.raises(ValueError, match="GENERATE_SYNTHETIC_EXIF"):
+        DNGMetadataBuilder().build(geometry, config, exposure=inferred)
+    lens = {"FocalLength": FieldRecord("FocalLength", 35.0, Provenance.INFERRED, "FOV hypothesis")}
+    with pytest.raises(ValueError, match="GENERATE_SYNTHETIC_EXIF"):
+        DNGMetadataBuilder().build(geometry, config, lens=lens)
+    user = {"ExposureTime": exposure_record("ExposureTime", 1 / 128)}
+    fields = DNGMetadataBuilder().build(geometry, config, exposure=user)
+    assert fields["ExposureTime"].user_override and fields["ShutterSpeedValue"].value == 7
+    assert DNGMetadataBuilder().build(geometry, exposure=inferred)["ExposureTime"].value == 1 / 128

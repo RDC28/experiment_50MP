@@ -197,3 +197,17 @@ def test_lens_pipeline_records_drive_sidecar(registry, tmp_path, enabled):
                 )
     finally:
         output._mmap.close()
+
+
+def test_without_synthetic_exif_capture_fields_stay_unknown_unless_user_supplied(registry):
+    config = ExperimentConfig(GENERATE_SYNTHETIC_EXIF=False)
+    inferred = {"SonyISO": FieldRecord("SonyISO", 100, Provenance.INFERRED, "exposure posterior")}
+    with pytest.raises(ValueError, match="GENERATE_SYNTHETIC_EXIF"):
+        SonyARWEmulationBuilder().build(registry, config, width=64, height=48, inputs=inferred)
+    user = {"SonyISO": FieldRecord("SonyISO", 400, Provenance.FABRICATED, "manual exposure", user_override=True)}
+    values = fields(SonyARWEmulationBuilder().build(registry, config, width=64, height=48, inputs=user))
+    assert values["SonyISO"]["generated_value"] == 400 and values["SonyISO"]["implementation_state"] == "EMULATED"
+    assert values["SonyFNumber"]["generated_value"] is None
+    assert values["SonyFNumber"]["unsupported_reason"].startswith("GENERATE_SYNTHETIC_EXIF is False")
+    # Simulation facts are not capture EXIF and stay populated.
+    assert values["SonyRawImageSize"]["generated_value"] == [64, 48]

@@ -77,19 +77,32 @@ class SonyMetadataRegistry:
                 entries.append(entry)
         if not entries:
             raise ValueError("ExifTool catalogue contains no Sony/ARW fields")
-        return {"source": "exiftool-listx", "seed_only": False, "fields": entries}
+        return {"source": "exiftool-listx", "seed_only": False, "fallback_reason": None, "fields": entries}
 
     def build(self) -> dict[str, Any]:
-        """Query installed ExifTool, or explicitly mark the bundled fallback seed."""
+        """Query installed ExifTool; otherwise return the bundled seed marked with the reason it was used."""
         executable = shutil.which("exiftool")
         if executable is None:
-            return {
-                "source": "bundled-seed",
-                "seed_only": True,
-                "fields": [_entry(name, "seed", None, None, None) for name in _SEED_FIELDS],
-            }
-        result = subprocess.run([executable, "-listx"], capture_output=True, check=True, timeout=120)
-        return self.parse_catalogue(result.stdout)
+            return self.seed("ExifTool is not installed")
+        try:
+            version = subprocess.run([executable, "-ver"], capture_output=True, check=True, timeout=30)
+            result = subprocess.run([executable, "-listx"], capture_output=True, check=True, timeout=120)
+            registry = self.parse_catalogue(result.stdout)
+        except (OSError, subprocess.SubprocessError, ValueError, ET.ParseError) as error:
+            return self.seed(f"ExifTool catalogue unavailable: {type(error).__name__}: {error}")
+        registry["exiftool_version"] = version.stdout.decode("ascii", "replace").strip()
+        return registry
+
+    @staticmethod
+    def seed(reason: str) -> dict[str, Any]:
+        """The bundled fallback seed; ``seed_only`` and ``fallback_reason`` say it is not a full catalogue."""
+        return {
+            "source": "bundled-seed",
+            "seed_only": True,
+            "fallback_reason": reason,
+            "exiftool_version": None,
+            "fields": [_entry(name, "seed", None, None, None) for name in _SEED_FIELDS],
+        }
 
     def write(self, path: str | Path) -> Path:
         """Write sony_tag_registry.json with explicit unknown values and strict JSON."""

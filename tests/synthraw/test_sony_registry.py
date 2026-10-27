@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -69,22 +70,53 @@ def test_seed_covers_prd_families_and_serializes(tmp_path):
 
 
 def test_installed_exiftool_is_queried_without_shell():
+    def run(command, **kwargs):
+        assert kwargs == {"capture_output": True, "check": True, "timeout": 30 if command[1] == "-ver" else 120}
+        return SimpleNamespace(stdout=b"13.36\n" if command[1] == "-ver" else FIXTURE.read_bytes())
+
     with (
         patch("synthraw.sony_registry.shutil.which", return_value="/bin/exiftool"),
-        patch("synthraw.sony_registry.subprocess.run") as run,
+        patch("synthraw.sony_registry.subprocess.run", side_effect=run) as mocked,
     ):
-        run.return_value.stdout = FIXTURE.read_bytes()
-        assert SonyMetadataRegistry().build()["seed_only"] is False
-        run.assert_called_once_with(["/bin/exiftool", "-listx"], capture_output=True, check=True, timeout=120)
+        registry = SonyMetadataRegistry().build()
+    assert registry["seed_only"] is False and registry["fallback_reason"] is None
+    assert registry["source"] == "exiftool-listx" and registry["exiftool_version"] == "13.36"
+    assert [call.args[0] for call in mocked.call_args_list] == [["/bin/exiftool", "-ver"], ["/bin/exiftool", "-listx"]]
 
 
-def test_exiftool_failure_does_not_silently_downgrade_to_seed():
+def test_missing_exiftool_records_why_the_seed_is_used():
+    with patch("synthraw.sony_registry.shutil.which", return_value=None):
+        registry = SonyMetadataRegistry().build()
+    assert registry["seed_only"] is True and registry["source"] == "bundled-seed"
+    assert registry["fallback_reason"] == "ExifTool is not installed" and registry["exiftool_version"] is None
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        subprocess.CalledProcessError(1, "exiftool"),
+        subprocess.TimeoutExpired("exiftool", 120),
+        PermissionError("exiftool"),
+        SimpleNamespace(stdout=b"<taginfo/>"),
+        SimpleNamespace(stdout=b"not xml"),
+    ],
+)
+def test_exiftool_failure_falls_back_to_the_seed_with_the_reason_recorded(failure):
+    def run(command, **kwargs):
+        if command[1] == "-ver":
+            return SimpleNamespace(stdout=b"13.36\n")
+        if isinstance(failure, BaseException):
+            raise failure
+        return failure
+
     with (
         patch("synthraw.sony_registry.shutil.which", return_value="/bin/exiftool"),
-        patch("synthraw.sony_registry.subprocess.run", side_effect=subprocess.CalledProcessError(1, "exiftool")),
-        pytest.raises(subprocess.CalledProcessError),
+        patch("synthraw.sony_registry.subprocess.run", side_effect=run),
     ):
-        SonyMetadataRegistry().build()
+        registry = SonyMetadataRegistry().build()
+    assert registry["seed_only"] is True and registry["source"] == "bundled-seed"
+    assert registry["fallback_reason"].startswith("ExifTool catalogue unavailable: ")
+    assert registry["fields"] and json.dumps(registry, allow_nan=False)
 
 
 @pytest.mark.parametrize(

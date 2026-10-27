@@ -9,6 +9,26 @@ import numpy as np
 from .config import ExperimentConfig
 
 
+def realisation_noise_seeds(sensor_noise_seed: int, count: int) -> tuple[int, ...]:
+    """SENSOR_NOISE_SEED for each of ``count`` noise realisations of one exposure and sensor body.
+
+    Realisation 1 keeps ``sensor_noise_seed``. Each later realisation draws an independent 63-bit seed
+    from ``SeedSequence([sensor_noise_seed, index])``, so neighbouring base seeds never share
+    realisations. Running with SENSOR_NOISE_SEED set to a recorded seed reproduces that realisation.
+    """
+    if type(sensor_noise_seed) is not int or sensor_noise_seed < 0:
+        raise ValueError("sensor_noise_seed must be a nonnegative integer")
+    if type(count) is not int or count < 1:
+        raise ValueError("count must be a positive integer")
+    seeds = [sensor_noise_seed]
+    for index in range(2, count + 1):
+        seed = int(np.random.SeedSequence([sensor_noise_seed, index]).generate_state(1, np.uint64)[0] >> 1)
+        if seed in seeds:
+            raise RuntimeError("Derived sensor noise seeds collided")
+        seeds.append(seed)
+    return tuple(seeds)
+
+
 class ElectronSignalSimulator:
     """Convert pre-CFA linear RGB to expected electrons before sensor noise.
 

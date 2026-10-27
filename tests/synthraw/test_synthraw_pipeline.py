@@ -579,3 +579,119 @@ def test_stage_refuses_to_overwrite_files_it_did_not_create(source_png, tmp_path
         pipeline.close()
     np.testing.assert_array_equal(np.load(foreign), np.zeros(3))
     assert not (pipeline.run.root / "intermediates/04_hdr_radiance.npy").exists()
+
+
+def _developed(path):
+    with tifffile.TiffFile(path) as tiff:
+        return tiff.pages[0].asarray()
+
+
+def test_lossless_run_publishes_a_compressed_dng_that_develops_like_the_uncompressed_one(source_png, tmp_path):
+    lossless = run_tiny(source_png, tmp_path / "lossless", DNG_COMPRESSION="LOSSLESS")
+    plain = run_tiny(source_png, tmp_path / "plain")
+    root = lossless.root
+    mosaic = np.load(root / "raw/sensor_mosaic_uint16.npy")
+    assert np.array_equal(mosaic, np.load(plain.root / "raw/sensor_mosaic_uint16.npy"))
+    with tifffile.TiffFile(lossless.dng_path) as dng:
+        page = dng.pages[0]
+        assert page.compression == 7 and page.is_tiled and page.bitspersample == 16
+    with rawpy.imread(str(lossless.dng_path)) as raw:
+        assert np.array_equal(raw.raw_image, mosaic)
+    # The LibRaw-developed master cannot tell the two containers apart.
+    assert np.array_equal(_developed(lossless.tiff_path), _developed(plain.tiff_path))
+    roundtrip = json.loads((root / "validation/libraw_roundtrip.json").read_text())
+    assert roundtrip["compression"] == "LOSSLESS" and roundtrip["pixels_identical"] is True
+    assert roundtrip["dng_bytes"] == lossless.dng_path.stat().st_size and roundtrip["mosaic_bytes"] == mosaic.nbytes
+    report = json.loads((root / "validation/run_report.json").read_text())
+    assert report["dng_compression"] == "LOSSLESS"
+    plain_report = json.loads((plain.root / "validation/run_report.json").read_text())
+    assert plain_report["dng_compression"] == "UNCOMPRESSED"
+    # A single realisation is still recorded, with the configured seed.
+    realisations = json.loads((plain.root / "validation/sensor_realisations.json").read_text())
+    assert realisations["count"] == 1 and plain.realisation_dngs == ()
+    assert realisations["realisations"][0]["sensor_noise_seed"] == 42001
+    assert realisations["realisations"][0]["dng"] == "raw/synthetic_50mp.dng"
+
+
+def test_multiple_sensor_realisations_are_validated_published_and_reproducible(source_png, tmp_path):
+    from synthraw.sensor import realisation_noise_seeds
+
+    result = run_tiny(source_png, tmp_path / "runs", N_SENSOR_REALISATIONS=3, DNG_COMPRESSION="LOSSLESS")
+    root = result.root
+    seeds = realisation_noise_seeds(42001, 3)
+    names = [
+        "raw/synthetic_50mp.dng",
+        "raw/synthetic_50mp_realisation_002.dng",
+        "raw/synthetic_50mp_realisation_003.dng",
+    ]
+    assert result.realisation_dngs == tuple(root / name for name in names[1:])
+    assert not [path for path in root.rglob("*") if ".realisation_" in str(path)]
+    report = json.loads((root / "validation/sensor_realisations.json").read_text())
+    assert report["count"] == 3 and report["sensor_body_seed"] == 42002
+    entries = report["realisations"]
+    assert [entry["sensor_noise_seed"] for entry in entries] == list(seeds)
+    assert [entry["dng"] for entry in entries] == names
+    run_report = json.loads((root / "validation/run_report.json").read_text())
+    assert run_report["sensor_realisations"] == [
+        {"index": index, "sensor_noise_seed": seed, "dng": name}
+        for index, (seed, name) in enumerate(zip(seeds, names, strict=True), 1)
+    ]
+    provenance = json.loads((root / "metadata/provenance.json").read_text())
+    metadata = json.loads((root / "metadata/metadata.json").read_text())
+    recorded = {record["field"]: record for record in metadata["groups"]["sensor_profile"]}
+    assert recorded["applied_sensor_noise_realisation_seeds"]["value"] == list(seeds)
+    primary = np.load(root / "raw/sensor_mosaic_uint16.npy")
+    decoded = []
+    for entry in entries:
+        path = root / entry["dng"]
+        assert provenance["outputs"][entry["dng"]] == entry["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        with rawpy.imread(str(path)) as raw:
+            decoded.append(raw.raw_image.copy())
+    assert np.array_equal(decoded[0], primary)
+    for entry, mosaic in zip(entries[1:], decoded[1:], strict=True):
+        difference = mosaic.astype(np.float64) - primary
+        assert entry["rms_difference_from_primary_dn"] == pytest.approx(np.sqrt(np.mean(difference**2)))
+        assert entry["mean_difference_from_primary_dn"] == pytest.approx(difference.mean())
+        # Independent noise, same scene: the realisations differ but are not offset from each other.
+        assert entry["rms_difference_from_primary_dn"] > 0
+        assert abs(entry["mean_difference_from_primary_dn"]) < entry["rms_difference_from_primary_dn"] / 4
+    assert not np.array_equal(decoded[1], decoded[2])
+    # Running with a recorded seed reproduces that realisation exactly.
+    rerun = run_tiny(source_png, tmp_path / "rerun", SENSOR_NOISE_SEED=seeds[2])
+    assert np.array_equal(np.load(rerun.root / "raw/sensor_mosaic_uint16.npy"), decoded[2])
+
+
+def test_without_synthetic_exif_capture_settings_stay_out_of_the_dng_and_sidecar(source_png, tmp_path, monkeypatch):
+    monkeypatch.setattr("synthraw.sony_registry.shutil.which", lambda name: None)
+    result = run_tiny(source_png, tmp_path / "runs", GENERATE_SYNTHETIC_EXIF=False)
+    root = result.root
+    with tifffile.TiffFile(result.dng_path) as dng:
+        tags = dng.pages[0].tags
+        # ExposureTime, FNumber, PhotographicSensitivity, ShutterSpeedValue, ApertureValue.
+        assert not {33434, 33437, 34855, 37377, 37378} & {tag.code for tag in tags}
+        assert tags["Make"].value == "Synthetic"
+    sidecar = {
+        entry["field_name"]: entry
+        for entry in json.loads((root / "metadata/sony_arw_emulation.json").read_text())["fields"]
+    }
+    for name in ("SonyISO", "SonyFNumber", "ExposureTime", "WhiteBalance"):
+        assert sidecar[name]["generated_value"] is None, name
+        assert sidecar[name]["unsupported_reason"].startswith("GENERATE_SYNTHETIC_EXIF is False"), name
+    # The hypotheses still drive the simulation and stay in the provenance record.
+    posterior = json.loads((root / "metadata/exposure_posterior.json").read_text())
+    assert "PhotographicSensitivity" in {record["field"] for record in posterior}
+    report = json.loads((root / "validation/run_report.json").read_text())
+    assert report["status"] == "SUCCESS"
+    assert "Sony tag registry: bundled seed only (ExifTool is not installed)" in report["fallbacks"]
+
+    manual = run_pipeline(
+        source_png,
+        ExperimentConfig(FAST_DEV_RUN=True, GENERATE_SYNTHETIC_EXIF=False, EXPOSURE_MODE="MANUAL"),
+        tmp_path / "manual",
+        timestamp=datetime(2026, 1, 2, 3, 4, 5),
+        fast_dev_max_side=96,
+        strip_rows=16,
+        manual_exposure=(1 / 125, 5.6, 400),
+    )
+    with tifffile.TiffFile(manual.dng_path) as dng:
+        assert dng.pages[0].tags[34855].value == 400  # Explicit user exposure is still written.

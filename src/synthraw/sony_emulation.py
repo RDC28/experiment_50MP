@@ -97,6 +97,7 @@ class SonyARWEmulationBuilder:
 
         Inputs carry upstream exposure, lens, WB or user metadata. No camera
         settings are inferred here. Optical flags describe the simulated pixels.
+        Without GENERATE_SYNTHETIC_EXIF only user-supplied inputs are accepted.
         """
         if type(width) is not int or type(height) is not int or min(width, height) <= 0:
             raise ValueError("width and height must be positive integers")
@@ -134,6 +135,8 @@ class SonyARWEmulationBuilder:
                     raise ValueError(f"{name} requires FABRICATE_UNOBSERVABLE_EXIF")
             if name.endswith("CorrParams"):
                 raise ValueError("Correction arrays require an optical simulator export policy")
+            if not config.GENERATE_SYNTHETIC_EXIF and not record.user_override:
+                raise ValueError(f"{name} is synthetic capture EXIF, but GENERATE_SYNTHETIC_EXIF is False")
         result = copy.deepcopy(registry)
         for entry in result["fields"]:
             name = entry["field_name"]
@@ -142,7 +145,11 @@ class SonyARWEmulationBuilder:
                 generated_value=None,
                 provenance=None,
                 confidence=None,
-                unsupported_reason="No verified value or emulation policy is available",
+                unsupported_reason=(
+                    "No verified value or emulation policy is available"
+                    if config.GENERATE_SYNTHETIC_EXIF
+                    else "GENERATE_SYNTHETIC_EXIF is False: no inferred or fabricated capture value is written"
+                ),
             )
             if name in fixed:
                 # ARW identity is a fictional sidecar claim, not a physical format.
