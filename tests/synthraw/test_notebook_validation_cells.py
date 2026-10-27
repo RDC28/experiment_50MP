@@ -108,3 +108,23 @@ def test_disabled_validation_and_comparison_are_reported_not_run(cells, notebook
     # Off Colab the Drive mount fails: the run still succeeds and the report warns where the arrays live.
     (warning,) = run_report["warnings"]
     assert "exist only on this Colab runtime" in warning
+
+
+def test_failed_drive_copy_warns_and_is_recorded_without_failing_the_run(cells, notebook_state, tmp_path, monkeypatch):
+    (tmp_path / "drive" / "MyDrive").mkdir(parents=True)
+    namespace = notebook_state(WRITE_VALIDATION_REPORT=False, DRIVE_MOUNT_PATH=str(tmp_path / "drive"))
+    run_cell(cells["validation"], namespace)
+    namespace["comparison"] = None
+
+    def quota(*args, **kwargs):
+        raise OSError(28, "Drive storage quota exceeded")
+
+    monkeypatch.setattr("synthraw.bundle.shutil.copytree", quota)
+    run_cell(cells["packaging"], namespace)
+    run_report = json.loads((namespace["run"].root / "validation" / "run_report.json").read_text())
+    assert run_report["status"] == "SUCCESS"
+    (warning,) = run_report["warnings"]
+    assert "quota exceeded" in warning and "exist only on this Colab runtime" in warning
+    assert namespace["delivery"]["drive_copy"] == str(
+        tmp_path / "drive" / "MyDrive" / "synthraw_runs" / namespace["bundle_path"].name
+    )

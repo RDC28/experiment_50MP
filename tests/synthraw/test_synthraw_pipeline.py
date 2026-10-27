@@ -3,6 +3,7 @@ import json
 import sys
 import types
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -490,3 +491,51 @@ def test_rerunning_stages_after_editing_a_hypothesis_refreshes_the_run(source_pn
     assert dng["AsShotNeutral"] == pytest.approx(neutral)
     check = MetadataDependencyValidator().validate(groups)
     assert check.passed, check.measured["violations"]
+
+
+@pytest.mark.parametrize("first", ["input_audit", "super_resolution", "hdr"])
+def test_rerunning_an_early_stage_replaces_its_outputs(source_png, tmp_path, first):
+    """Regression: input audit, SR and HDR wrote create-only files, so re-running their cells failed."""
+    from synthraw.pipeline import PipelineRun
+    from synthraw.validation_runner import ValidationRunner
+
+    config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="LANCZOS")
+    pipeline = PipelineRun.create(source_png, config, tmp_path / "runs", fast_dev_max_side=96, strip_rows=16)
+    root = pipeline.run.root
+    try:
+        for name in STAGES:
+            pipeline.run_stage(name)
+        tree = {path.relative_to(root) for path in root.rglob("*") if path.is_file()}
+        sr_mask = (root / "confidence/sr_source_supported_mask.npy").read_bytes()
+        for name in STAGES[STAGES.index(first) :]:
+            pipeline.run_stage(name)
+        report = pipeline.write_report()
+    finally:
+        pipeline.close()
+    assert report["stages"] == list(STAGES)
+    assert {path.relative_to(root) for path in root.rglob("*") if path.is_file()} == tree | {
+        Path("validation/run_report.json")
+    }
+    # SR owns its support mask; HDR writes its own source_supported_mask beside it.
+    assert (root / "confidence/sr_source_supported_mask.npy").read_bytes() == sr_mask
+    sr_report = json.loads((root / "metadata/sr_reconstruction.json").read_text())
+    assert sr_report["canvas"]["source_supported_mask"].endswith("sr_source_supported_mask.npy")
+    assert ValidationRunner().run(root).status == "PASSED"
+
+
+def test_stage_refuses_to_overwrite_files_it_did_not_create(source_png, tmp_path):
+    from synthraw.pipeline import PipelineRun
+
+    config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="LANCZOS")
+    pipeline = PipelineRun.create(source_png, config, tmp_path / "runs", fast_dev_max_side=96, strip_rows=16)
+    foreign = pipeline.run.root / "intermediates/03_scene_linear.npy"
+    try:
+        for name in ("input_audit", "geometry", "super_resolution"):
+            pipeline.run_stage(name)
+        np.save(foreign, np.zeros(3))
+        with pytest.raises(FileExistsError):
+            pipeline.run_stage("hdr")
+    finally:
+        pipeline.close()
+    np.testing.assert_array_equal(np.load(foreign), np.zeros(3))
+    assert not (pipeline.run.root / "intermediates/04_hdr_radiance.npy").exists()

@@ -207,11 +207,17 @@ class PipelineRun:
     def close(self) -> None:
         _close_handlers(self.logger)
 
+    def _files(self) -> set[Path]:
+        return {path for path in self.run.root.rglob("*") if path.is_file()}
+
     def run_stage(self, name: str) -> None:
         """Run, checkpoint and free one ``STAGES`` entry in chain order; a failure stops the whole chain.
 
-        Running a stage again (for example after editing a notebook hypothesis) discards its checkpoint and
-        every later one, with their fallbacks, so the later stages must run again before a run report.
+        Each checkpoint records the files its stage created. Running a stage again (for example after
+        editing a notebook hypothesis) deletes those files for it and every later stage, and discards their
+        checkpoints and fallbacks, so the later stages must run again before a run report. A failed attempt
+        removes the files it created. Files this run did not create are never deleted, so stage writers
+        still refuse to overwrite them.
         """
         if name not in STAGES:
             raise ValueError(f"Unknown pipeline stage: {name}")
@@ -219,20 +225,29 @@ class PipelineRun:
         completed = [checkpoint["stage"] for checkpoint in self.checkpoints]
         if completed[:index] != list(STAGES[:index]):
             raise RuntimeError(f"Stage {name} needs {list(STAGES[:index])} completed first; completed {completed}")
+        for checkpoint in self.checkpoints[index:]:
+            for relative in checkpoint["outputs"]:
+                (self.run.root / relative).unlink(missing_ok=True)
         del self.checkpoints[index:]
         self.fallbacks = [message for checkpoint in self.checkpoints for message in checkpoint["fallbacks"]]
         recorded = len(self.fallbacks)
+        existing = self._files()
         self.log(f"stage {name}: start")
         started = time.perf_counter()
         try:
             getattr(self, name)()
         except BaseException as error:
             self.logger.error(f"stage {name}: FAILED: {type(error).__name__}: {error}")
+            for path in self._files() - existing:
+                path.unlink(missing_ok=True)
             raise
         finally:
             release_memory()
         seconds = time.perf_counter() - started
-        self.checkpoints.append({"stage": name, "seconds": seconds, "fallbacks": self.fallbacks[recorded:]})
+        outputs = sorted(str(path.relative_to(self.run.root)) for path in self._files() - existing)
+        self.checkpoints.append(
+            {"stage": name, "seconds": seconds, "fallbacks": self.fallbacks[recorded:], "outputs": outputs}
+        )
         _write_json(self.path("logs", "checkpoints.json"), {"completed": self.checkpoints})
         self.log(f"stage {name}: done in {seconds:.3f} s")
 
@@ -303,6 +318,11 @@ class PipelineRun:
             self.run.root,
             accept_licence=self.options["accept_licence"],
         )
+        canvas = self.sr_result.canvas
+        sr_mask = canvas.source_supported_mask.replace(
+            canvas.source_supported_mask.with_name("sr_source_supported_mask.npy")
+        )
+        self.sr_result = replace(self.sr_result, canvas=replace(canvas, source_supported_mask=sr_mask))
         tiled = self.sr_result.tiled
         self.fallbacks.extend(f"SR {reason}" for reason in tiled.fallback_reasons + tiled.retry_reasons)
         _write_json(self.path("metadata", "sr_reconstruction.json"), asdict(self.sr_result))
@@ -324,7 +344,7 @@ class PipelineRun:
         backend = self.config.HDR_BACKEND if enabled else "DETERMINISTIC"
 
         def expand(strip_rows: int, disable_generative: bool) -> dict:
-            # Stage separately because SR already published a source-support mask.
+            # Stage, then split the radiance and the masks into their PRD folders.
             with tempfile.TemporaryDirectory(prefix="hdr_", dir=self.run.directory("intermediates")) as staging:
                 result = engine.expand(
                     encoded,
@@ -339,8 +359,6 @@ class PipelineRun:
                 for name, array in result.pop("arrays").items():
                     staged = Path(array.filename)
                     target = self.path("intermediates" if name == "04_hdr_radiance" else "confidence", staged.name)
-                    if name == "source_supported_mask" and target.exists():
-                        target.replace(target.with_name("sr_source_supported_mask.npy"))
                     staged.replace(target)
             if disable_generative:
                 result["fallback_reason"] = "Optional generative HDR backend disabled after repeated OOM"

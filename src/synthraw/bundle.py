@@ -14,6 +14,7 @@ from synthraw.run_layout import RUN_DIRECTORIES
 LARGE_ARRAY_DIRECTORIES = ("intermediates", "confidence")
 # Larger zips are not offered as a browser download; the Drive copy still carries them.
 MAX_BROWSER_DOWNLOAD_BYTES = 2 * 1024**3
+RUNTIME_ONLY = "the full-resolution intermediates exist only on this Colab runtime and are lost when it recycles"
 
 
 def bundle_run(
@@ -72,10 +73,7 @@ def drive_run_folder(mount_path: str | Path, *, mount: bool) -> tuple[Path | Non
         else:
             reason = None if my_drive.is_dir() else f"{my_drive} not found after mounting"
         if reason is not None:
-            return None, (
-                f"Google Drive was not mounted ({reason}); the full-resolution intermediates exist only on this "
-                "Colab runtime and are lost when it recycles"
-            )
+            return None, f"Google Drive was not mounted ({reason}); {RUNTIME_ONLY}"
     if not my_drive.is_dir():
         return None, None
     folder = my_drive / "synthraw_runs"
@@ -94,7 +92,8 @@ def deliver_bundle(
 
     A zip larger than ``max_download_bytes`` is not offered to the browser. The Drive copy of
     ``run_root`` keeps every full-resolution intermediate a lightweight bundle omits. No delivery
-    channel is required: unavailable channels are reported, not raised.
+    channel is required: unavailable channels are reported, not raised. A failed Drive copy (quota,
+    I/O) sets ``status["warning"]``.
     """
     bundle = Path(bundle)
     size = bundle.stat().st_size
@@ -115,10 +114,14 @@ def deliver_bundle(
     if drive_dir is not None:
         drive = Path(drive_dir)
         if drive.is_dir():
-            status["drive_copy"] = str(shutil.copy2(bundle, drive / bundle.name))
-            if run_root is not None:
-                run_root = Path(run_root)
-                status["drive_run_copy"] = str(shutil.copytree(run_root, drive / run_root.name, dirs_exist_ok=True))
+            try:
+                status["drive_copy"] = str(shutil.copy2(bundle, drive / bundle.name))
+                if run_root is not None:
+                    run_root = Path(run_root)
+                    status["drive_run_copy"] = str(shutil.copytree(run_root, drive / run_root.name, dirs_exist_ok=True))
+            except OSError as error:
+                status["drive_error"] = f"{type(error).__name__}: {error}"
+                status["warning"] = f"Copying to Google Drive failed ({status['drive_error']}); {RUNTIME_ONLY}"
         else:
             status["drive_copy"] = f"skipped: {drive} is not a mounted directory"
     return status

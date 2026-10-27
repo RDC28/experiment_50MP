@@ -172,6 +172,23 @@ def test_declined_drive_mount_warns_and_never_raises(tmp_path, monkeypatch):
     assert drive_run_folder(tmp_path / "drive", mount=False) == (None, None)
 
 
+@pytest.mark.parametrize("failing", ["copy2", "copytree"])
+def test_failed_drive_copy_is_reported_not_raised(run, tmp_path, monkeypatch, failing):
+    monkeypatch.setitem(sys.modules, "google.colab", None)
+
+    def quota(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(f"synthraw.bundle.shutil.{failing}", quota)
+    bundle = bundle_run(run.root, exclude_large_arrays=True)
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    status = deliver_bundle(bundle, drive_dir=drive, run_root=run.root)
+    assert "No space left on device" in status["drive_error"]
+    assert "exist only on this Colab runtime" in status["warning"]
+    assert "drive_run_copy" not in status
+
+
 def test_execution_log_rebinding_closes_previous_run(tmp_path):
     first = RunLayout.create(tmp_path, timestamp=datetime(2026, 1, 1))
     second = RunLayout.create(tmp_path, timestamp=datetime(2026, 1, 2))
