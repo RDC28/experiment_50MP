@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+import os
 import shutil
 import subprocess
+import tarfile
+import urllib.request
+import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
+
+# Pinned current ExifTool release (https://exiftool.org/checksums.txt), unpacked and run with the system Perl.
+EXIFTOOL_VERSION = "13.59"
+EXIFTOOL_SHA256 = "668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a"
+EXIFTOOL_URL = f"https://sourceforge.net/projects/exiftool/files/Image-ExifTool-{EXIFTOOL_VERSION}.tar.gz/download"
+# Set by install_exiftool when the pinned release cannot be installed; ExifTool then counts as absent.
+EXIFTOOL_UNAVAILABLE_ENV = "SYNTHRAW_EXIFTOOL_UNAVAILABLE"
 
 # Seed coverage is deliberately a fallback, never an exhaustive Sony catalogue.
 _SEED_FIELDS = (
@@ -80,16 +93,17 @@ class SonyMetadataRegistry:
         return {"source": "exiftool-listx", "seed_only": False, "fallback_reason": None, "fields": entries}
 
     def build(self) -> dict[str, Any]:
-        """Query installed ExifTool; otherwise return the bundled seed marked with the reason it was used."""
-        executable = shutil.which("exiftool")
+        """Query installed ExifTool; only an absent ExifTool returns the bundled seed, marked with the reason.
+
+        An installed ExifTool that fails (non-zero exit, timeout, bad XML, no Sony fields) raises.
+        """
+        unavailable = os.environ.get(EXIFTOOL_UNAVAILABLE_ENV)
+        executable = None if unavailable else shutil.which("exiftool")
         if executable is None:
-            return self.seed("ExifTool is not installed")
-        try:
-            version = subprocess.run([executable, "-ver"], capture_output=True, check=True, timeout=30)
-            result = subprocess.run([executable, "-listx"], capture_output=True, check=True, timeout=120)
-            registry = self.parse_catalogue(result.stdout)
-        except (OSError, subprocess.SubprocessError, ValueError, ET.ParseError) as error:
-            return self.seed(f"ExifTool catalogue unavailable: {type(error).__name__}: {error}")
+            return self.seed(unavailable or "ExifTool is not installed")
+        version = subprocess.run([executable, "-ver"], capture_output=True, check=True, timeout=30)
+        result = subprocess.run([executable, "-listx"], capture_output=True, check=True, timeout=120)
+        registry = self.parse_catalogue(result.stdout)
         registry["exiftool_version"] = version.stdout.decode("ascii", "replace").strip()
         return registry
 
@@ -111,3 +125,30 @@ class SonyMetadataRegistry:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(payload + "\n", encoding="utf-8")
         return destination
+
+
+def install_exiftool(directory: str | Path) -> Path | None:
+    """Install the pinned ExifTool release into ``directory`` and put it first on ``PATH``.
+
+    The download must match ``EXIFTOOL_SHA256`` before it is unpacked. If the download or the verification
+    fails, ExifTool counts as absent: this warns, returns None and keeps the reason in
+    ``EXIFTOOL_UNAVAILABLE_ENV``, so ``SonyMetadataRegistry.build`` records it with the bundled seed.
+    """
+    root = Path(directory)
+    try:
+        with urllib.request.urlopen(EXIFTOOL_URL, timeout=120) as response:
+            archive = response.read()
+        digest = hashlib.sha256(archive).hexdigest()
+        if digest != EXIFTOOL_SHA256:
+            raise ValueError(f"sha256 {digest} does not match the pinned {EXIFTOOL_SHA256}")
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
+            tar.extractall(root, filter="data")
+    except (OSError, ValueError, tarfile.TarError) as error:
+        reason = f"Pinned ExifTool {EXIFTOOL_VERSION} could not be installed: {type(error).__name__}: {error}"
+        os.environ[EXIFTOOL_UNAVAILABLE_ENV] = reason
+        warnings.warn(f"{reason}; the Sony tag registry uses the bundled seed.", stacklevel=2)
+        return None
+    os.environ.pop(EXIFTOOL_UNAVAILABLE_ENV, None)
+    bin_dir = root / f"Image-ExifTool-{EXIFTOOL_VERSION}"
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+    return bin_dir / "exiftool"

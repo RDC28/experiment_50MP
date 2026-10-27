@@ -1,5 +1,6 @@
 """Notebook structure plus bounded cell executions with Colab and pip mocked; never runs reconstruction."""
 
+import os
 import re
 import sys
 import types
@@ -50,19 +51,14 @@ def test_notebook_schema_and_order(notebook):
     assert headers == SECTIONS
 
 
-def _run_install_cell(source, ref, failing_refs, monkeypatch, *, colab=False, apt_exit=0, apt_calls=None):
-    """Execute the setup cell with REPO_REF replaced and pip, apt and Colab mocked; returns (namespace, refs).
+def _run_install_cell(source, ref, failing_refs, monkeypatch, *, colab=False):
+    """Execute the setup cell with REPO_REF replaced and pip and Colab mocked; returns (namespace, refs).
 
-    ExifTool starts missing. ``colab`` makes ``import google.colab`` succeed; apt commands are appended
-    to ``apt_calls`` and exit with ``apt_exit``.
+    ExifTool starts missing. ``colab`` makes ``import google.colab`` succeed.
     """
     calls = []
-    apt_calls = [] if apt_calls is None else apt_calls
 
     def fake_call(command):
-        if command[0] == "apt-get":
-            apt_calls.append(command)
-            return apt_exit
         assert command[:4] == [sys.executable, "-m", "pip", "install"]
         url, target = command[4].rsplit("@", 1)
         assert url == "git+https://github.com/RDC28/experiment_50MP.git" and len(command) == 5
@@ -111,35 +107,39 @@ def test_install_cell_pinned_sha_never_falls_back(install_source, monkeypatch):
         _run_install_cell(install_source, sha, {sha}, monkeypatch)
 
 
-def test_install_cell_skips_exiftool_outside_colab(install_source, monkeypatch, capsys):
-    apt_calls = []
-    _run_install_cell(install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch, apt_calls=apt_calls)
-    assert apt_calls == []
+@pytest.fixture
+def exiftool_installs(monkeypatch):
+    installs = []
+    monkeypatch.setattr("synthraw.sony_registry.install_exiftool", installs.append)
+    return installs
+
+
+def test_install_cell_skips_exiftool_outside_colab(install_source, monkeypatch, capsys, exiftool_installs):
+    _run_install_cell(install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch)
+    assert exiftool_installs == []
     assert "ExifTool: not installed" in capsys.readouterr().out
 
 
-def test_install_cell_installs_exiftool_on_colab(install_source, monkeypatch):
-    apt_calls = []
-    _run_install_cell(
-        install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch, colab=True, apt_calls=apt_calls
-    )
-    assert apt_calls == [["apt-get", "-qq", "update"], ["apt-get", "-qq", "install", "-y", "libimage-exiftool-perl"]]
+def test_install_cell_installs_the_pinned_exiftool_on_colab(install_source, monkeypatch, exiftool_installs):
+    namespace, calls = _run_install_cell(install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch, colab=True)
+    assert exiftool_installs == ["/content/exiftool"]
+    assert calls == ["fm/exp50mp-v3-synthetic-raw"] and namespace["INSTALLED_REF"] == "fm/exp50mp-v3-synthetic-raw"
 
 
-def test_install_cell_continues_with_the_seed_when_exiftool_cannot_be_installed(install_source, monkeypatch):
-    apt_calls = []
+def test_install_cell_continues_with_the_seed_when_exiftool_cannot_be_downloaded(install_source, monkeypatch, capsys):
+    from synthraw.sony_registry import EXIFTOOL_UNAVAILABLE_ENV
+
+    def offline(url, timeout):
+        raise OSError("offline")
+
+    monkeypatch.setattr("urllib.request.urlopen", offline)
+    monkeypatch.setenv(EXIFTOOL_UNAVAILABLE_ENV, "")
+    monkeypatch.delenv(EXIFTOOL_UNAVAILABLE_ENV)
     with pytest.warns(UserWarning, match="bundled seed"):
-        namespace, calls = _run_install_cell(
-            install_source,
-            "fm/exp50mp-v3-synthetic-raw",
-            set(),
-            monkeypatch,
-            colab=True,
-            apt_exit=100,
-            apt_calls=apt_calls,
-        )
-    assert apt_calls == [["apt-get", "-qq", "update"]]
+        namespace, _ = _run_install_cell(install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch, colab=True)
     assert namespace["INSTALLED_REF"] == "fm/exp50mp-v3-synthetic-raw"
+    assert "OSError: offline" in os.environ[EXIFTOOL_UNAVAILABLE_ENV]
+    assert "ExifTool: not installed" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("ref", ["v1.0", "some-branch", "0123456", "0123456789abcdef0123456789abcdef0123456g"])

@@ -13,6 +13,21 @@ from typing import Any
 from synthraw.config import ExperimentConfig
 from synthraw.provenance import FieldRecord, Provenance
 
+# The Sony capture fields capture_inputs derives; GENERATE_SYNTHETIC_EXIF = False suppresses only these.
+CAPTURE_FIELDS = frozenset(
+    (
+        "ExposureTime",
+        "SonyExposureTime2",
+        "SonyFNumber",
+        "SonyISO",
+        "BaseISO",
+        "StopsAboveBaseISO",
+        "ShutterType",
+        "WhiteBalance",
+        "ColorTemperature",
+    )
+)
+
 
 def _unobservable(lower: str) -> bool:
     """Body temperatures and battery state; the scene ColorTemperature is a WB field."""
@@ -146,9 +161,9 @@ class SonyARWEmulationBuilder:
                 provenance=None,
                 confidence=None,
                 unsupported_reason=(
-                    "No verified value or emulation policy is available"
-                    if config.GENERATE_SYNTHETIC_EXIF
-                    else "GENERATE_SYNTHETIC_EXIF is False: no inferred or fabricated capture value is written"
+                    "GENERATE_SYNTHETIC_EXIF is False: no inferred or fabricated capture value is written"
+                    if name in CAPTURE_FIELDS and not config.GENERATE_SYNTHETIC_EXIF
+                    else "No verified value or emulation policy is available"
                 ),
             )
             if name in fixed:

@@ -27,10 +27,13 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
    branch no longer exists it warns and installs `main`, and `INSTALLED_REF` records what was installed. A
    release should pin `REPO_REF` to the full 40-character SHA of the merged commit on `main`: a pinned SHA is
    installed exactly or the cell fails, it never falls back. Any other value (a tag, a short SHA, another branch)
-   is rejected. On Colab the same cell installs ExifTool with `apt-get` (`libimage-exiftool-perl`), so
-   `sony_tag_registry.json` is built from ExifTool's current Sony catalogue and records the ExifTool version.
-   If the install or the catalogue query fails, the run continues with the bundled seed
-   (`seed_only: true`, with `fallback_reason`) and lists that fallback in `run_report.json`.
+   is rejected. On Colab the same cell installs a pinned current ExifTool release (`EXIFTOOL_VERSION` in
+   `src/synthraw/sony_registry.py`) from the exiftool.org download link. The archive must match its pinned
+   sha256 before it is unpacked, and ExifTool runs with the system Perl, so `sony_tag_registry.json` is built
+   from that release's Sony catalogue and records the ExifTool version. If the download or the verification
+   fails, ExifTool counts as absent: the run continues with the bundled seed (`seed_only: true`, with the reason
+   in `fallback_reason`) and lists that fallback in `run_report.json`. An installed ExifTool whose catalogue
+   query fails (an error, a timeout, bad XML or no Sony fields) stops the run instead.
 2. Set the configuration panel. Every control is an `ExperimentConfig` field. The ones you will usually
    change are: `INPUT_MODE` (`UPLOAD`, `PATH` or `DRIVE`, with `INPUT_PATH`), `OUTPUT_GEOMETRY`
    (`SONY_A1II_NATIVE` 8640 x 5760 or `CINEMA_50MP_VIRTUAL` about 50.1 MP at the source aspect ratio),
@@ -134,8 +137,8 @@ hard gate passing, and `comparison_2k_vs_4k.html`. Tiny runs also cover the loss
 pixels and developed TIFF), three noise realisations and `GENERATE_SYNTHETIC_EXIF = False`. The notebook "Run all" test
 (`tests/synthraw/test_notebook_run_all.py`) runs by default: it executes every cell after the pip install on
 a 48 x 20 PNG with Colab mocked. **Still to verify in Colab:** a full-size 50 MP run, learned SR (SwinIR, HAT,
-Real-ESRGAN) with downloaded weights, GPU memory fallbacks, the ExifTool install and dynamic Sony registry on
-a stock Colab runtime (tested locally with ExifTool mocked), and the validation and comparison reports
+Real-ESRGAN) with downloaded weights, GPU memory fallbacks, the pinned ExifTool download and dynamic Sony registry
+on a stock Colab runtime (tested locally with the download mocked), and the validation and comparison reports
 produced at full resolution.
 
 [docs/prd_v3_checklist.md](docs/prd_v3_checklist.md) maps every item of the PRD delivery checklist and every

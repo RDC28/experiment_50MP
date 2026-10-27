@@ -1,14 +1,27 @@
 """Tiny, offline Sony catalogue fixtures for PRD_v3 metadata discovery."""
 
+import hashlib
+import io
 import json
+import os
 import subprocess
+import tarfile
+import urllib.error
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from synthraw.sony_registry import SonyMetadataRegistry
+from synthraw import sony_registry
+from synthraw.sony_registry import (
+    EXIFTOOL_UNAVAILABLE_ENV,
+    EXIFTOOL_URL,
+    EXIFTOOL_VERSION,
+    SonyMetadataRegistry,
+    install_exiftool,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "exiftool_sony_listx.xml"
 
@@ -92,31 +105,103 @@ def test_missing_exiftool_records_why_the_seed_is_used():
 
 
 @pytest.mark.parametrize(
-    "failure",
+    "stage, failure, error",
     [
-        subprocess.CalledProcessError(1, "exiftool"),
-        subprocess.TimeoutExpired("exiftool", 120),
-        PermissionError("exiftool"),
-        SimpleNamespace(stdout=b"<taginfo/>"),
-        SimpleNamespace(stdout=b"not xml"),
+        *[
+            (stage, failure, type(failure))
+            for stage in ("-ver", "-listx")
+            for failure in (
+                subprocess.CalledProcessError(1, "exiftool"),
+                subprocess.TimeoutExpired("exiftool", 120),
+                PermissionError("exiftool"),
+            )
+        ],
+        ("-listx", SimpleNamespace(stdout=b"<taginfo/>"), ValueError),
+        ("-listx", SimpleNamespace(stdout=b"not xml"), ET.ParseError),
     ],
 )
-def test_exiftool_failure_falls_back_to_the_seed_with_the_reason_recorded(failure):
+def test_exiftool_failure_does_not_silently_downgrade_to_seed(stage, failure, error):
     def run(command, **kwargs):
-        if command[1] == "-ver":
-            return SimpleNamespace(stdout=b"13.36\n")
-        if isinstance(failure, BaseException):
-            raise failure
-        return failure
+        if command[1] == stage:
+            if isinstance(failure, BaseException):
+                raise failure
+            return failure
+        return SimpleNamespace(stdout=b"13.36\n" if command[1] == "-ver" else FIXTURE.read_bytes())
 
     with (
         patch("synthraw.sony_registry.shutil.which", return_value="/bin/exiftool"),
         patch("synthraw.sony_registry.subprocess.run", side_effect=run),
+        pytest.raises(error),
+    ):
+        SonyMetadataRegistry().build()
+
+
+def _release(script):
+    """A gzip tarball laid out like the ExifTool release, with ``script`` as its exiftool."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        data = script.encode()
+        member = tarfile.TarInfo(f"Image-ExifTool-{EXIFTOOL_VERSION}/exiftool")
+        member.size, member.mode = len(data), 0o755
+        tar.addfile(member, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def environment(monkeypatch):
+    """Restore PATH and the install-failure reason after each install test."""
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
+    monkeypatch.setenv(EXIFTOOL_UNAVAILABLE_ENV, "")
+    monkeypatch.delenv(EXIFTOOL_UNAVAILABLE_ENV)
+    return monkeypatch
+
+
+def test_install_exiftool_verifies_the_pinned_release_and_the_registry_uses_it(environment, tmp_path):
+    archive = _release(f'#!/bin/sh\nif [ "$1" = -ver ]; then echo {EXIFTOOL_VERSION}; else cat "{FIXTURE}"; fi\n')
+    requested = []
+
+    def urlopen(url, timeout):
+        requested.append(url)
+        return io.BytesIO(archive)
+
+    environment.setattr(sony_registry.urllib.request, "urlopen", urlopen)
+    environment.setattr(sony_registry, "EXIFTOOL_SHA256", hashlib.sha256(archive).hexdigest())
+    executable = install_exiftool(tmp_path / "exiftool")
+    assert requested == [EXIFTOOL_URL]
+    assert executable == tmp_path / "exiftool" / f"Image-ExifTool-{EXIFTOOL_VERSION}" / "exiftool"
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(executable.parent)
+    assert EXIFTOOL_UNAVAILABLE_ENV not in os.environ
+    registry = SonyMetadataRegistry().build()
+    assert registry["source"] == "exiftool-listx" and registry["seed_only"] is False
+    assert registry["exiftool_version"] == EXIFTOOL_VERSION and len(registry["fields"]) == 6
+
+
+def _tampered(url, timeout):
+    return io.BytesIO(_release("#!/bin/sh\n"))
+
+
+def _offline(url, timeout):
+    raise urllib.error.URLError("offline")
+
+
+@pytest.mark.parametrize(
+    "urlopen, reason", [(_tampered, "sha256 "), (_offline, "URLError")], ids=["hash-mismatch", "download-failure"]
+)
+def test_failed_exiftool_install_counts_as_absent_with_the_reason_recorded(environment, tmp_path, urlopen, reason):
+    path = os.environ["PATH"]
+    environment.setattr(sony_registry.urllib.request, "urlopen", urlopen)
+    with pytest.warns(UserWarning, match="bundled seed"):
+        assert install_exiftool(tmp_path / "exiftool") is None
+    assert not (tmp_path / "exiftool").exists() and os.environ["PATH"] == path
+    # Any other ExifTool on PATH is not used either.
+    with (
+        patch("synthraw.sony_registry.shutil.which", return_value="/bin/exiftool"),
+        patch("synthraw.sony_registry.subprocess.run", side_effect=AssertionError("ExifTool must not run")),
     ):
         registry = SonyMetadataRegistry().build()
     assert registry["seed_only"] is True and registry["source"] == "bundled-seed"
-    assert registry["fallback_reason"].startswith("ExifTool catalogue unavailable: ")
-    assert registry["fields"] and json.dumps(registry, allow_nan=False)
+    assert registry["fallback_reason"].startswith(f"Pinned ExifTool {EXIFTOOL_VERSION} could not be installed: ")
+    assert reason in registry["fallback_reason"]
 
 
 @pytest.mark.parametrize(
