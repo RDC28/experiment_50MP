@@ -55,6 +55,34 @@ def bundle_run(
     return target
 
 
+def drive_run_folder(mount_path: str | Path, *, mount: bool) -> tuple[Path | None, str | None]:
+    """Return ``MyDrive/synthraw_runs`` under ``mount_path``, mounting Google Drive first when ``mount`` is set.
+
+    An already mounted Drive is used as is. A declined or failed mount returns a warning instead of
+    raising: the full-resolution intermediates then exist only on the Colab runtime.
+    """
+    my_drive = Path(mount_path, "MyDrive")
+    if not my_drive.is_dir() and mount:
+        try:
+            from google.colab import drive
+
+            drive.mount(str(mount_path))
+        except Exception as error:
+            reason = f"{type(error).__name__}: {error}"
+        else:
+            reason = None if my_drive.is_dir() else f"{my_drive} not found after mounting"
+        if reason is not None:
+            return None, (
+                f"Google Drive was not mounted ({reason}); the full-resolution intermediates exist only on this "
+                "Colab runtime and are lost when it recycles"
+            )
+    if not my_drive.is_dir():
+        return None, None
+    folder = my_drive / "synthraw_runs"
+    folder.mkdir(exist_ok=True)
+    return folder, None
+
+
 def deliver_bundle(
     bundle: str | Path,
     *,
@@ -78,7 +106,8 @@ def deliver_bundle(
     if files is not None:
         if size > max_download_bytes:
             status["download"] = (
-                f"skipped: {size / 1e6:.0f} MB exceeds the {max_download_bytes / 1e6:.0f} MB browser download limit"
+                f"skipped: {size / 1024**2:.0f} MB exceeds the {max_download_bytes / 1024**2:.0f} MB "
+                "browser download limit"
             )
         else:
             files.download(str(bundle))

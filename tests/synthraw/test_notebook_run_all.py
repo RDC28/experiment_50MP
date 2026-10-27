@@ -98,6 +98,7 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
     assert run_report["comparison_2k_vs_4k"]["status"] == "COMPLETED"
     # The notebook runs the same stage code as run_pipeline, in the same order.
     assert run_report["stages"] == list(STAGES)
+    assert run_report["warnings"] == []
     comparison = json.loads((root / "validation" / "comparison_2k_vs_4k.json").read_text())
     assert comparison["locked_mismatches"] == {}
     for name in ("validation_results.json", "validation_report.html", "comparison_2k_vs_4k.html"):

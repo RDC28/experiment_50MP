@@ -454,3 +454,39 @@ def test_run_report_requires_every_stage(source_png, tmp_path):
     finally:
         pipeline.close()
     assert not (pipeline.run.root / "validation/run_report.json").exists()
+
+
+def test_rerunning_stages_after_editing_a_hypothesis_refreshes_the_run(source_png, tmp_path):
+    """Regression: notebook reruns duplicated checkpoints, kept stale metadata groups and fallbacks."""
+    from synthraw.pipeline import PipelineRun
+    from synthraw.validation import MetadataDependencyValidator
+
+    config = ExperimentConfig(FAST_DEV_RUN=True)
+    pipeline = PipelineRun.create(source_png, config, tmp_path / "runs", fast_dev_max_side=96, strip_rows=16)
+    root = pipeline.run.root
+    try:
+        for name in STAGES:
+            pipeline.run_stage(name)
+        first_fallbacks = list(pipeline.fallbacks)
+        assert any(message.startswith("SR SWINIR") for message in first_fallbacks)
+        first_neutral = _records(root / "metadata/dng_metadata.json")["AsShotNeutral"]["value"]
+
+        pipeline.options["manual_wb"] = {"manual_cct": 3200.0}
+        pipeline.run_stage("camera_exposure")
+        with pytest.raises(RuntimeError, match="every pipeline stage"):
+            pipeline.write_report()
+        with pytest.raises(RuntimeError, match="completed first"):
+            pipeline.run_stage("optics")
+        for name in STAGES[STAGES.index("inverse_isp") :]:
+            pipeline.run_stage(name)
+        report = pipeline.write_report()
+    finally:
+        pipeline.close()
+    assert report["stages"] == list(STAGES) and report["fallbacks"] == first_fallbacks
+    neutral = _records(root / "metadata/dng_metadata.json")["AsShotNeutral"]["value"]
+    assert neutral != pytest.approx(first_neutral)
+    groups = json.loads((root / "metadata/metadata.json").read_text())["groups"]
+    dng = {record["field"]: record["value"] for record in groups["dng"]}
+    assert dng["AsShotNeutral"] == pytest.approx(neutral)
+    check = MetadataDependencyValidator().validate(groups)
+    assert check.passed, check.measured["violations"]

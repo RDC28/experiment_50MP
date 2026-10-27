@@ -5,6 +5,7 @@ run against genuine run state without executing Colab code or downloading anythi
 """
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +37,7 @@ def notebook_state(tmp_path, monkeypatch):
 
         matplotlib.use("Agg")
         monkeypatch.setattr("synthraw.sony_registry.shutil.which", lambda _: None)
+        monkeypatch.setitem(sys.modules, "google.colab", None)
         rows, columns = np.mgrid[0:20, 0:48]
         rgb = np.stack([columns * 5, rows * 12, (columns + rows) * 3], axis=-1).astype(np.uint8)
         Image.fromarray(rgb).save(tmp_path / "scene.png")
@@ -103,3 +105,6 @@ def test_disabled_validation_and_comparison_are_reported_not_run(cells, notebook
     run_report = json.loads((root / "validation" / "run_report.json").read_text())
     assert run_report["status"] == "SUCCESS" and run_report["validation"] == "NOT RUN"
     assert run_report["comparison_2k_vs_4k"] is None
+    # Off Colab the Drive mount fails: the run still succeeds and the report warns where the arrays live.
+    (warning,) = run_report["warnings"]
+    assert "exist only on this Colab runtime" in warning

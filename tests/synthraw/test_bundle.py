@@ -3,11 +3,12 @@ import sys
 import types
 import zipfile
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from synthraw.bundle import bundle_run, deliver_bundle
+from synthraw.bundle import bundle_run, deliver_bundle, drive_run_folder
 from synthraw.pipeline import open_execution_log
 from synthraw.run_layout import RunLayout
 
@@ -123,6 +124,52 @@ def test_large_zip_skips_browser_download_and_drive_keeps_the_full_run(run, tmp_
     assert any(f"{run.root.name}/{name.as_posix()}" not in bundled for name in copied)
     assert deliver_bundle(bundle, drive_dir=drive, run_root=run.root, max_download_bytes=size)["download"] == "offered"
     assert downloads == [str(bundle)]
+
+
+def _colab_drive(monkeypatch, mount):
+    calls = []
+
+    def record(path):
+        calls.append(path)
+        mount(Path(path))
+
+    google = types.ModuleType("google")
+    colab = types.ModuleType("google.colab")
+    colab.drive = types.SimpleNamespace(mount=record)
+    google.colab = colab
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.colab", colab)
+    return calls
+
+
+def test_drive_is_mounted_for_the_intermediates_when_not_mounted(tmp_path, monkeypatch):
+    calls = _colab_drive(monkeypatch, lambda path: (path / "MyDrive").mkdir(parents=True))
+    folder, warning = drive_run_folder(tmp_path / "drive", mount=True)
+    assert calls == [str(tmp_path / "drive")] and warning is None
+    assert folder == tmp_path / "drive" / "MyDrive" / "synthraw_runs" and folder.is_dir()
+
+
+def test_already_mounted_drive_is_used_without_a_prompt(tmp_path, monkeypatch):
+    (tmp_path / "drive" / "MyDrive").mkdir(parents=True)
+    calls = _colab_drive(monkeypatch, lambda path: pytest.fail("Drive is already mounted"))
+    for mount in (True, False):
+        folder, warning = drive_run_folder(tmp_path / "drive", mount=mount)
+        assert folder == tmp_path / "drive" / "MyDrive" / "synthraw_runs" and warning is None
+    assert calls == []
+
+
+def test_declined_drive_mount_warns_and_never_raises(tmp_path, monkeypatch):
+    def decline(path):
+        raise ValueError("mount failed: credential propagation was unsuccessful")
+
+    calls = _colab_drive(monkeypatch, decline)
+    folder, warning = drive_run_folder(tmp_path / "drive", mount=True)
+    assert folder is None and len(calls) == 1
+    assert "credential propagation" in warning and "exist only on this Colab runtime" in warning
+    monkeypatch.setitem(sys.modules, "google.colab", None)
+    folder, warning = drive_run_folder(tmp_path / "drive", mount=True)
+    assert folder is None and warning.startswith("Google Drive was not mounted (ModuleNotFoundError")
+    assert drive_run_folder(tmp_path / "drive", mount=False) == (None, None)
 
 
 def test_execution_log_rebinding_closes_previous_run(tmp_path):

@@ -46,8 +46,10 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
 4. Everything goes into one `/content/synthraw_runs/run_YYYYMMDD_HHMMSS/` folder. The notebook ends by
    building `<run>.zip` without the full-resolution `intermediates/` and `confidence/` arrays
    (`BUNDLE_EXCLUDE_LARGE_ARRAYS = True`). It offers the zip as a browser download unless it is larger than
-   `BROWSER_DOWNLOAD_MAX_MB`. When Drive is mounted it copies the zip and the whole run folder, intermediates
-   included, to Drive.
+   `BROWSER_DOWNLOAD_MAX_MB`. It copies the zip and the whole run folder, intermediates included, to Drive,
+   mounting Drive first (the usual Colab prompt) when it is not mounted yet. If the mount is declined or
+   fails, the run still completes, and both the cell output and `run_report.json` warn that the
+   full-resolution intermediates exist only on the Colab runtime.
 
 **Outputs** (under the run folder)
 

@@ -208,9 +208,20 @@ class PipelineRun:
         _close_handlers(self.logger)
 
     def run_stage(self, name: str) -> None:
-        """Run, checkpoint and free one ``STAGES`` entry; a failure stops the whole chain."""
+        """Run, checkpoint and free one ``STAGES`` entry in chain order; a failure stops the whole chain.
+
+        Running a stage again (for example after editing a notebook hypothesis) discards its checkpoint and
+        every later one, with their fallbacks, so the later stages must run again before a run report.
+        """
         if name not in STAGES:
             raise ValueError(f"Unknown pipeline stage: {name}")
+        index = STAGES.index(name)
+        completed = [checkpoint["stage"] for checkpoint in self.checkpoints]
+        if completed[:index] != list(STAGES[:index]):
+            raise RuntimeError(f"Stage {name} needs {list(STAGES[:index])} completed first; completed {completed}")
+        del self.checkpoints[index:]
+        self.fallbacks = [message for checkpoint in self.checkpoints for message in checkpoint["fallbacks"]]
+        recorded = len(self.fallbacks)
         self.log(f"stage {name}: start")
         started = time.perf_counter()
         try:
@@ -221,14 +232,17 @@ class PipelineRun:
         finally:
             release_memory()
         seconds = time.perf_counter() - started
-        self.checkpoints.append({"stage": name, "seconds": seconds})
+        self.checkpoints.append({"stage": name, "seconds": seconds, "fallbacks": self.fallbacks[recorded:]})
         _write_json(self.path("logs", "checkpoints.json"), {"completed": self.checkpoints})
         self.log(f"stage {name}: done in {seconds:.3f} s")
 
-    def write_report(self, *, validation: Any = None, comparison: Any = None) -> dict[str, Any]:
+    def write_report(
+        self, *, validation: Any = None, comparison: Any = None, warnings: Iterable[str] = ()
+    ) -> dict[str, Any]:
         """Write validation/run_report.json for a completed chain; a failed validation hard gate is FAILED.
 
         No report is written unless every stage completed, so a hard failure never leaves a success report.
+        ``warnings`` are recorded without changing the status.
         """
         completed = [checkpoint["stage"] for checkpoint in self.checkpoints]
         if completed != list(STAGES):
@@ -243,6 +257,7 @@ class PipelineRun:
             ),
             "stages": completed,
             "fallbacks": self.fallbacks,
+            "warnings": list(warnings),
             "dng": "raw/synthetic_50mp.dng",
             "libraw_reopened": True,
         }
@@ -630,12 +645,12 @@ class PipelineRun:
             _write_json(metadata_dir / "sony_arw_emulation.json", emulation)
         ProvenanceWriter().write(list(self.dng_records.values()), metadata_dir / "dng_metadata.json")
         self.camera_profile.write(metadata_dir)
-        self.groups = {
+        fresh = {
             "dng": list(self.dng_records.values()),
             "camera_profile": list(self.camera_profile.camera.values()),
             "sensor_profile": list(self.camera_profile.sensor.values()),
-            **self.groups,
         }
+        self.groups = fresh | {name: records for name, records in self.groups.items() if name not in fresh}
         if self.config.WRITE_METADATA_JSON:
             ProvenanceWriter().write_metadata(self.groups, metadata_dir / "metadata.json")
 
