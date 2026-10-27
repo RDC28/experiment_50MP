@@ -140,20 +140,17 @@ class SuperResolutionEngine:
 
     @staticmethod
     def plan_scale(*, source_width: int, source_height: int, content_width: int, content_height: int) -> SRScalePlan:
-        """Select x4 up to 2K, otherwise nearest x2/x4 to the required scale.
+        """Always run the model at x4; the exact resize then reaches the content size.
 
-        Content dimensions describe the visible source crop after geometry
-        planning. Pass that crop's dimensions as source dimensions for crop
-        mode. Larger sources use the maximum axis ratio so both content axes
-        are considered; ties prefer x4 to retain detail before exact resizing.
-        No sensor-sized arrays or model checkpoints are allocated here.
+        The pinned learned checkpoints are x4 only, so 2K and 4K sources use the same backend
+        and the 2K/4K comparison varies only source resolution. Content dimensions describe the
+        visible source crop after geometry planning. No sensor-sized arrays or model
+        checkpoints are allocated here.
         """
         dimensions = (source_width, source_height, content_width, content_height)
         if any(type(value) is not int or value < 1 for value in dimensions):
             raise ValueError("Source and content dimensions must be positive integers")
-        required = max(content_width / source_width, content_height / source_height)
-        scale = 4 if max(source_width, source_height) <= 2048 or required >= 3 else 2
-        return SRScalePlan(scale, (source_width * scale, source_height * scale), (content_width, content_height))
+        return SRScalePlan(4, (source_width * 4, source_height * 4), (content_width, content_height))
 
     def reconstruct(
         self,
@@ -505,7 +502,7 @@ def resize_exact(
 ) -> Path:
     """Resize SR to exact content dimensions with bounded-memory Lanczos-3.
 
-    PRD model selection requires an exact resize after x2/x4 inference. Pixel
+    PRD model selection requires an exact resize after x4 inference. Pixel
     centres align across grids; downsampling widens the antialiasing kernel.
     Optional source_box uses pixel-edge coordinates (left, top, right, bottom),
     allowing the geometry planner's fractional crop without early rounding.

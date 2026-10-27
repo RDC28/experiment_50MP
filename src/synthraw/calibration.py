@@ -101,7 +101,13 @@ def calibrate_sensor(profile: CameraProfile, config: ExperimentConfig, reference
             for spatial_var, noise, signal in zip(spatial, temporal, signals, strict=True)
         ]
     )
-    dependencies = [str(reference), *darks, *flats]
+    profile.sensor["calibration_frames"] = FieldRecord(
+        "calibration_frames",
+        [str(frame) for frame in (*darks, *flats)],
+        Provenance.DETERMINISTIC,
+        "User-supplied dark and flat calibration captures",
+    )
+    dependencies = ["reference_raw", "calibration_frames"]
     for field, value, unit in (
         ("BlackLevel", black, "DN"),
         ("conversion_gain_e_per_dn", float(gain), "electrons/DN"),

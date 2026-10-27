@@ -42,7 +42,9 @@ PRD_CROP_NAMES = ("face_skin", "hair", "saree_fabric", "jewellery", "smoke", "bo
 # Config keys that identify the input rather than a locked setting.
 INPUT_CONFIG_KEYS = frozenset({"INPUT_MODE", "INPUT_PATH", "DRIVE_MOUNT_PATH"})
 # Sensor-profile fields that follow the (compared, not locked) exposure posterior.
-EXPOSURE_DERIVED_FIELDS = frozenset({"applied_exposure_time_s", "applied_exposure_scale"})
+EXPOSURE_DERIVED_FIELDS = frozenset(
+    {"applied_exposure_time_s", "applied_exposure_scale", "applied_analogue_gain", "applied_adc_analogue_gain"}
+)
 GEOMETRY_KEYS = ("width", "height", "active_area", "default_crop_origin", "default_crop_size")
 DNG_COLOUR_FIELDS = (
     "Make",

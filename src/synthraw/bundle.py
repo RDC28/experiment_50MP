@@ -12,6 +12,8 @@ from synthraw.run_layout import RUN_DIRECTORIES
 
 # Disk-backed full-resolution arrays; every other PRD tree file is always bundled.
 LARGE_ARRAY_DIRECTORIES = ("intermediates", "confidence")
+# Larger zips are not offered as a browser download; the Drive copy still carries them.
+MAX_BROWSER_DOWNLOAD_BYTES = 2 * 1024**3
 
 
 def bundle_run(
@@ -53,24 +55,41 @@ def bundle_run(
     return target
 
 
-def deliver_bundle(bundle: str | Path, *, drive_dir: str | Path | None = None) -> dict[str, Any]:
-    """Offer the zip via google.colab.files when present and copy it to a mounted Drive folder.
+def deliver_bundle(
+    bundle: str | Path,
+    *,
+    drive_dir: str | Path | None = None,
+    run_root: str | Path | None = None,
+    max_download_bytes: int = MAX_BROWSER_DOWNLOAD_BYTES,
+) -> dict[str, Any]:
+    """Offer the zip via google.colab.files and copy it, plus the full ``run_root`` tree, to mounted Drive.
 
-    Neither delivery path is required: unavailable channels are reported, not raised.
+    A zip larger than ``max_download_bytes`` is not offered to the browser. The Drive copy of
+    ``run_root`` keeps every full-resolution intermediate a lightweight bundle omits. No delivery
+    channel is required: unavailable channels are reported, not raised.
     """
     bundle = Path(bundle)
+    size = bundle.stat().st_size
     status: dict[str, Any] = {"bundle": str(bundle), "download": "unavailable", "drive_copy": None}
     try:
         from google.colab import files
     except ImportError:
         files = None
     if files is not None:
-        files.download(str(bundle))
-        status["download"] = "offered"
+        if size > max_download_bytes:
+            status["download"] = (
+                f"skipped: {size / 1e6:.0f} MB exceeds the {max_download_bytes / 1e6:.0f} MB browser download limit"
+            )
+        else:
+            files.download(str(bundle))
+            status["download"] = "offered"
     if drive_dir is not None:
         drive = Path(drive_dir)
         if drive.is_dir():
             status["drive_copy"] = str(shutil.copy2(bundle, drive / bundle.name))
+            if run_root is not None:
+                run_root = Path(run_root)
+                status["drive_run_copy"] = str(shutil.copytree(run_root, drive / run_root.name, dirs_exist_ok=True))
         else:
             status["drive_copy"] = f"skipped: {drive} is not a mounted directory"
     return status

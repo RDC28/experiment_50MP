@@ -126,19 +126,77 @@ def _new_memmap(path: Path, dtype: Any, shape: tuple[int, ...]) -> np.memmap:
     return np.lib.format.open_memmap(path, mode="w+", dtype=dtype, shape=shape)
 
 
-class _PipelineRun:
-    """Mutable run state: stage outputs are paths, records and small scalars only."""
+class PipelineRun:
+    """Mutable run state shared by ``run_pipeline`` and the notebook: paths, records and small scalars only.
+
+    Each notebook section calls ``run_stage`` for its stage, so both drivers execute one definition of the chain.
+    """
 
     def __init__(self, source: Path, config: ExperimentConfig, layout: RunLayout, options: dict[str, Any]) -> None:
         self.source = source
         self.config = config
         self.run = layout
         self.options = options
-        self.strip_rows = options["strip_rows"]
         self.fallbacks: list[str] = []
         self.checkpoints: list[dict[str, Any]] = []
         self.groups: dict[str, list[FieldRecord]] = {}
         self.logger = open_execution_log(layout, f"synthraw.pipeline.{layout.root.name}.{id(self)}")
+
+    @classmethod
+    def create(
+        cls,
+        source_path: str | Path,
+        config: ExperimentConfig,
+        output_root: str | Path,
+        *,
+        environment: EnvironmentReport | None = None,
+        timestamp: datetime | None = None,
+        fast_dev_max_side: int = 512,
+        accept_licence: bool = False,
+        scene_ev100: float = 10.0,
+        manual_exposure: tuple[float, float, int] | None = None,
+        manual_wb: dict[str, float] | None = None,
+        manual_fov_degrees: float | None = None,
+        strip_rows: int = 128,
+        c2pa_signer: Any = None,
+    ) -> PipelineRun:
+        """Validate the request, create a new run_YYYYMMDD_HHMMSS tree and write its environment logs.
+
+        ``options`` keeps the keyword settings under their ``run_pipeline`` names, so a second run
+        can reuse them unchanged.
+        """
+        if not config.WRITE_DNG:
+            raise ValueError("run_pipeline requires WRITE_DNG: the DNG is the primary deliverable")
+        if type(strip_rows) is not int or strip_rows < 2:
+            raise ValueError("strip_rows must be an integer of at least 2")
+        source = Path(source_path)
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        layout = RunLayout.create(output_root, timestamp=timestamp)
+        options = {
+            "fast_dev_max_side": fast_dev_max_side,
+            "accept_licence": accept_licence,
+            "scene_ev100": scene_ev100,
+            "manual_exposure": manual_exposure,
+            "manual_wb": manual_wb,
+            "manual_fov_degrees": manual_fov_degrees,
+            "strip_rows": strip_rows,
+            "c2pa_signer": c2pa_signer,
+        }
+        state = cls(source, config, layout, options)
+        try:
+            state.environment = environment or EnvironmentInspector().inspect(layout.root)
+            write_run_logs(layout, state.environment)
+        except BaseException as error:
+            state.logger.error(f"pipeline FAILED: {type(error).__name__}: {error}")
+            state.close()
+            raise
+        state.log(f"synthraw {SOFTWARE_VERSION}; source {source.name}; geometry {config.OUTPUT_GEOMETRY}")
+        return state
+
+    @property
+    def strip_rows(self) -> int:
+        return self.options["strip_rows"]
 
     def path(self, directory: str, name: str) -> Path:
         return self.run.directory(directory) / name
@@ -149,12 +207,14 @@ class _PipelineRun:
     def close(self) -> None:
         _close_handlers(self.logger)
 
-    def stage(self, name: str, function: Callable[[], None]) -> None:
-        """Run, checkpoint and free one stage; a failure stops the whole chain."""
+    def run_stage(self, name: str) -> None:
+        """Run, checkpoint and free one ``STAGES`` entry; a failure stops the whole chain."""
+        if name not in STAGES:
+            raise ValueError(f"Unknown pipeline stage: {name}")
         self.log(f"stage {name}: start")
         started = time.perf_counter()
         try:
-            function()
+            getattr(self, name)()
         except BaseException as error:
             self.logger.error(f"stage {name}: FAILED: {type(error).__name__}: {error}")
             raise
@@ -164,6 +224,31 @@ class _PipelineRun:
         self.checkpoints.append({"stage": name, "seconds": seconds})
         _write_json(self.path("logs", "checkpoints.json"), {"completed": self.checkpoints})
         self.log(f"stage {name}: done in {seconds:.3f} s")
+
+    def write_report(self, *, validation: Any = None, comparison: Any = None) -> dict[str, Any]:
+        """Write validation/run_report.json for a completed chain; a failed validation hard gate is FAILED.
+
+        No report is written unless every stage completed, so a hard failure never leaves a success report.
+        """
+        completed = [checkpoint["stage"] for checkpoint in self.checkpoints]
+        if completed != list(STAGES):
+            raise RuntimeError(f"Run report requires every pipeline stage; completed {completed}")
+        validation_status = "NOT RUN" if validation is None else validation.status
+        report = {
+            "status": "FAILED" if validation_status == "FAILED" else "SUCCESS",
+            "validation": validation_status,
+            "hard_failures": [] if validation is None else validation.to_dict()["hard_failures"],
+            "comparison_2k_vs_4k": (
+                None if comparison is None else {"status": comparison.status, "flags": comparison.flags}
+            ),
+            "stages": completed,
+            "fallbacks": self.fallbacks,
+            "dng": "raw/synthetic_50mp.dng",
+            "libraw_reopened": True,
+        }
+        _write_json(self.path("validation", "run_report.json"), report)
+        self.log(f"run report {report['status']}; validation {validation_status}")
+        return report
 
     # Stages follow PRD notebook order; each reloads disk checkpoints read-only.
 
@@ -348,6 +433,7 @@ class _PipelineRun:
         ProvenanceWriter().write(self.groups["optics"], self.path("metadata", "optical_parameters.json"))
 
     def electrons_noise(self) -> None:
+        from synthraw.exposure import exposure_and_gain
         from synthraw.sensor import ElectronSignalSimulator, SensorNoiseSimulator
 
         sensor = self.camera_profile.sensor
@@ -364,6 +450,9 @@ class _PipelineRun:
             )
         self.conversion_gain = sensor["conversion_gain_e_per_dn"].value
         exposure = self.exposure.records
+        gain_records = exposure_and_gain(self.config, exposure, self.camera_profile.camera)
+        sensor.update(gain_records)
+        self.analogue_gain = gain_records["applied_analogue_gain"].value
         self.noise_parameters = {
             "read_noise_e": sensor["read_noise_electrons"].value,
             "exposure_time_s": exposure["ExposureTime"].value,
@@ -381,7 +470,7 @@ class _PipelineRun:
         ElectronSignalSimulator().simulate(
             optical,
             full_well,
-            exposure_scale=self.options["exposure_scale"],
+            exposure_scale=gain_records["applied_exposure_scale"].value,
             strip_rows=self.strip_rows,
             out=expected,
         )
@@ -435,9 +524,7 @@ class _PipelineRun:
             "HOT_PIXELS",
             "DEAD_PIXELS",
         )
-        applied = {"exposure_scale": self.options["exposure_scale"]}
-        applied.update({name: getattr(self.config, name) for name in toggles})
-        for name, value in applied.items():
+        for name, value in {name: getattr(self.config, name) for name in toggles}.items():
             sensor[f"applied_{name}"] = FieldRecord(
                 f"applied_{name}", value, Provenance.DETERMINISTIC, "Explicit simulation configuration"
             )
@@ -475,6 +562,7 @@ class _PipelineRun:
             self.config,
             conversion_gain_e_per_dn=self.conversion_gain,
             read_noise_e=self.noise_parameters["read_noise_e"],
+            analogue_gain=self.analogue_gain,
             black_level=sensor["BlackLevel"].value,
             white_level=sensor["WhiteLevel"].value,
             strip_rows=self.strip_rows,
@@ -504,7 +592,7 @@ class _PipelineRun:
 
     def metadata(self) -> None:
         from synthraw.dng_metadata import EXPOSURE_FIELDS, DNGMetadataBuilder
-        from synthraw.sony_emulation import SonyARWEmulationBuilder
+        from synthraw.sony_emulation import SonyARWEmulationBuilder, capture_inputs
         from synthraw.sony_registry import SonyMetadataRegistry
 
         colour = self.colour_model.metadata()
@@ -529,6 +617,12 @@ class _PipelineRun:
             self.config,
             width=self.geometry_plan.width,
             height=self.geometry_plan.height,
+            inputs=capture_inputs(
+                registry,
+                exposure=self.exposure.records,
+                white_balance=self.white_balance.records,
+                camera=self.camera_profile.camera,
+            ),
             optical_records=self.optical_records,
         )
         _write_json(metadata_dir / "sony_tag_registry.json", registry)
@@ -552,9 +646,13 @@ class _PipelineRun:
         destination = self.path("raw", "synthetic_50mp.dng")
         # Stage on the same filesystem; only a LibRaw-validated file is published.
         self.staging = tempfile.TemporaryDirectory(prefix=".dng_export_", dir=self.run.directory("raw"))
-        self.staged_dng = DNGWriter().write(
-            Path(self.staging.name) / destination.name, mosaic, self.dng_records, self.config
-        )
+        try:
+            self.staged_dng = DNGWriter().write(
+                Path(self.staging.name) / destination.name, mosaic, self.dng_records, self.config
+            )
+        except BaseException:
+            self.staging.cleanup()
+            raise
         self.dng_path = destination
 
     def libraw_reopen(self) -> None:
@@ -597,7 +695,7 @@ class _PipelineRun:
 
     def provenance(self) -> None:
         tiled = self.sr_result.tiled
-        c2pa = write_run_provenance(
+        self.c2pa = write_run_provenance(
             self.run,
             self.config,
             source_original=self.source_original,
@@ -615,7 +713,7 @@ class _PipelineRun:
             c2pa_targets=[path for path in (self.tiff_path, self.preview_path) if path is not None],
             c2pa_signer=self.options["c2pa_signer"],
         )
-        self.log(f"C2PA: {c2pa['status']}")
+        self.log(f"C2PA: {self.c2pa['status']}")
 
 
 def _close_handlers(logger: logging.Logger) -> None:
@@ -727,7 +825,6 @@ def run_pipeline(
     manual_exposure: tuple[float, float, int] | None = None,
     manual_wb: dict[str, float] | None = None,
     manual_fov_degrees: float | None = None,
-    exposure_scale: float = 1.0,
     strip_rows: int = 128,
     c2pa_signer: Any = None,
 ) -> PipelineResult:
@@ -737,43 +834,28 @@ def run_pipeline(
     DNG is not published and no success report is written. ``validation/run_report.json``
     exists only for a completed run.
     """
-    if not config.WRITE_DNG:
-        raise ValueError("run_pipeline requires WRITE_DNG: the DNG is the primary deliverable")
-    if type(strip_rows) is not int or strip_rows < 2:
-        raise ValueError("strip_rows must be an integer of at least 2")
-    source = Path(source_path)
-    if not source.is_file():
-        raise FileNotFoundError(source)
-    layout = RunLayout.create(output_root, timestamp=timestamp)
-    options = {
-        "fast_dev_max_side": fast_dev_max_side,
-        "accept_licence": accept_licence,
-        "scene_ev100": scene_ev100,
-        "manual_exposure": manual_exposure,
-        "manual_wb": manual_wb,
-        "manual_fov_degrees": manual_fov_degrees,
-        "exposure_scale": exposure_scale,
-        "strip_rows": strip_rows,
-        "c2pa_signer": c2pa_signer,
-    }
-    state = _PipelineRun(source, config, layout, options)
+    state = PipelineRun.create(
+        source_path,
+        config,
+        output_root,
+        environment=environment,
+        timestamp=timestamp,
+        fast_dev_max_side=fast_dev_max_side,
+        accept_licence=accept_licence,
+        scene_ev100=scene_ev100,
+        manual_exposure=manual_exposure,
+        manual_wb=manual_wb,
+        manual_fov_degrees=manual_fov_degrees,
+        strip_rows=strip_rows,
+        c2pa_signer=c2pa_signer,
+    )
     try:
-        state.environment = environment or EnvironmentInspector().inspect(layout.root)
-        write_run_logs(layout, state.environment)
-        state.log(f"synthraw {SOFTWARE_VERSION}; source {source.name}; geometry {config.OUTPUT_GEOMETRY}")
         for name in STAGES:
-            state.stage(name, getattr(state, name))
-        report = {
-            "status": "SUCCESS",
-            "stages": [checkpoint["stage"] for checkpoint in state.checkpoints],
-            "fallbacks": state.fallbacks,
-            "dng": "raw/synthetic_50mp.dng",
-            "libraw_reopened": True,
-        }
-        _write_json(layout.directory("validation") / "run_report.json", report)
+            state.run_stage(name)
+        report = state.write_report()
         state.log("pipeline SUCCESS")
         return PipelineResult(
-            layout.root,
+            state.run.root,
             state.dng_path,
             state.tiff_path,
             state.exr_path,
@@ -788,7 +870,4 @@ def run_pipeline(
         state.logger.error(f"pipeline FAILED: {type(error).__name__}: {error}")
         raise
     finally:
-        staging = getattr(state, "staging", None)
-        if staging is not None:
-            staging.cleanup()
         state.close()

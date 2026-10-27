@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from synthraw.camera_profile import CameraProfile
+from synthraw.config import ExperimentConfig
 from synthraw.provenance import FieldRecord, Provenance
 
 # Nominal full stops. Longest shutter and aperture bounds are simulation hypotheses,
@@ -159,3 +161,39 @@ class ExposurePosteriorEstimator:
             "Joint alternatives normalized over the retained candidate set",
         )
         return ExposurePosterior(candidates, records)
+
+
+def exposure_and_gain(
+    config: ExperimentConfig, exposure: Mapping[str, FieldRecord], camera: Mapping[str, FieldRecord]
+) -> dict[str, FieldRecord]:
+    """Radiance-to-photoelectron scale and analogue gain applied by the sensor and ADC stages.
+
+    The leading ISO hypothesis over the profile base ISO (lowest standard ISO) is the analogue
+    gain, so the DNG ISO and the simulated shot/read noise agree. The scale maps the top of the
+    reconstructed HDR headroom (2^HDR_HIGHLIGHT_EV) to full well divided by that gain, which is
+    the ADC ceiling with the default full-well conversion gain: the reconstructed highlights
+    stay below WhiteLevel in the DNG and TIFF, and a higher ISO collects proportionally fewer
+    photoelectrons for the same DN.
+    """
+    iso = exposure["PhotographicSensitivity"]
+    base_iso = camera["iso_standard_range"].value[0]
+    gain = iso.value / base_iso
+    headroom_ev = config.HDR_HIGHLIGHT_EV if config.HDR_ENABLED else 0.0
+    return {
+        "applied_analogue_gain": FieldRecord(
+            "applied_analogue_gain",
+            gain,
+            iso.provenance,
+            "PhotographicSensitivity hypothesis over the profile base ISO",
+            dependencies=["PhotographicSensitivity", "iso_standard_range"],
+            disclaimer=iso.disclaimer,
+        ),
+        "applied_exposure_scale": FieldRecord(
+            "applied_exposure_scale",
+            2.0**-headroom_ev / gain,
+            iso.provenance,
+            "2^-HDR_HIGHLIGHT_EV over analogue gain: the top of the HDR headroom reaches full well / gain",
+            dependencies=["applied_analogue_gain"],
+            disclaimer=iso.disclaimer,
+        ),
+    }

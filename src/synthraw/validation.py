@@ -40,7 +40,6 @@ class ValidationThresholds:
     seam_ratio: float = 1.25
     noise_profile_rel_tol: float = 0.05
     noise_fit_r2: float = 0.95
-    neutral_tolerance: float = 1e-3
     wb_max_clipped_increase: float = 0.05
 
 
@@ -234,9 +233,6 @@ def libraw_camera_to_srgb(color_matrix: np.ndarray) -> np.ndarray:
 class ColourValidator:
     """PRD colour-profile consistency of the DNG ColorMatrix/AsShotNeutral contract."""
 
-    def __init__(self, thresholds: ValidationThresholds | None = None) -> None:
-        self.thresholds = thresholds or ValidationThresholds()
-
     def validate(
         self, records: Mapping[str, DNGFieldRecord], camera_samples: np.ndarray | None = None
     ) -> list[ValidationCheck]:
@@ -274,20 +270,7 @@ class ColourValidator:
                 target="AsShotNeutral maps to a positive XYZ white with plausible chromaticity",
             )
         )
-        # LibRaw-equivalent render: WB by 1/AsShotNeutral then rgb_cam must give equal channels.
         rgb_cam = libraw_camera_to_srgb(matrices["ColorMatrix2"])
-        balanced = (neutral / neutral) * 0.5
-        rendered = rgb_cam @ balanced
-        deviation = float(np.ptp(rendered) / rendered.mean()) if rendered.mean() > 0 else math.inf
-        checks.append(
-            ValidationCheck(
-                "as_shot_neutral_response",
-                "Colour",
-                deviation <= self.thresholds.neutral_tolerance,
-                measured={"rendered_neutral": rendered.tolist(), "relative_channel_spread": deviation},
-                target=f"neutral render channel spread <= {self.thresholds.neutral_tolerance}",
-            )
-        )
         weights = np.linspace(0, 1, 11)
         interpolated = [w * matrices["ColorMatrix1"] + (1 - w) * matrices["ColorMatrix2"] for w in weights]
         finite = [bool(np.isfinite(m).all() and abs(np.linalg.det(m)) > 1e-12) for m in interpolated]
@@ -364,6 +347,7 @@ class NoiseValidator:
         read_noise_e: float,
         black_level: float,
         white_level: int,
+        analogue_gain: float = 1.0,
         levels: Iterable[float] = DEFAULT_LEVELS,
         realisations: int = 32,
         patch: int = 32,
@@ -386,7 +370,8 @@ class NoiseValidator:
         means, variances, samples = [], [], {}
         profile = None
         for level in levels:
-            expected = np.full((patch, patch, 3), level * full_well_electrons)
+            # Levels are fractions of the ADC ceiling at this gain, as in the run's exposure scale.
+            expected = np.full((patch, patch, 3), level * full_well_electrons / analogue_gain)
             stack = np.empty((realisations, patch, patch))
             for index in range(realisations):
                 seeded = replace(flat_config, SENSOR_NOISE_SEED=flat_config.SENSOR_NOISE_SEED * 1000 + index + 1)
@@ -396,6 +381,7 @@ class NoiseValidator:
                     seeded,
                     conversion_gain_e_per_dn=conversion_gain_e_per_dn,
                     read_noise_e=read_noise_e,
+                    analogue_gain=analogue_gain,
                     black_level=black_level,
                     white_level=white_level,
                 )
@@ -437,6 +423,7 @@ class NoiseValidator:
                 "noise_profile_agreement",
                 "Noise",
                 bool(slope_error <= tol and offset_error <= tol),
+                hard=True,
                 measured={
                     "fitted_S": fit.slope,
                     "fitted_O": fit.offset,
@@ -523,6 +510,7 @@ class DemosaicValidator:
                 "demosaic_additional",
                 "Demosaic",
                 bool(extra) and not problems,
+                hard=True,
                 measured={"algorithms": status, "additional_developed": extra},
                 target="AMAZE where supported plus at least one more algorithm",
                 detail="AMAZE " + status.get("AMAZE", {"status": "not requested"})["status"],
@@ -597,6 +585,7 @@ class EditabilityValidator:
                 "exposure_range",
                 "Exposure",
                 monotonic and not jumps and nonfinite == 0,
+                hard=True,
                 measured={
                     "ev": list(self.EXPOSURES),
                     "mean_display_value": exposure_means,
@@ -609,6 +598,7 @@ class EditabilityValidator:
                 "white_balance_response",
                 "WB",
                 wb_monotonic and not blow_up and wb_nonfinite == 0,
+                hard=True,
                 measured={"renders": wb_stats, "clipped_increase": clipped_increase, "nonfinite": wb_nonfinite},
                 target="cool -> warm: R/G increases, B/G decreases, no channel blow-up",
             ),

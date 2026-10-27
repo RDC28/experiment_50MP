@@ -44,16 +44,17 @@ from synthraw.validation import (
 RESULTS_NAME = "validation_results.json"
 # Pipeline products compared by the optional two-run determinism check.
 DETERMINISM_ARRAYS = ("raw/sensor_mosaic_uint16.npy", "intermediates/03_scene_linear.npy")
-# Intermediates scanned for NaN/Inf, with physical lower/upper bounds where they exist.
+# Intermediates scanned for NaN/Inf, with physical lower/upper bounds where they exist. Noisy
+# electrons keep negative read-noise excursions for the ADC pedestal, so they are finite-only.
 HEALTH_ARRAYS: dict[str, tuple[float | None, float | None]] = {
     "03_scene_linear.npy": (None, None),
     "04_hdr_radiance.npy": (0.0, None),
     "05_camera_native_rgb.npy": (None, None),
     "06_optical_sensor_rgb.npy": (None, None),
     "07_expected_electrons.npy": (0.0, None),
-    "08_noisy_electrons.npy": (0.0, None),
+    "08_noisy_electrons.npy": (None, None),
     "09_clean_cfa.npy": (0.0, None),
-    "10_noisy_cfa.npy": (0.0, None),
+    "10_noisy_cfa.npy": (None, None),
 }
 
 
@@ -190,7 +191,7 @@ class ValidationRunner:
         camera = load(inter / "05_camera_native_rgb.npy")
         step = max(1, math.ceil(math.sqrt(camera.shape[0] * camera.shape[1] / self.camera_samples)))
         samples = np.asarray(camera[::step, ::step], dtype=np.float64).reshape(-1, 3)
-        checks.extend(ColourValidator(thresholds).validate(records, samples))
+        checks.extend(ColourValidator().validate(records, samples))
 
         say(f"flat-field noise test ({self.noise_realisations} realisations per level)")
         fit, profile = NoiseValidator(thresholds).measure(
@@ -200,6 +201,7 @@ class ValidationRunner:
                 _group_value(groups, "sensor_profile", "applied_adc_conversion_gain_e_per_dn")
             ),
             read_noise_e=float(_group_value(groups, "sensor_profile", "applied_adc_read_noise_e")),
+            analogue_gain=float(_group_value(groups, "sensor_profile", "applied_adc_analogue_gain")),
             black_level=black,
             white_level=white,
             realisations=self.noise_realisations,
@@ -214,6 +216,8 @@ class ValidationRunner:
             agree = bool(np.allclose(np.ravel(profile), np.ravel(dng_profile), rtol=1e-9, atol=0))
             noise_checks[0].measured["flat_profile_matches_dng"] = agree
             noise_checks[0].passed = bool(noise_checks[0].passed and agree)
+            if not agree:
+                noise_checks[0].detail = "flat-field ADC NoiseProfile differs from the DNG NoiseProfile"
         checks.extend(noise_checks)
 
         say("demosaic and editability renders")

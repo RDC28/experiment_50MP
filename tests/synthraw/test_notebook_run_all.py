@@ -1,15 +1,13 @@
 """Runtime > Run all of the Colab notebook on a tiny PNG with Colab mocked; never downloads anything.
 
-Opt-in: notebook execution runs only with SYNTHETIC_RAW_LAB_HEAVY_TESTS=1, like the cycle 1 notebook tests.
-The static structure checks in test_notebook_structure.py always run.
+Every cell after the pip install runs, in order, on a 48 x 20 PNG with FAST_DEV_RUN at 96 px, so the
+whole notebook finishes in seconds on a laptop.
 """
 
 import json
-import os
 import sys
 import types
 import zipfile
-from functools import partialmethod
 from pathlib import Path
 
 import numpy as np
@@ -19,10 +17,8 @@ import tifffile
 from PIL import Image
 from test_synthraw_pipeline import PRD_TREE
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("SYNTHETIC_RAW_LAB_HEAVY_TESTS") != "1",
-    reason="notebook execution is opt-in: set SYNTHETIC_RAW_LAB_HEAVY_TESTS=1",
-)
+from synthraw.bundle import LARGE_ARRAY_DIRECTORIES
+from synthraw.pipeline import STAGES
 
 NOTEBOOK = Path(__file__).resolve().parents[2] / "notebooks" / "synthetic_camera_raw_50mp_colab.ipynb"
 
@@ -60,7 +56,6 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
     import nbformat
 
     from synthraw.exporters import adobe_rgb_icc
-    from synthraw.geometry import TargetGeometryPlanner
     from synthraw.provenance import SCIENTIFIC_BOUNDARY
     from synthraw.run_layout import RunLayout
 
@@ -75,8 +70,6 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
             lambda cls, out, **kwargs: create(cls, runs if str(out) == "/content/synthraw_runs" else out, **kwargs)
         ),
     )
-    # FAST_DEV_RUN at 96 px keeps every array tiny on the Mac.
-    monkeypatch.setattr(TargetGeometryPlanner, "plan", partialmethod(TargetGeometryPlanner.plan, fast_dev_max_side=96))
     drive = tmp_path / "drive"
     (drive / "MyDrive").mkdir(parents=True)
     notebook = nbformat.read(NOTEBOOK, as_version=4)
@@ -93,6 +86,8 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
                 DRIVE_MOUNT_PATH=str(drive),
             )
             namespace["controls"] = {}
+        if index == 4:  # Input audit: FAST_DEV_RUN at 96 px keeps every array tiny on the Mac.
+            namespace["pipeline"].options["fast_dev_max_side"] = 96
 
     (root,) = (path for path in runs.iterdir() if path.is_dir() and not path.name.endswith("_comparison"))
     produced = {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()}
@@ -101,6 +96,10 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
     run_report = json.loads((root / "validation" / "run_report.json").read_text())
     assert run_report["status"] == "SUCCESS" and run_report["validation"] == "PASSED"
     assert run_report["comparison_2k_vs_4k"]["status"] == "COMPLETED"
+    # The notebook runs the same stage code as run_pipeline, in the same order.
+    assert run_report["stages"] == list(STAGES)
+    comparison = json.loads((root / "validation" / "comparison_2k_vs_4k.json").read_text())
+    assert comparison["locked_mismatches"] == {}
     for name in ("validation_results.json", "validation_report.html", "comparison_2k_vs_4k.html"):
         assert f"validation/{name}" in produced
 
@@ -125,9 +124,14 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
 
     bundle = runs / f"{root.name}.zip"
     assert colab.downloads == [str(bundle)]
-    assert (drive / "MyDrive" / "synthraw_runs" / bundle.name).read_bytes() == bundle.read_bytes()
+    drive_runs = drive / "MyDrive" / "synthraw_runs"
+    assert (drive_runs / bundle.name).read_bytes() == bundle.read_bytes()
     with zipfile.ZipFile(bundle) as archive:
         names = {name.removeprefix(f"{root.name}/") for name in archive.namelist()}
         assert archive.read(f"{root.name}/source/source_original.png") == colab.buffer.read_bytes()
-    assert PRD_TREE | {"logs/bundle_manifest.json"} <= names
-    assert names == produced | {"logs/bundle_manifest.json"}
+    large = {name for name in produced if name.split("/")[0] in LARGE_ARRAY_DIRECTORIES and name.endswith(".npy")}
+    assert large and not large & names
+    assert names == (produced - large) | {"logs/bundle_manifest.json"}
+    # The browser zip is light; the Drive copy of the run folder keeps every full-resolution intermediate.
+    for name in large | {"raw/synthetic_50mp.dng"}:
+        assert (drive_runs / root.name / name).read_bytes() == (root / name).read_bytes()

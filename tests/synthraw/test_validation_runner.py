@@ -22,7 +22,6 @@ EXPECTED_ROWS = {
     "metadata_dependencies",
     "color_matrix_invertible",
     "white_point_near_neutral",
-    "as_shot_neutral_response",
     "color_matrix_interpolation",
     "transform_finite_nonnegative",
     "noise_profile_agreement",
@@ -100,6 +99,59 @@ def test_negative_radiance_makes_the_run_failed(run_root, tmp_path):
     written = json.loads((root / "validation" / RESULTS_NAME).read_text())
     assert written["status"] == "FAILED"
     assert set(written["hard_failures"]) == {"numeric_health", "hdr_negative_radiance"}
+
+
+def test_negative_noisy_electrons_from_read_noise_are_healthy(run_root, tmp_path):
+    """Regression: zero-signal photosites go negative with read noise, which failed numeric_health."""
+    root = _copy(run_root, tmp_path)
+    for name in ("08_noisy_electrons.npy", "10_noisy_cfa.npy"):
+        path = root / "intermediates" / name
+        noisy = np.load(path)
+        noisy[:2] = -4.5
+        np.save(path, noisy)
+    rows = {check.name: check for check in ValidationRunner().run(root).checks}
+    assert rows["numeric_health"].passed, rows["numeric_health"].measured
+    path = root / "intermediates" / "10_noisy_cfa.npy"
+    noisy = np.load(path)
+    noisy[0, 0] = np.nan
+    np.save(path, noisy)
+    rows = {check.name: check for check in ValidationRunner().run(root).checks}
+    assert rows["numeric_health"].measured["arrays"]["10_noisy_cfa.npy"]["nonfinite"] == 1
+    assert not rows["numeric_health"].passed
+
+
+def test_sensor_margin_run_with_zero_signal_passes_numeric_health(tmp_path):
+    """End to end: FIT_WITH_SENSOR_MARGINS fills margins with zero signal, so read noise makes them negative."""
+    rows, cols = np.mgrid[0:20, 0:48]
+    pixels = np.stack([255 * cols / 47, 255 * rows / 19, np.full_like(cols, 128)], axis=-1)
+    source = tmp_path / "wide.png"
+    Image.fromarray(np.round(pixels).astype(np.uint8)).save(source)
+    config = ExperimentConfig(
+        OUTPUT_GEOMETRY="SONY_A1II_NATIVE",
+        SENSOR_FIT_MODE="FIT_WITH_SENSOR_MARGINS",
+        FAST_DEV_RUN=True,
+        SR_BACKEND="LANCZOS",
+    )
+    root = run_pipeline(source, config, tmp_path / "runs", fast_dev_max_side=96).root
+    assert np.load(root / "intermediates" / "10_noisy_cfa.npy").min() < 0
+    run = ValidationRunner().run(root)
+    rows = {check.name: check for check in run.checks}
+    assert rows["numeric_health"].passed, rows["numeric_health"].measured
+    assert run.status == "PASSED", [check.name for check in run.checks if check.hard and not check.passed]
+
+
+def test_dng_noise_profile_disagreeing_with_the_flats_fails_the_run(run_root, tmp_path):
+    root = _copy(run_root, tmp_path)
+    path = root / "metadata" / "dng_metadata.json"
+    records = json.loads(path.read_text())
+    for record in records:
+        if record["field"] == "NoiseProfile":
+            record["value"] = [value * 1.2 for value in record["value"]]
+    path.write_text(json.dumps(records))
+    run = ValidationRunner().run(root)
+    assert run.status == "FAILED"
+    written = json.loads((root / "validation" / RESULTS_NAME).read_text())
+    assert written["hard_failures"] == ["noise_profile_agreement"]
 
 
 def test_metadata_tampering_and_cfa_mismatch_fail_hard_gates(run_root, tmp_path):

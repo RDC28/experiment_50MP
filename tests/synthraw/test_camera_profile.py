@@ -94,20 +94,24 @@ def test_reference_raw_real_decoder_round_trip(tmp_path, phase):
     assert profile.sensor["sensor_width"].value == 64
     assert profile.sensor["sensor_height"].value == 48
     assert profile.sensor["WhiteLevel"].value == 16383
-    assert profile.sensor["BlackLevel"].value == [512] * 4
-    assert profile.camera["AsShotNeutral"].value == pytest.approx([0.5, 1, 0.75])
+    assert profile.sensor["BlackLevel"].value == 512.0
+    assert profile.sensor["black_level_per_channel"].value == [512] * 4
+    assert profile.camera["reference_as_shot_neutral"].value == pytest.approx([0.5, 1, 0.75])
+    assert "AsShotNeutral" not in profile.camera
+    assert profile.camera["reference_raw"].value == str(path)
     assert profile.camera["profile_source"].value == "REFERENCE_RAW"
     assert "libraw_rgb_xyz_matrix" not in profile.camera
     assert profile.camera["Make"].value == "Synthetic"
     assert profile.sensor["read_noise_electrons"].provenance == Provenance.FABRICATED
-    for field in ("camera_whitebalance", "AsShotNeutral", "libraw_color_matrix"):
+    for field in ("camera_whitebalance", "reference_as_shot_neutral", "libraw_color_matrix"):
         record = profile.camera[field]
         assert record.provenance == Provenance.MEASURED
-        assert record.dependencies == [str(path)]
+        assert record.dependencies == ["reference_raw"]
     assert all(
         record.provenance == Provenance.MEASURED
         for record in profile.sensor.values()
-        if record.field in ("cfa_pattern", "BlackLevel", "WhiteLevel", "sensor_width", "active_area")
+        if record.field
+        in ("cfa_pattern", "BlackLevel", "black_level_per_channel", "WhiteLevel", "sensor_width", "active_area")
     )
     for output in profile.write(tmp_path / "sidecars"):
         assert json.loads(output.read_text())
@@ -187,25 +191,3 @@ def test_native_config_identity_and_margin_geometry(settings):
     assert profile.sensor["adc_bits"].value == config.ADC_BITS
     assert profile.sensor["default_crop_origin"].value == list(geometry.default_crop_origin)
     assert profile.sensor["default_crop_size"].value == list(geometry.default_crop_size)
-
-
-def test_notebook_passes_output_plan_and_config_to_profile():
-    import ast
-    from pathlib import Path
-
-    notebook = json.loads(Path("notebooks/synthetic_camera_raw_50mp_colab.ipynb").read_text())
-    cell = next(
-        "".join(cell["source"])
-        for cell in notebook["cells"]
-        if "CameraProfileManager().build(" in "".join(cell["source"])
-    )
-    tree = ast.parse(cell)
-    call = next(
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "camera_profile" for t in node.targets)
-    )
-    keywords = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
-    assert keywords["geometry"] == "geometry"
-    assert keywords["config"] == "config"

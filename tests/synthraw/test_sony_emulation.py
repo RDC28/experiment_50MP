@@ -8,7 +8,7 @@ import pytest
 
 from synthraw.config import ExperimentConfig
 from synthraw.provenance import FieldRecord, Provenance
-from synthraw.sony_emulation import SonyARWEmulationBuilder
+from synthraw.sony_emulation import SonyARWEmulationBuilder, capture_inputs
 from synthraw.sony_registry import SonyMetadataRegistry
 
 
@@ -67,6 +67,58 @@ def test_exposure_and_user_date_preserve_provenance(registry):
     values = fields(result)
     assert values["SonyISO"]["confidence"] == 0.2
     assert values["DateTimeOriginal"]["field_record"]["user_override"] is True
+
+
+@pytest.mark.parametrize("manual", [False, True])
+def test_capture_inputs_populate_exposure_shutter_and_wb_from_run_records(registry, manual):
+    import numpy as np
+
+    from synthraw.camera_profile import CameraProfileManager
+    from synthraw.exposure import ExposurePosteriorEstimator
+    from synthraw.white_balance import WhiteBalanceEstimator
+
+    profile = CameraProfileManager().build()
+    rgb = np.random.default_rng(3).uniform(0.05, 1.0, (16, 16, 3)) * np.array([1.1, 1.0, 0.8])
+    wb = WhiteBalanceEstimator().estimate(rgb, profile, **({"manual_cct": 5500.0} if manual else {}))
+    exposure = ExposurePosteriorEstimator().estimate(
+        profile, **({"mode": "MANUAL", "manual": (1 / 125, 5.6, 400)} if manual else {})
+    )
+    inputs = capture_inputs(registry, exposure=exposure.records, white_balance=wb.records, camera=profile.camera)
+    values = fields(SonyARWEmulationBuilder().build(registry, ExperimentConfig(), width=64, height=48, inputs=inputs))
+    estimated = "F" if manual else "I"
+    iso = exposure.records["PhotographicSensitivity"].value
+    expected = {
+        "ExposureTime": (exposure.records["ExposureTime"].value, estimated),
+        "SonyExposureTime2": (exposure.records["ExposureTime"].value, estimated),
+        "SonyFNumber": (exposure.records["FNumber"].value, estimated),
+        "SonyISO": (iso, estimated),
+        "BaseISO": (100, "D"),
+        "StopsAboveBaseISO": (pytest.approx(np.log2(iso / 100)), estimated),
+        "ShutterType": ("Mechanical", "D"),
+        "WhiteBalance": ("Color Temperature/Color Filter" if manual else "Auto", estimated),
+        "ColorTemperature": (round(wb.records["CCT"].value), estimated),
+    }
+    for name, (value, provenance) in expected.items():
+        entry = values[name]
+        assert entry["implementation_state"] == "EMULATED" and entry["unsupported_reason"] is None, name
+        assert entry["generated_value"] == value and entry["provenance"] == provenance, name
+    # Body temperatures stay unobservable even though ColorTemperature is now accepted.
+    guess = {"SensorTemperature": FieldRecord("SensorTemperature", 30, Provenance.INFERRED, "guess")}
+    with pytest.raises(ValueError, match="fabricated provenance"):
+        SonyARWEmulationBuilder().build(registry, ExperimentConfig(), width=64, height=48, inputs=guess)
+
+
+def test_capture_inputs_skip_fields_missing_from_the_registry(registry):
+    from synthraw.camera_profile import CameraProfileManager
+    from synthraw.exposure import ExposurePosteriorEstimator
+    from synthraw.white_balance import WhiteBalanceEstimator
+
+    profile = CameraProfileManager().build()
+    wb = WhiteBalanceEstimator().estimate(None, profile, manual_cct=5000.0)
+    exposure = ExposurePosteriorEstimator().estimate(profile)
+    reduced = {**registry, "fields": [entry for entry in registry["fields"] if entry["field_name"] != "SonyISO"]}
+    inputs = capture_inputs(reduced, exposure=exposure.records, white_balance=wb.records, camera=profile.camera)
+    assert "SonyISO" not in inputs and "SonyFNumber" in inputs
 
 
 @pytest.mark.parametrize(

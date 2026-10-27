@@ -101,6 +101,30 @@ def test_delivery_offers_download_and_copies_to_drive(tmp_path, monkeypatch):
     assert (drive / "run.zip").read_bytes() == b"zip"
 
 
+def test_large_zip_skips_browser_download_and_drive_keeps_the_full_run(run, tmp_path, monkeypatch):
+    downloads = []
+    google = types.ModuleType("google")
+    colab = types.ModuleType("google.colab")
+    colab.files = types.SimpleNamespace(download=downloads.append)
+    google.colab = colab
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.colab", colab)
+    bundle = bundle_run(run.root, exclude_large_arrays=True)
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    size = bundle.stat().st_size
+    status = deliver_bundle(bundle, drive_dir=drive, run_root=run.root, max_download_bytes=size - 1)
+    assert downloads == [] and status["download"].startswith("skipped")
+    assert (drive / bundle.name).read_bytes() == bundle.read_bytes()
+    with zipfile.ZipFile(bundle) as archive:
+        bundled = set(archive.namelist())
+    copied = {path.relative_to(drive / run.root.name) for path in (drive / run.root.name).rglob("*") if path.is_file()}
+    assert copied == {path.relative_to(run.root) for path in run.root.rglob("*") if path.is_file()}
+    assert any(f"{run.root.name}/{name.as_posix()}" not in bundled for name in copied)
+    assert deliver_bundle(bundle, drive_dir=drive, run_root=run.root, max_download_bytes=size)["download"] == "offered"
+    assert downloads == [str(bundle)]
+
+
 def test_execution_log_rebinding_closes_previous_run(tmp_path):
     first = RunLayout.create(tmp_path, timestamp=datetime(2026, 1, 1))
     second = RunLayout.create(tmp_path, timestamp=datetime(2026, 1, 2))

@@ -319,3 +319,138 @@ def test_c2pa_signing_failure_is_recorded_not_raised(tmp_path, monkeypatch):
     status = write_c2pa([target], enabled=True, signer="signer")
     assert status["status"] == "C2PA unavailable" and "certificate expired" in status["reason"]
     assert target.read_bytes() == b"png" and not list(tmp_path.glob(".*.c2pa"))
+
+
+def _records(path):
+    return {item["field"]: item for item in json.loads(path.read_text())}
+
+
+def test_hdr_highlight_headroom_is_not_clipped_in_the_dng(source_png, tmp_path):
+    """Regression: exposure scale 1 put HDR radiance above 1 at or past full well, so the DNG clipped it."""
+    from synthraw.cfa import CFAMosaicer
+
+    config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="LANCZOS")
+    result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS")
+    root = result.root
+    sensor = _records(root / "metadata/sensor_profile.json")
+    assert sensor["applied_exposure_scale"]["value"] == pytest.approx(
+        2.0**-config.HDR_HIGHLIGHT_EV / sensor["applied_analogue_gain"]["value"]
+    )
+    optical = CFAMosaicer(sensor["applied_cfa_phase"]["value"]).mosaic(
+        np.load(root / "intermediates/06_optical_sensor_rgb.npy")
+    )
+    mosaic = np.load(root / "raw/sensor_mosaic_uint16.npy")
+    white = sensor["applied_adc_white_level"]["value"]
+    headroom = (optical > 1.0) & (optical < 0.8 * 2.0**config.HDR_HIGHLIGHT_EV)
+    assert headroom.sum() > 0
+    assert mosaic[headroom].max() < white
+    # Brighter reconstructed radiance stays brighter in the stored codes.
+    assert np.corrcoef(optical[headroom], mosaic[headroom])[0, 1] > 0.9
+    with tifffile.TiffFile(result.tiff_path) as tiff:
+        assert np.mean(tiff.pages[0].asarray() == 65535) < 0.01
+
+
+def test_posterior_iso_drives_analogue_gain_and_noise(source_png, tmp_path):
+    def run_at(iso):
+        config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="LANCZOS", EXPOSURE_MODE="MANUAL")
+        result = run_pipeline(
+            source_png,
+            config,
+            tmp_path / f"iso{iso}",
+            fast_dev_max_side=96,
+            strip_rows=16,
+            manual_exposure=(1 / 125, 5.6, iso),
+        )
+        root = result.root
+        sensor = {name: item["value"] for name, item in _records(root / "metadata/sensor_profile.json").items()}
+        with tifffile.TiffFile(result.dng_path) as dng:
+            tags = dng.pages[0].tags
+            dng_iso, noise_profile = tags[34855].value, tags[51041].value
+        mosaic = np.load(root / "raw/sensor_mosaic_uint16.npy").astype(float)
+        k = sensor["applied_adc_analogue_gain"] / sensor["applied_adc_conversion_gain_e_per_dn"]
+        clean = np.load(root / "intermediates/09_clean_cfa.npy") * k + sensor["applied_adc_black_level"]
+        unclipped = mosaic < sensor["applied_adc_white_level"]
+        noise = float(np.std((mosaic - clean)[unclipped]))
+        return sensor, dng_iso, noise_profile, noise, float(mosaic.mean())
+
+    base, base_iso, base_profile, base_noise, base_mean = run_at(100)
+    high, high_iso, high_profile, high_noise, high_mean = run_at(1600)
+    assert (base_iso, high_iso) == (100, 1600)
+    assert base["applied_analogue_gain"] == base["applied_adc_analogue_gain"] == 1
+    assert high["applied_analogue_gain"] == high["applied_adc_analogue_gain"] == 16
+    assert high["applied_exposure_scale"] == pytest.approx(base["applied_exposure_scale"] / 16)
+    # Same DN brightness from 16x fewer photoelectrons, so the DNG NoiseProfile and the noise both rise.
+    assert high_profile[0] == pytest.approx(16 * base_profile[0])
+    assert high_mean == pytest.approx(base_mean, rel=0.05)
+    assert high_noise > 3 * base_noise
+
+
+def test_reference_raw_profile_runs_end_to_end(source_png, tmp_path):
+    """Regression: REFERENCE_RAW stored LibRaw's 4-channel BlackLevel list and crashed the sensor stage."""
+    from dataclasses import replace
+
+    from synthraw.dng_metadata import DNGMetadataBuilder
+    from synthraw.dng_writer import DNGWriter
+    from synthraw.geometry import TargetGeometryPlanner
+
+    geometry = replace(
+        TargetGeometryPlanner().plan(64, 48),
+        width=64,
+        height=48,
+        active_area=(0, 0, 48, 64),
+        default_crop_origin=(0, 0),
+        default_crop_size=(64, 48),
+    )
+    records = DNGMetadataBuilder().build(geometry, cfa_phase="GRBG", as_shot_neutral=(0.5, 1, 0.75))
+    reference = DNGWriter().write(tmp_path / "reference.dng", np.full((48, 64), 1024, dtype=np.uint16), records)
+    result = run_tiny(
+        source_png,
+        tmp_path / "runs",
+        SR_BACKEND="LANCZOS",
+        CAMERA_PROFILE_SOURCE="REFERENCE_RAW",
+        REFERENCE_RAW_PATH=str(reference),
+    )
+    sensor = _records(result.root / "metadata/sensor_profile.json")
+    assert sensor["BlackLevel"]["value"] == 512.0 and sensor["BlackLevel"]["provenance"] == "M"
+    assert sensor["black_level_per_channel"]["value"] == [512] * 4
+    assert sensor["applied_cfa_phase"]["value"] == "GRBG"
+    with rawpy.imread(str(result.dng_path)) as raw:
+        assert list(raw.black_level_per_channel) == [512] * 4
+        assert np.array_equal(raw.raw_image, np.load(result.root / "raw/sensor_mosaic_uint16.npy"))
+    # Reference measurements resolve as metadata dependencies and never contradict the DNG AsShotNeutral.
+    from synthraw.validation_runner import ValidationRunner
+
+    run = ValidationRunner().run(result.root)
+    assert run.status == "PASSED", [check.to_dict() for check in run.checks if check.hard and not check.passed]
+
+
+def test_sony_sidecar_carries_run_records_and_honours_its_toggle(source_png, tmp_path):
+    result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS")
+    sidecar = json.loads((result.root / "metadata/sony_arw_emulation.json").read_text())
+    values = {entry["field_name"]: entry for entry in sidecar["fields"]}
+    posterior = _records(result.root / "metadata/exposure_posterior.json")
+    assert values["SonyISO"]["generated_value"] == posterior["PhotographicSensitivity"]["value"]
+    assert values["ExposureTime"]["generated_value"] == posterior["ExposureTime"]["value"]
+    assert values["SonyFNumber"]["provenance"] == posterior["FNumber"]["provenance"] == "I"
+    for name in ("ShutterType", "WhiteBalance", "ColorTemperature", "BaseISO", "StopsAboveBaseISO"):
+        assert values[name]["implementation_state"] == "EMULATED" and values[name]["provenance"] in "DIF", name
+    disabled = run_tiny(source_png, tmp_path / "off", SR_BACKEND="LANCZOS", WRITE_SONY_ARW_EMULATION_JSON=False)
+    assert not (disabled.root / "metadata/sony_arw_emulation.json").exists()
+    assert (disabled.root / "metadata/sony_tag_registry.json").is_file()
+
+
+def test_run_report_requires_every_stage(source_png, tmp_path):
+    from synthraw.pipeline import PipelineRun
+
+    config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="LANCZOS")
+    pipeline = PipelineRun.create(source_png, config, tmp_path / "runs", fast_dev_max_side=96)
+    try:
+        for name in ("input_audit", "geometry"):
+            pipeline.run_stage(name)
+        with pytest.raises(RuntimeError, match="every pipeline stage"):
+            pipeline.write_report()
+        with pytest.raises(ValueError, match="Unknown pipeline stage"):
+            pipeline.run_stage("validation")
+    finally:
+        pipeline.close()
+    assert not (pipeline.run.root / "validation/run_report.json").exists()

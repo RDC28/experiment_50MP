@@ -4,12 +4,79 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from synthraw.config import ExperimentConfig
 from synthraw.provenance import FieldRecord, Provenance
+
+
+def _unobservable(lower: str) -> bool:
+    """Body temperatures and battery state; the scene ColorTemperature is a WB field."""
+    return ("temperature" in lower and "color" not in lower) or "battery" in lower
+
+
+def capture_inputs(
+    registry: Mapping[str, Any],
+    *,
+    exposure: Mapping[str, FieldRecord],
+    white_balance: Mapping[str, FieldRecord],
+    camera: Mapping[str, FieldRecord],
+) -> dict[str, FieldRecord]:
+    """Sony exposure, shutter and WB fields from the run's posterior, WB and profile records (PRD family table).
+
+    Each value keeps the provenance class of the record it is derived from. Only fields that
+    exist in ``registry`` are returned.
+    """
+
+    def copy_of(name: str, record: FieldRecord, value: Any = None) -> FieldRecord:
+        return replace(
+            record,
+            field=name,
+            value=record.value if value is None else value,
+            method=f"{record.field}: {record.method}",
+            dependencies=[record.field],
+        )
+
+    iso = exposure["PhotographicSensitivity"]
+    cct = white_balance["CCT"]
+    base_iso = camera["iso_standard_range"].value[0]
+    candidates = {
+        "ExposureTime": exposure["ExposureTime"],
+        "SonyExposureTime2": copy_of("SonyExposureTime2", exposure["ExposureTime"]),
+        "SonyFNumber": copy_of("SonyFNumber", exposure["FNumber"]),
+        "SonyISO": copy_of("SonyISO", iso),
+        "BaseISO": FieldRecord(
+            "BaseISO",
+            base_iso,
+            Provenance.DETERMINISTIC,
+            "Lowest standard ISO of the selected profile",
+            dependencies=["iso_standard_range"],
+        ),
+        "StopsAboveBaseISO": replace(
+            copy_of("StopsAboveBaseISO", iso, math.log2(iso.value / base_iso)),
+            unit="EV",
+            alternatives=[],
+            dependencies=["PhotographicSensitivity", "iso_standard_range"],
+        ),
+        "ShutterType": FieldRecord(
+            "ShutterType",
+            "Mechanical",
+            Provenance.DETERMINISTIC,
+            "Mechanical shutter envelope used by the exposure hypotheses",
+            dependencies=["mechanical_shutter_min_seconds"],
+        ),
+        "WhiteBalance": replace(
+            copy_of("WhiteBalance", cct, "Color Temperature/Color Filter" if cct.user_override else "Auto"),
+            unit=None,
+        ),
+        "ColorTemperature": copy_of("ColorTemperature", cct, round(cct.value)),
+    }
+    names = {entry["field_name"] for entry in registry["fields"]}
+    return {name: record for name, record in candidates.items() if name in names}
 
 
 class SonyARWEmulationBuilder:
@@ -60,7 +127,7 @@ class SonyARWEmulationBuilder:
                 raise ValueError(f"{name} requires a verified identity policy and cannot be supplied")
             if any(token in lower for token in ("date", "timeoriginal", "gps")) and not record.user_override:
                 raise ValueError(f"{name} requires explicit user input")
-            if "temperature" in lower or "battery" in lower:
+            if _unobservable(lower):
                 if record.provenance != Provenance.FABRICATED:
                     raise ValueError(f"{name} must have fabricated provenance")
                 if not config.FABRICATE_UNOBSERVABLE_EXIF:
@@ -94,7 +161,7 @@ class SonyARWEmulationBuilder:
                 elif name.endswith("CorrParams"):
                     entry["implementation_state"] = "UNSUPPORTED"
                     entry["unsupported_reason"] = "Optical stage disabled or no applied simulator records supplied"
-                elif "temperature" in lower or "battery" in lower:
+                elif _unobservable(lower):
                     entry["unsupported_reason"] = "No fabricated value supplied; never inferred from rendered pixels"
                 continue
             entry.update(

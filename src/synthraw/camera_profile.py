@@ -161,7 +161,7 @@ class CameraProfileManager:
                 value,
                 Provenance.MEASURED,
                 "User-supplied reference RAW via LibRaw/rawpy",
-                dependencies=[str(path)],
+                dependencies=["reference_raw"],
                 disclaimer="Measured from the supplied reference file, not from the synthetic exposure.",
             )
 
@@ -191,12 +191,15 @@ class CameraProfileManager:
                 "default_crop_origin": [0, 0],
                 "default_crop_size": [raw.sizes.width, raw.sizes.height],
                 "cfa_pattern": phase,
-                "BlackLevel": levels.tolist(),
+                # The ADC applies one pedestal and the DNG stores one BlackLevel; channels are kept separately.
+                "BlackLevel": float(levels.mean()),
+                "black_level_per_channel": levels.tolist(),
                 "WhiteLevel": raw.white_level,
             }.items():
                 measured(profile.sensor, field, value)
             measured(profile.camera, "camera_whitebalance", wb.tolist())
-            measured(profile.camera, "AsShotNeutral", (wb[1] / wb[:3]).tolist())
+            # The reference capture's white balance, not the synthetic exposure's AsShotNeutral.
+            measured(profile.camera, "reference_as_shot_neutral", (wb[1] / wb[:3]).tolist())
             # These are LibRaw transforms, not the original dual-illuminant DNG tags.
             for field, matrix in (
                 ("libraw_color_matrix", raw.color_matrix),
@@ -207,4 +210,7 @@ class CameraProfileManager:
                     measured(profile.camera, field, matrix.tolist())
         profile.camera["profile_source"] = FieldRecord(
             "profile_source", "REFERENCE_RAW", Provenance.DETERMINISTIC, "Explicit user profile selection"
+        )
+        profile.camera["reference_raw"] = FieldRecord(
+            "reference_raw", str(path), Provenance.DETERMINISTIC, "User-supplied reference RAW file"
         )

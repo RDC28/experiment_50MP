@@ -14,21 +14,22 @@ States:
   (`synthraw.experimental`, `test_experimental.py`).
 - **Not implemented**: with the reason.
 
-The full notebook "Run all" test (`test_notebook_run_all.py`) is opt-in with `SYNTHETIC_RAW_LAB_HEAVY_TESTS=1`
-and has not been run on the development laptop, which must not run notebooks or 50 MP arrays.
+The notebook "Run all" test (`test_notebook_run_all.py`) runs by default: it executes every cell after the pip
+install on a 48 x 20 PNG with Colab mocked and FAST_DEV_RUN at 96 px. No 50 MP arrays are allocated on the
+development laptop.
 
 ## Delivery checklist
 
 | PRD item | State | Implementation | Tests |
 |---|---|---|---|
-| One notebook: `synthetic_camera_raw_50mp_colab.ipynb` | Tested locally | `notebooks/synthetic_camera_raw_50mp_colab.ipynb` | `test_notebook_structure.py`, `test_notebook_validation_cells.py` |
-| Clean Colab `Runtime → Run all` | Pending Colab | Whole notebook; setup cell installs `REPO_REF` and falls back to `main` after merge (cell 2) | `test_notebook_run_all.py` (opt-in, not run locally); setup cell mocked in `test_notebook_structure.py` |
+| One notebook: `synthetic_camera_raw_50mp_colab.ipynb` | Tested locally | `notebooks/synthetic_camera_raw_50mp_colab.ipynb`; each section runs one `pipeline.PipelineRun` stage, the same code as `run_pipeline` | `test_notebook_run_all.py`, `test_notebook_structure.py`, `test_notebook_validation_cells.py` |
+| Clean Colab `Runtime → Run all` | Pending Colab | Whole notebook; setup cell installs `REPO_REF` and falls back to `main` after merge (cell 2) | `test_notebook_run_all.py` (tiny PNG, Colab mocked); setup cell mocked in `test_notebook_structure.py` |
 | 2K JPEG/PNG input | Tested locally (tiny PNG); full 2K pending Colab | `input_audit.InputInspector` | `test_input_audit.py`, `test_synthraw_pipeline.py` |
 | 4K JPEG/PNG input | Tested locally (tiny PNG); full 4K pending Colab | `input_audit.InputInspector` | `test_input_audit.py`, `test_synthraw_pipeline.py` |
 | α1 II-like 8640 × 5760 native mode | Tested locally (geometry arithmetic and tiny dev canvas); 50 MP allocation pending Colab | `geometry.TargetGeometryPlanner`, `camera_profile.CameraProfileManager` | `test_geometry.py`, `test_camera_profile.py`, `test_synthraw_pipeline.py` |
 | 10,872 × 4,608 cinema 50.1 MP virtual mode | Tested locally (arithmetic and tiny dev canvas); 50 MP pending Colab | `geometry.TargetGeometryPlanner` | `test_geometry.py`, `test_synthraw_pipeline.py` |
 | No aspect stretching | Tested locally | `geometry.TargetGeometryPlanner` (outpaint, crop or margins; policy recorded), `sensor_canvas.place_sensor_canvas` | `test_geometry.py`, `test_sr_run.py`, `test_sensor_canvas.py` |
-| Fidelity SR backend | Pending Colab (fallback chain tested locally with mocks) | `super_resolution.SuperResolutionEngine`, `learned_sr`, `model_manifest` (SwinIR pinned by revision and sha256) | `test_synthraw_super_resolution.py`, `test_learned_sr.py`, `test_sr_run.py`, `test_model_manifest.py` |
+| Fidelity SR backend | Pending Colab (fallback chain tested locally with mocks) | `super_resolution.SuperResolutionEngine`, `learned_sr`, `model_manifest` (SwinIR pinned by revision and sha256); 2K and 4K sources both run the pinned x4 checkpoint, then an exact resize | `test_synthraw_super_resolution.py`, `test_learned_sr.py`, `test_sr_run.py`, `test_sr_scale.py`, `test_model_manifest.py` |
 | Real-ESRGAN fallback | Pending Colab (chain order tested locally) | `SuperResolutionEngine.reconstruct` chains SWINIR/HAT/SUPIR → REAL_ESRGAN → LANCZOS | `test_synthraw_super_resolution.py`, `test_sr_run.py` |
 | Optional SUPIR with licence warning | Gated stub | `experimental.request_experimental("SUPIR")`; SUPIR → SWINIR → REAL_ESRGAN → LANCZOS | `test_experimental.py` |
 | Continuous float scene-linear representation | Tested locally | `hdr.HDRReconstructionEngine.linearize` (float32, inverse tone), `exporters.EXRWriter` | `test_hdr.py`, `test_synthraw_exporters.py` |
@@ -40,7 +41,7 @@ and has not been run on the development laptop, which must not run notebooks or 
 | WB inference/manual override | Tested locally | `white_balance.WhiteBalanceEstimator` (`manual_cct`, `manual_tint`, `user_override` recorded) | `test_white_balance.py` |
 | Exposure posterior rather than fake certainty | Tested locally | `exposure.ExposurePosteriorEstimator` (candidate set with weights) | `test_exposure.py` |
 | Optional geometry/lens inference | Tested locally | `camera_geometry.CameraGeometryEstimator` (FOV hypothesis, never lens identification) | `test_camera_geometry.py` |
-| Expected-electron representation | Tested locally | `sensor.ElectronSignalSimulator` | `test_sensor.py` |
+| Expected-electron representation | Tested locally | `sensor.ElectronSignalSimulator`; `exposure.exposure_and_gain` keeps the HDR highlight headroom below full well and sets the analogue gain from the posterior ISO | `test_sensor.py`, `test_synthraw_pipeline.py` |
 | Shot noise | Tested locally | `sensor.SensorNoiseSimulator` (`SHOT_NOISE`) | `test_sensor.py`, `test_validation.py` |
 | Read noise | Tested locally | `sensor.SensorNoiseSimulator` (`READ_NOISE`) | `test_sensor.py` |
 | PRNU/DSNU/FPN toggles | Tested locally | `PRNU`, `DSNU`, `ROW_FPN`, `COLUMN_FPN`, `DARK_CURRENT`, `HOT_PIXELS`, `DEAD_PIXELS` in `SensorNoiseSimulator` | `test_sensor.py` |
@@ -51,13 +52,13 @@ and has not been run on the development laptop, which must not run notebooks or 
 | DNG stored compatibly as `uint16` | Tested locally | `dng_writer.DNGWriter` (16-bit storage, uncompressed) | `test_dng_writer.py`, `test_raw_gate.py` |
 | Standards-based DNG metadata | Tested locally | `dng_metadata.DNGMetadataBuilder` (`Make = "Synthetic"`, NoiseProfile, matrices) | `test_dng_metadata.py` |
 | Dynamic ExifTool Sony metadata registry | Tested locally (parser); pending Colab | `sony_registry.SonyMetadataRegistry` parses `exiftool -listx` when ExifTool is installed. The notebook does not install ExifTool, so a stock Colab runtime records the bundled seed with `seed_only: true` | `test_sony_registry.py` |
-| `sony_arw_emulation.json` | Tested locally | `sony_emulation.SonyARWEmulationBuilder` | `test_sony_emulation.py`, `test_synthraw_pipeline.py` |
+| `sony_arw_emulation.json` | Tested locally | `sony_emulation.SonyARWEmulationBuilder`; `capture_inputs` fills the exposure, shutter and WB families from the run's records | `test_sony_emulation.py`, `test_synthraw_pipeline.py` |
 | No fake proprietary ARW requirement | Tested locally | ARW emulation is JSON only; no MakerNote blocks, no realistic Sony serials | `test_sony_emulation.py`, `test_dng_metadata.py` |
 | Independent LibRaw reopen | Tested locally | `libraw_validator.LibRawValidator` (hard gate), `validation.libraw_reopen_check` | `test_raw_gate.py`, `test_synthraw_pipeline.py`, `test_validation_runner.py` |
-| Multiple demosaic tests | Tested locally | `validation.DemosaicValidator` (LibRaw demosaic variants) | `test_validation.py` |
-| ±4 EV stress test | Tested locally | `validation.EditabilityValidator` (-4..+4 EV) | `test_validation.py` |
-| WB stress test | Tested locally | `validation.EditabilityValidator` (cool, neutral, warm via LibRaw `user_wb`) | `test_validation.py` |
-| NoiseProfile consistency test | Tested locally | `validation.NoiseValidator` (flat-field mean-variance fit against the NoiseProfile) | `test_validation.py`, `test_seed_metadata_validation.py` |
+| Multiple demosaic tests | Tested locally | `validation.DemosaicValidator` (LibRaw demosaic variants; AHD and the additional algorithms are hard gates) | `test_validation.py` |
+| ±4 EV stress test | Tested locally | `validation.EditabilityValidator` (-4..+4 EV, hard gate) | `test_validation.py` |
+| WB stress test | Tested locally | `validation.EditabilityValidator` (cool, neutral, warm via LibRaw `user_wb`, hard gate) | `test_validation.py` |
+| NoiseProfile consistency test | Tested locally | `validation.NoiseValidator` (flat-field mean-variance fit against the NoiseProfile at the applied analogue gain; hard gate, R² stays a QA target) | `test_validation.py`, `test_validation_runner.py`, `test_seed_metadata_validation.py` |
 | 16-bit 50 MP TIFF | Tested locally (tiny); 50 MP pending Colab | `exporters.TIFFWriter` (LibRaw development, Adobe RGB) | `test_synthraw_exporters.py`, `test_synthraw_pipeline.py` |
 | Optional scene-linear EXR | Tested locally | `exporters.EXRWriter` (`WRITE_EXR`) | `test_synthraw_exporters.py` |
 | Provenance for every field | Tested locally | `provenance.ProvenanceWriter`, `FieldRecord` classes D/I/F/M; `validation.MetadataDependencyValidator` | `test_provenance.py`, `test_seed_metadata_validation.py` |
@@ -86,7 +87,7 @@ and has not been run on the development laptop, which must not run notebooks or 
 | `PRNU/DSNU/FPN` | Tested locally | Same `SENSOR_BODY_SEED` reproduces the pattern across noise seeds; `SensorSeedValidator` | `test_sensor.py`, `test_seed_metadata_validation.py` |
 | `OPTICAL_SIMULATION` | Tested locally | `LensSimulator` runs in the `optics` stage before `cfa` (pipeline `STAGES`), never after demosaic | `test_optics.py` |
 | `FABRICATE_UNOBSERVABLE_EXIF` | Tested locally | Temperature and battery fields need the toggle and must be class F. Stricter than the PRD: no serial or shutter count is ever written, even in a synthetic namespace; they stay null with the reason recorded | `test_sony_emulation.py` |
-| `WRITE_DNG` | Tested locally | Reopened by LibRaw as a hard gate; `run_pipeline` refuses `WRITE_DNG=False` | `test_raw_gate.py`, `test_synthraw_pipeline.py` |
+| `WRITE_DNG` | Tested locally | Reopened by LibRaw as a hard gate; `PipelineRun.create` (notebook and `run_pipeline`) refuses `WRITE_DNG=False` | `test_raw_gate.py`, `test_synthraw_pipeline.py` |
 | `WRITE_C2PA` | Tested locally (mocked signer) | `digitalSourceType` declared when `c2pa-python` and a signer are available, otherwise "C2PA unavailable" is recorded | `test_synthraw_pipeline.py` |
 
 ## Experimental options

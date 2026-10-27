@@ -5,6 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from synthraw.adc import ADCSimulator
 from synthraw.camera_colour import CameraColourModel
 from synthraw.cfa import CFAMosaicer
 from synthraw.config import ExperimentConfig
@@ -103,7 +104,6 @@ def test_colour_validator_passes_profile_and_reports_metrics(tmp_path):
     assert checks["color_matrix_invertible"].measured["condition_number"]["ColorMatrix2"] > 1
     x, y = checks["white_point_near_neutral"].measured["as_shot_white_xy"]
     assert 0.2 < x < 0.6 and 0.2 < y < 0.5
-    assert checks["as_shot_neutral_response"].measured["relative_channel_spread"] < 1e-9
 
 
 def test_colour_validator_rejects_singular_matrix(tmp_path):
@@ -136,6 +136,21 @@ def test_noise_flat_field_fit_matches_noise_profile():
     assert r2_check.passed and r2_check.measured["r2"] >= 0.95
 
 
+@pytest.mark.parametrize("analogue_gain", [4.0, 16.0])
+def test_noise_flats_follow_the_applied_analogue_gain(analogue_gain):
+    """The flats reproduce a non-unity ISO gain's NoiseProfile; agreement is a hard gate."""
+    validator = NoiseValidator()
+    fit, profile = validator.measure(ExperimentConfig(), analogue_gain=analogue_gain, **flat_kwargs())
+    unity = ADCSimulator().simulate(
+        np.zeros((2, 2)), ExperimentConfig(), conversion_gain_e_per_dn=52000.0 / 15871, read_noise_e=3.0
+    )
+    assert profile[0] == pytest.approx(unity.noise_profile[0] * analogue_gain)
+    profile_check, _ = validator.validate(fit, profile)
+    assert profile_check.hard and profile_check.passed, profile_check.measured
+    wrong = validator.validate(fit, unity.noise_profile)[0]
+    assert not wrong.passed and hard_failures([wrong]) == [wrong]
+
+
 def test_noise_profile_without_quantisation_is_detected():
     """Regression: the pre-fix NoiseProfile omitted 1/12 DN^2 rounding variance (~10% O error)."""
     validator = NoiseValidator()
@@ -150,7 +165,9 @@ def test_noise_validator_rejects_wrong_profile_and_short_runs():
     validator = NoiseValidator()
     fit, profile = validator.measure(ExperimentConfig(), **flat_kwargs())
     assert not validator.validate(fit, tuple(value * 1.2 for value in profile))[0].passed
-    assert validator.validate(fit, None)[0].passed is None
+    # Without shot noise the DNG omits NoiseProfile: nothing to compare, so the row is report-only.
+    omitted = validator.validate(fit, None)[0]
+    assert omitted.passed is None and not hard_failures([omitted])
     with pytest.raises(ValueError, match="N >= 32"):
         validator.measure(ExperimentConfig(), realisations=8, **flat_kwargs())
 
@@ -159,8 +176,8 @@ def test_demosaic_validator_develops_ahd_and_records_amaze(tmp_path):
     path, _, _ = tiny_dng(tmp_path)
     checks, thumbs = DemosaicValidator().develop(path, thumbnail_side=32)
     by_name = {check.name: check for check in checks}
-    assert by_name["demosaic_ahd"].passed
-    assert by_name["demosaic_additional"].passed
+    assert by_name["demosaic_ahd"].passed and by_name["demosaic_ahd"].hard
+    assert by_name["demosaic_additional"].passed and by_name["demosaic_additional"].hard
     algorithms = by_name["demosaic_additional"].measured["algorithms"]
     assert algorithms["AMAZE"]["status"] in ("ok", "unsupported")
     assert {"AHD", "DCB", "VNG", "PPG", "LINEAR"} <= set(thumbs)
@@ -175,6 +192,7 @@ def test_editability_exposure_and_white_balance(tmp_path):
     by_name = {check.name: check for check in checks}
     assert by_name["exposure_range"].passed, by_name["exposure_range"].measured
     assert by_name["white_balance_response"].passed, by_name["white_balance_response"].measured
+    assert by_name["exposure_range"].hard and by_name["white_balance_response"].hard
     assert list(sheets["exposure"]) == [f"{ev:+d} EV" for ev in range(-4, 5)]
     assert list(sheets["white_balance"]) == ["cool", "neutral", "warm"]
     means = by_name["exposure_range"].measured["mean_display_value"]
@@ -187,6 +205,7 @@ def test_editability_flags_wb_blow_up(tmp_path):
     by_name = {check.name: check for check in strict.validate(path, thumbnail_side=16)[0]}
     assert by_name["white_balance_response"].measured["clipped_increase"] > 0
     assert not by_name["white_balance_response"].passed
+    assert hard_failures(by_name.values()) == [by_name["white_balance_response"]]
 
 
 def test_libraw_reopen_check_converts_hard_failure(tmp_path):
