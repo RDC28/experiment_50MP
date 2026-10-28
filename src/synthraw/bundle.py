@@ -157,13 +157,12 @@ def deliver_final_image(
 ) -> dict[str, Any]:
     """Hand the final TIFF and DNG to the person running the notebook, printing every path.
 
-    With ``drive_dir`` (Google Drive mounted), each file is placed at ``drive_dir/<run>/<same path>``, the
-    layout ``copy_run_to_drive`` uses, and copied only when that copy is missing or differs in size. With
-    ``download`` in Colab, each file up to ``max_download_bytes`` is offered as a browser download. Failures
-    are reported in the result and logged, never raised.
+    With ``drive_dir`` (Google Drive mounted), the Drive path of each file that ``copy_run_to_drive`` already
+    placed at ``drive_dir/<run>/<same path>`` is printed too. With ``download`` in Colab, each file up to
+    ``max_download_bytes`` is offered as a browser download.
     """
     root = Path(run_root)
-    result: dict[str, Any] = {"files": {}, "missing": [], "drive": {}, "downloads": {}, "warnings": []}
+    result: dict[str, Any] = {"files": {}, "missing": [], "drive": {}, "downloads": {}}
     for kind, name in FINAL_IMAGE_FILES.items():
         path = root / name
         if path.is_file():
@@ -176,13 +175,7 @@ def deliver_final_image(
         for kind, local in result["files"].items():
             source = Path(local)
             target = Path(drive_dir) / root.name / source.relative_to(root)
-            try:
-                if not target.is_file() or target.stat().st_size != source.stat().st_size:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, target)
-            except OSError as error:
-                reason = f"{type(error).__name__}: {error}"
-                result["warnings"].append(f"Copying {source.name} to Google Drive failed ({reason})")
+            if not target.is_file() or target.stat().st_size != source.stat().st_size:
                 continue
             result["drive"][kind] = str(target)
             log(f"On Google Drive: {target}")
@@ -204,6 +197,4 @@ def deliver_final_image(
                 files.download(local)
                 result["downloads"][kind] = "offered"
             log(f"Browser download of {Path(local).name}: {result['downloads'][kind]}")
-    for warning in result["warnings"]:
-        log(f"WARNING: {warning}")
     return result

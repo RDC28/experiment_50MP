@@ -234,11 +234,12 @@ def _colab_files(monkeypatch):
     return downloads
 
 
-def test_final_image_is_offered_for_download_and_kept_on_drive(run, tmp_path, monkeypatch):
+def test_final_image_is_offered_for_download_with_its_drive_paths(run, tmp_path, monkeypatch):
     """Regression: the run left the final image only inside the zip."""
     files = _final_image(run)
     downloads = _colab_files(monkeypatch)
     drive = tmp_path / "drive"
+    copy_run_to_drive(run.root, drive)
     messages = []
     result = deliver_final_image(run.root, drive_dir=drive, log=messages.append)
     assert downloads == [str(files["tiff16"]), str(files["dng"])]
@@ -249,16 +250,20 @@ def test_final_image_is_offered_for_download_and_kept_on_drive(run, tmp_path, mo
         assert result["drive"][kind] == str(copied) and copied.read_bytes() == path.read_bytes()
         assert any(str(path) in message for message in messages)
         assert any(str(copied) in message for message in messages)
-    assert result["missing"] == [] and result["warnings"] == []
+    assert result["missing"] == []
 
 
-def test_final_image_already_on_drive_is_not_copied_again(run, tmp_path, monkeypatch):
-    _final_image(run)
+def test_final_image_missing_from_drive_is_not_reported_there(run, tmp_path):
+    files = _final_image(run)
     drive = tmp_path / "drive"
-    copy_run_to_drive(run.root, drive)
-    monkeypatch.setattr("synthraw.bundle.shutil.copy2", lambda *args: pytest.fail("already on Drive"))
-    result = deliver_final_image(run.root, drive_dir=drive, download=False, log=lambda message: None)
-    assert set(result["drive"]) == {"tiff16", "dng"} and result["downloads"] == {}
+    partial = drive / run.root.name / files["dng"].relative_to(run.root)
+    partial.parent.mkdir(parents=True)
+    partial.write_bytes(b"x")
+    messages = []
+    result = deliver_final_image(run.root, drive_dir=drive, download=False, log=messages.append)
+    assert result["drive"] == {} and result["downloads"] == {}
+    assert not any("On Google Drive" in message for message in messages)
+    assert sorted(path for path in drive.rglob("*") if path.is_file()) == [partial]
 
 
 def test_final_image_outside_colab_prints_paths_only(run, monkeypatch):
@@ -271,13 +276,11 @@ def test_final_image_outside_colab_prints_paths_only(run, monkeypatch):
     assert any("Not in Colab" in message for message in messages)
 
 
-def test_final_image_reports_missing_files_large_downloads_and_drive_failures(run, tmp_path, monkeypatch):
+def test_final_image_reports_missing_files_and_large_downloads(run, monkeypatch):
     run.directory("masters").joinpath("developed_50mp_16bit.tif").write_bytes(b"x" * 100)
     downloads = _colab_files(monkeypatch)
-    monkeypatch.setattr("synthraw.bundle.shutil.copy2", _no_space)
     messages = []
-    result = deliver_final_image(run.root, drive_dir=tmp_path / "drive", max_download_bytes=99, log=messages.append)
+    result = deliver_final_image(run.root, max_download_bytes=99, log=messages.append)
     assert result["missing"] == ["raw/synthetic_50mp.dng"]
     assert downloads == [] and result["downloads"]["tiff16"].startswith("skipped")
-    assert result["drive"] == {} and "No space left on device" in result["warnings"][0]
-    assert any(message.startswith("WARNING: ") for message in messages)
+    assert any("synthetic_50mp.dng" in message and "missing" in message for message in messages)
