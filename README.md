@@ -22,11 +22,12 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
 **Running it in Colab**
 
 1. Open the notebook in Colab and pick a GPU runtime (Runtime > Change runtime type). The setup cell installs
-   the package from GitHub at `REPO_REF`. `REPO_REF` defaults to the development branch
-   `fm/exp50mp-v3-synthetic-raw`, which is deleted once it is merged. The cell tries `REPO_REF` first; if that
-   branch no longer exists it warns and installs `main`, and `INSTALLED_REF` records what was installed. A
-   release should pin `REPO_REF` to the full 40-character SHA of the merged commit on `main`: a pinned SHA is
-   installed exactly or the cell fails, it never falls back. Any other value (a tag, a short SHA, another branch)
+   the package from GitHub at `REPO_REF` with its `sr` extra, which adds `spandrel` (and `torch`, which Colab
+   preinstalls) so SwinIR and Real-ESRGAN can run. On Colab the cell then imports `torch` and `spandrel` and
+   fails at once if either is missing. `REPO_REF` defaults to `main`, so a fresh run uses the merged code. A
+   release should pin `REPO_REF` to the full 40-character SHA of a commit on `main` (a pull request's head SHA
+   also works for trying it before merge): a pinned SHA is installed exactly or the cell fails, and
+   `INSTALLED_REF` records what was installed. Any other value (a tag, a short SHA, a branch other than `main`)
    is rejected. On Colab the same cell installs a pinned current ExifTool release (`EXIFTOOL_VERSION` in
    `src/synthraw/sony_registry.py`) from the exiftool.org download link. The archive must match its pinned
    sha256 before it is unpacked, and ExifTool runs with the system Perl, so `sony_tag_registry.json` is built
@@ -39,17 +40,24 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
    (`SONY_A1II_NATIVE` 8640 x 5760 or `CINEMA_50MP_VIRTUAL` about 50.1 MP at the source aspect ratio),
    `SR_BACKEND`, `HDR_ENABLED`, the sensor noise and optics switches, and the scene, noise and body seeds.
    `DNG_COMPRESSION`, `N_SENSOR_REALISATIONS` and `GENERATE_SYNTHETIC_EXIF` are described below the outputs.
-   `FAST_DEV_RUN` shrinks the planned sensor for a quick check. Learned SR weights are downloaded only inside
+   `FAST_DEV_RUN` shrinks the planned sensor for a quick check (longest side 512 px) and shrinks the SR input
+   by the same factor, so a fast-dev run finishes in a few minutes; it never shrinks the input below the size
+   whose x4 output still covers the planned content. `sr_reconstruction.json` records the size the model saw
+   (`sr_input_size`). Learned SR weights are downloaded only inside
    Colab. SwinIR and Real-ESRGAN are permissively licensed and pinned to a repository revision and a sha256
-   (`src/synthraw/model_manifest.py`), so they download without any acceptance flag. Licence-gated backends
+   (`src/synthraw/model_manifest.py`), so they download without any acceptance flag. When the chosen
+   `SR_BACKEND` is SwinIR or Real-ESRGAN and it cannot load (a missing package, no GPU, a failed download or
+   checksum), the SR cell stops with the reason, naming any missing package, instead of quietly using another
+   backend. A missing learned-SR package stops the run for every learned backend. Licence-gated backends
    and the experimental stubs stay disabled unless you set `ACCEPT_SR_MODEL_LICENCE = True` in the SR cell.
-   Backends without a pinned checkpoint fall back and record why. Both 2K and 4K sources run the pinned x4
-   checkpoint and then an exact resize, so they use the same backend. `SR_BACKEND = "LANCZOS"` needs no weights.
+   Backends without a pinned checkpoint (HAT, SUPIR) fall back and record why. Both 2K and 4K sources run the
+   pinned x4 checkpoint and then an exact resize, so they use the same backend. `SR_BACKEND = "LANCZOS"` needs
+   no weights and is the explicit choice for a run without learned SR.
 3. Runtime > Run all. A tiny RAW gate runs first: 64 x 48 DNG fixtures, uncompressed and lossless, must reopen
    through LibRaw before any reconstruction starts. The chain then runs: input audit, target geometry, SR,
    HDR/scene-linear, camera geometry and exposure posterior, inverse ISP, optics, electrons and noise, CFA, ADC,
    metadata, DNG, LibRaw development, any further sensor noise realisations, the TIFF/EXR masters, validation,
-   the 2K/4K comparison and packaging. Each section
+   the 2K/4K comparison, packaging and the final image. Each section
    runs one stage of a `synthraw.pipeline.PipelineRun`, the same code `run_pipeline` uses.
 4. Everything goes into one `/content/synthraw_runs/run_YYYYMMDD_HHMMSS/` folder. The notebook ends by
    building `<run>.zip` without the full-resolution `intermediates/` and `confidence/` arrays
@@ -60,6 +68,11 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
    output, `run_report.json` and the zip warn that the full-resolution intermediates exist only on the Colab
    runtime. After the zip is built, the final report, bundle manifest and log, and the zip itself, are copied
    to Drive too; if that last copy fails the cell prints a warning.
+5. The last cell, **Final image**, delivers the result: it shows the preview, prints the paths of the developed
+   16-bit TIFF (`masters/developed_50mp_16bit.tif`) and the DNG (`raw/synthetic_50mp.dng`), and offers both
+   as browser downloads (`DOWNLOAD_FINAL_IMAGE = True`, each up to `BROWSER_DOWNLOAD_MAX_MB`; a full 50 MP TIFF
+   is about 300 MB, so it takes a few minutes). When Drive is mounted it also prints their paths in the Drive
+   run folder (`MyDrive/synthraw_runs/<run>/`), copying them there if the run folder copy missed them.
 
 **Outputs** (under the run folder)
 
@@ -68,7 +81,7 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
 | `raw/` | `synthetic_50mp.dng`: a CFA DNG with `Make = "Synthetic"` and a NoiseProfile matching the simulated ADC; `synthetic_50mp_realisation_NNN.dng` for each further noise realisation |
 | `masters/` | `developed_50mp_16bit.tif` (LibRaw development, Adobe RGB), `scene_linear_50mp.exr`, `preview_8bit.png` |
 | `metadata/` | `metadata.json` and `provenance.json` (every field tagged D/I/F/M with its dependencies), `dng_metadata.json`, `sony_arw_emulation.json`, `sony_tag_registry.json` |
-| `intermediates/`, `confidence/` | stage arrays `01_` to `11_`, source-supported and generated-area masks |
+| `intermediates/`, `confidence/` | stage arrays `01_` to `11_`, the SR tile seam residual map, source-supported and generated-area masks |
 | `validation/` | `validation_results.json`, `validation_report.html`, nine figures, `comparison_2k_vs_4k.html` and `.json`, `libraw_roundtrip.json`, `sensor_realisations.json`, `run_report.json` (`SUCCESS` or `FAILED`) |
 | `logs/` | environment, model manifest, checkpoints, bundle manifest |
 

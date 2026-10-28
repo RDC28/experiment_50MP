@@ -9,7 +9,7 @@ import pytest
 
 from synthraw import learned_sr
 from synthraw.environment import TileParameters
-from synthraw.super_resolution import SuperResolutionEngine
+from synthraw.super_resolution import SRBackendLoadError, SuperResolutionEngine
 
 
 @pytest.fixture
@@ -68,29 +68,77 @@ def test_scale_mismatch_is_explicit(runtime):
         learned_sr.load_learned_backend("SWINIR", scale=2)
 
 
+def _reconstruct(tmp_path, backend):
+    return SuperResolutionEngine().reconstruct(
+        np.full((2, 3, 3), 0.4, np.float32),
+        tmp_path / "sr.npy",
+        backend=backend,
+        scale=4,
+        tiles=TileParameters(4, 1, True, False),
+    )
+
+
+@pytest.mark.parametrize("backend", ["SWINIR", "REAL_ESRGAN"])
 @pytest.mark.parametrize(
     "error",
     [
-        ImportError("no torch"),
+        RuntimeError("Learned SR requires a CUDA GPU"),
+        ValueError("SHA-256 mismatch"),
+        OSError("download failed"),
+    ],
+)
+def test_requested_pinned_backend_that_fails_to_load_stops_the_run(monkeypatch, tmp_path, backend, error):
+    loader = MagicMock(side_effect=error)
+    monkeypatch.setattr(learned_sr, "load_learned_backend", loader)
+    with pytest.raises(SRBackendLoadError, match="LANCZOS") as raised:
+        _reconstruct(tmp_path, backend)
+    assert f"SR_BACKEND={backend!r} cannot run: {backend}: {type(error).__name__}: {error}" in str(raised.value)
+    assert raised.value.__cause__ is error
+    assert [call.args[0] for call in loader.call_args_list] == [backend]
+    assert not (tmp_path / "sr.npy").exists()
+
+
+@pytest.mark.parametrize("backend", ["SWINIR", "REAL_ESRGAN", "HAT"])
+def test_missing_sr_package_names_the_package_and_never_falls_back(monkeypatch, tmp_path, backend):
+    """Regression: a Colab run without spandrel silently fell back to LANCZOS."""
+
+    def load(name, **kwargs):
+        if name == "HAT":
+            raise ValueError("HAT: UNPINNED - disabled until pinned")
+        raise ModuleNotFoundError("No module named 'spandrel'", name="spandrel")
+
+    monkeypatch.setattr(learned_sr, "load_learned_backend", load)
+    with pytest.raises(SRBackendLoadError, match="'spandrel' is missing") as raised:
+        _reconstruct(tmp_path, backend)
+    assert "ModuleNotFoundError: No module named 'spandrel'" in str(raised.value)
+    assert 'SR_BACKEND = "LANCZOS"' in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
         RuntimeError("no GPU"),
         ValueError("UNPINNED"),
         ValueError("SHA-256 mismatch"),
         PermissionError("licence acceptance required"),
     ],
 )
-def test_loading_failures_are_recorded_and_fall_back(monkeypatch, tmp_path, error):
+def test_unpinned_requested_backend_falls_back_and_records_why(monkeypatch, tmp_path, error):
     loader = MagicMock(side_effect=error)
     monkeypatch.setattr(learned_sr, "load_learned_backend", loader)
-    result = SuperResolutionEngine().reconstruct(
-        np.full((2, 3, 3), 0.4, np.float32),
-        tmp_path / "sr.npy",
-        scale=4,
-        tiles=TileParameters(4, 1, True, False),
-    )
+    result = _reconstruct(tmp_path, "HAT")
     assert result.backend == "LANCZOS"
-    assert [call.args[0] for call in loader.call_args_list] == ["SWINIR", "REAL_ESRGAN"]
+    assert [call.args[0] for call in loader.call_args_list] == ["HAT", "REAL_ESRGAN"]
     assert len(result.fallback_reasons) == 2
     assert all(str(error) in reason for reason in result.fallback_reasons)
+
+
+def test_explicit_lanczos_never_loads_a_learned_backend(monkeypatch, tmp_path):
+    loader = MagicMock(side_effect=AssertionError("must not load"))
+    monkeypatch.setattr(learned_sr, "load_learned_backend", loader)
+    result = _reconstruct(tmp_path, "LANCZOS")
+    assert result.backend == "LANCZOS" and result.fallback_reasons == ()
+    loader.assert_not_called()
 
 
 def test_loading_stops_after_success(monkeypatch, tmp_path):

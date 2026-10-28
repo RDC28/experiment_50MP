@@ -89,10 +89,21 @@ def source_png(tmp_path):
 
 
 def run_tiny(source, output, geometry="SONY_A1II_NATIVE", **settings):
+    # HAT has no pinned checkpoint, so off Colab it falls back to LANCZOS and records why; a pinned
+    # backend (the default SWINIR) would stop the run instead.
+    settings.setdefault("SR_BACKEND", "HAT")
     config = ExperimentConfig(OUTPUT_GEOMETRY=geometry, FAST_DEV_RUN=True, **settings)
     return run_pipeline(
         source, config, output, timestamp=datetime(2026, 1, 2, 3, 4, 5), fast_dev_max_side=96, strip_rows=16
     )
+
+
+def test_default_swinir_that_cannot_load_stops_the_run(source_png, tmp_path):
+    """Regression: a Colab run whose SwinIR could not load silently finished with LANCZOS."""
+    from synthraw.super_resolution import SRBackendLoadError
+
+    with pytest.raises(SRBackendLoadError, match="SR_BACKEND='SWINIR' cannot run"):
+        run_tiny(source_png, tmp_path / "runs", SR_BACKEND="SWINIR")
 
 
 @pytest.mark.parametrize(("geometry", "shape"), [("SONY_A1II_NATIVE", (64, 96)), ("CINEMA_50MP_VIRTUAL", (40, 96))])
@@ -154,9 +165,9 @@ def test_tiny_end_to_end_run_produces_prd_tree(source_png, tmp_path, geometry, s
     assert provenance["source"]["sha256"] == digest
     assert provenance["c2pa"]["status"] in {"C2PA unavailable", "C2PA disabled"}
     assert provenance["outputs"]["raw/synthetic_50mp.dng"] == hashlib.sha256(result.dng_path.read_bytes()).hexdigest()
-    # Default SWINIR must fall back through the PRD chain off Colab without downloads.
+    # Unpinned HAT falls back through the PRD chain off Colab without downloads.
     assert provenance["backends"]["super_resolution"] == "LANCZOS"
-    assert any(reason.startswith("SR SWINIR") for reason in provenance["fallbacks"])
+    assert any(reason.startswith("SR HAT") for reason in provenance["fallbacks"])
 
     assert json.loads((root / "metadata/config.json").read_text())["OUTPUT_GEOMETRY"] == geometry
     assert json.loads((root / "validation/run_report.json").read_text())["status"] == "SUCCESS"
@@ -462,14 +473,15 @@ def test_rerunning_stages_after_editing_a_hypothesis_refreshes_the_run(source_pn
     from synthraw.pipeline import PipelineRun
     from synthraw.validation import MetadataDependencyValidator
 
-    config = ExperimentConfig(FAST_DEV_RUN=True)
+    # HAT has no pinned checkpoint, so it falls back (and records why) instead of stopping the run.
+    config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="HAT")
     pipeline = PipelineRun.create(source_png, config, tmp_path / "runs", fast_dev_max_side=96, strip_rows=16)
     root = pipeline.run.root
     try:
         for name in STAGES:
             pipeline.run_stage(name)
         first_fallbacks = list(pipeline.fallbacks)
-        assert any(message.startswith("SR SWINIR") for message in first_fallbacks)
+        assert any(message.startswith("SR HAT") for message in first_fallbacks)
         first_neutral = _records(root / "metadata/dng_metadata.json")["AsShotNeutral"]["value"]
 
         pipeline.options["manual_wb"] = {"manual_cct": 3200.0}
@@ -686,7 +698,9 @@ def test_without_synthetic_exif_capture_settings_stay_out_of_the_dng_and_sidecar
 
     manual = run_pipeline(
         source_png,
-        ExperimentConfig(FAST_DEV_RUN=True, GENERATE_SYNTHETIC_EXIF=False, EXPOSURE_MODE="MANUAL"),
+        ExperimentConfig(
+            FAST_DEV_RUN=True, SR_BACKEND="LANCZOS", GENERATE_SYNTHETIC_EXIF=False, EXPOSURE_MODE="MANUAL"
+        ),
         tmp_path / "manual",
         timestamp=datetime(2026, 1, 2, 3, 4, 5),
         fast_dev_max_side=96,
