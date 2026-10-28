@@ -210,3 +210,40 @@ def test_tiny_raw_gate_failure_blocks_progress_and_cleans_up(notebook, monkeypat
     assert namespace["RAW_GATE_PASSED"] is False
     assert len(paths) == 1
     assert not paths[0].parent.exists()
+
+
+def test_configuration_cell_defaults_to_the_full_scale_preset(notebook, capsys):
+    """Run all with no edits uses the full-scale preset; the library defaults stay unchanged."""
+    from synthraw.config import ExperimentConfig
+
+    code = (cell.source for cell in notebook.cells if cell.cell_type == "code")
+    (source,) = (cell for cell in code if "CONFIG_VALUES =" in cell)
+    namespace = {"__name__": "__main__"}
+    exec(compile(source, f"{NOTEBOOK}:configuration", "exec"), namespace)
+    config = namespace["read_configuration"]()
+    assert config == ExperimentConfig.from_dict(namespace["CONFIG_VALUES"]) == namespace["FULL_SCALE_PRESET"]
+    expected = dict(
+        FAST_DEV_RUN=False,
+        SR_BACKEND="SWINIR",
+        PRNU=True,
+        DSNU=True,
+        ROW_FPN=True,
+        COLUMN_FPN=True,
+        DARK_CURRENT=True,
+        HOT_PIXELS=True,
+        DEAD_PIXELS=True,
+        OPTICAL_SIMULATION=True,
+        DISTORTION=True,
+        VIGNETTING=True,
+        CHROMATIC_ABERRATION=True,
+        DIFFRACTION=True,
+        DEFOCUS=False,
+        FABRICATE_UNOBSERVABLE_EXIF=True,
+        DNG_COMPRESSION="LOSSLESS",
+        N_SENSOR_REALISATIONS=3,
+        INPUT_MODE="UPLOAD",
+    )
+    assert config == ExperimentConfig(**expected)
+    defaults = ExperimentConfig()
+    assert (defaults.PRNU, defaults.OPTICAL_SIMULATION, defaults.N_SENSOR_REALISATIONS) == (False, False, 1)
+    assert (defaults.DNG_COMPRESSION, defaults.FABRICATE_UNOBSERVABLE_EXIF) == ("UNCOMPRESSED", False)

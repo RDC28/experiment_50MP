@@ -35,8 +35,13 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
    fails, ExifTool counts as absent: the run continues with the bundled seed (`seed_only: true`, with the reason
    in `fallback_reason`) and lists that fallback in `run_report.json`. An installed ExifTool whose catalogue
    query fails (an error, a timeout, bad XML or no Sony fields) stops the run instead.
-2. Set the configuration panel. Every control is an `ExperimentConfig` field. The ones you will usually
-   change are: `INPUT_MODE` (`UPLOAD`, `PATH` or `DRIVE`, with `INPUT_PATH`), `OUTPUT_GEOMETRY`
+2. Set the configuration panel. Every control is an `ExperimentConfig` field. The panel starts on the
+   full-scale preset (`FULL_SCALE_PRESET` in the configuration cell): `FAST_DEV_RUN` off, `SR_BACKEND`
+   `SWINIR`, every sensor noise and optical simulation switch on except `DEFOCUS`, `DNG_COMPRESSION`
+   `LOSSLESS`, `FABRICATE_UNOBSERVABLE_EXIF` on, `N_SENSOR_REALISATIONS` 3 and `INPUT_MODE` `UPLOAD`, so Run all
+   uses it with no edits. The `ExperimentConfig` library defaults are unchanged. To do a quick check, tick
+   `FAST_DEV_RUN`. The controls you will usually change are: `INPUT_MODE` (`UPLOAD`, `PATH` or `DRIVE`, with
+   `INPUT_PATH`), `OUTPUT_GEOMETRY`
    (`SONY_A1II_NATIVE` 8640 x 5760 or `CINEMA_50MP_VIRTUAL` about 50.1 MP at the source aspect ratio),
    `SR_BACKEND`, `HDR_ENABLED`, the sensor noise and optics switches, and the scene, noise and body seeds.
    `DNG_COMPRESSION`, `N_SENSOR_REALISATIONS` and `GENERATE_SYNTHETIC_EXIF` are described below the outputs.
