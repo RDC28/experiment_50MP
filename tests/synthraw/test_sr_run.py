@@ -66,6 +66,23 @@ def test_run_lanczos_all_sensor_fit_modes(tmp_path, mode):
         assert geometry.crop_box[0] > 0
 
 
+def test_full_scale_run_accepts_a_crop_box_that_overshot_the_source(tmp_path):
+    """Regression: full-scale SR failed in resize_exact because the planned crop box overshot the source.
+
+    6336 x 2688 planned a right edge of 6336.000000000001; x4 that broke the strict bounds check.
+    A 7 x 5 source on a 64 x 42 sensor overshoots the same way, and its scale is at least x4,
+    so fast_dev_source passes the plan's crop box through unchanged, as in a full-scale run.
+    """
+    config = ExperimentConfig(SR_BACKEND="LANCZOS")
+    geometry = TargetGeometryPlanner().plan(7, 5, replace(config, FAST_DEV_RUN=True), fast_dev_max_side=64)
+    assert geometry.scale_factor >= 4
+    source = np.full((5, 7, 3), 0.5, dtype=np.float32)
+    result = SuperResolutionEngine().run(source, geometry, config, environment(), tmp_path)
+    assert geometry.crop_box == (0, 0, 7, 5)
+    assert result.sr_input_size == (7, 5)
+    np.testing.assert_allclose(np.load(result.canvas.path), 0.5, atol=1e-6)
+
+
 def test_run_records_fallback_and_single_tile_diagnostic(tmp_path, monkeypatch):
     def unavailable(*args, **kwargs):
         raise RuntimeError("mock GPU unavailable")

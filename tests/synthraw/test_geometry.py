@@ -66,8 +66,53 @@ def test_uniform_fit_and_fast_dev(source, mode, geometry):
     x0, y0, x1, y1 = plan.content_box
     assert math.isclose((right - left) / (bottom - top), (x1 - x0) / (y1 - y0))
     assert math.isclose((right - left) * plan.scale_factor, x1 - x0)
-    assert 0 <= left < right <= source[0] + 1e-9
-    assert 0 <= top < bottom <= source[1] + 1e-9
+    assert 0 <= left < right <= source[0]
+    assert 0 <= top < bottom <= source[1]
+
+
+@pytest.mark.parametrize("source", [(6336, 2688), (3168, 1344)])
+def test_default_crop_box_stays_inside_the_source(source):
+    """Regression: float rounding put the 6336 x 2688 right edge at 6336.000000000001."""
+    left, top, right, bottom = TargetGeometryPlanner().plan(*source, ExperimentConfig()).crop_box
+    assert 0 <= left < right <= source[0]
+    assert 0 <= top < bottom <= source[1]
+
+
+SWEEP_SOURCES = [(width, height) for width in range(1, 41) for height in range(1, 41)] + [
+    (6336, 2688),
+    (3168, 1344),
+    (4096, 1716),
+    (2048, 858),
+    (3840, 2160),
+    (1920, 1080),
+    (7680, 3200),
+    (2688, 6336),
+    (1344, 3168),
+    (2160, 3840),
+    (1080, 1920),
+    (4000, 6000),
+]
+
+
+@pytest.mark.parametrize("mode", ["OUTPAINT_VERTICAL", "CROP_HORIZONTAL", "FIT_WITH_SENSOR_MARGINS"])
+@pytest.mark.parametrize("geometry", ["SONY_A1II_NATIVE", "CINEMA_50MP_VIRTUAL"])
+@pytest.mark.parametrize("fast_dev", [False, True])
+def test_crop_and_content_boxes_stay_inside_source_and_sensor(mode, geometry, fast_dev):
+    config = ExperimentConfig(SENSOR_FIT_MODE=mode, OUTPUT_GEOMETRY=geometry, FAST_DEV_RUN=fast_dev)
+    planner = TargetGeometryPlanner()
+    for source_width, source_height in SWEEP_SOURCES:
+        try:
+            plan = planner.plan(source_width, source_height, config)
+        except ValueError as error:
+            # Extreme aspect ratios on a fast-dev sensor can leave no CFA-aligned margin crop.
+            assert "no CFA-aligned default crop" in str(error)
+            continue
+        left, top, right, bottom = plan.crop_box
+        assert 0 <= left < right <= source_width, (source_width, source_height, plan.crop_box)
+        assert 0 <= top < bottom <= source_height, (source_width, source_height, plan.crop_box)
+        x0, y0, x1, y1 = plan.content_box
+        assert 0 <= x0 < x1 <= plan.width, (source_width, source_height, plan.content_box)
+        assert 0 <= y0 < y1 <= plan.height, (source_width, source_height, plan.content_box)
 
 
 @pytest.mark.parametrize("source", [(0, 2), (-2, 2), (True, 2), (2.5, 2), (2, 0)])

@@ -78,11 +78,13 @@ class TargetGeometryPlanner:
             min(float(width), left + fitted_width),
             min(float(height), top + fitted_height),
         )
+        # Dividing by the scale can land an edge a rounding error outside the source
+        # (6336 x 2688 gives a right edge of 6336.000000000001), so clamp to its bounds.
         crop = (
-            (content[0] - left) / scale,
-            (content[1] - top) / scale,
-            (content[2] - left) / scale,
-            (content[3] - top) / scale,
+            min(float(source_width), max(0.0, (content[0] - left) / scale)),
+            min(float(source_height), max(0.0, (content[1] - top) / scale)),
+            min(float(source_width), max(0.0, (content[2] - left) / scale)),
+            min(float(source_height), max(0.0, (content[3] - top) / scale)),
         )
         assert math.isclose((crop[2] - crop[0]) * scale, content[2] - content[0])
         assert math.isclose((crop[3] - crop[1]) * scale, content[3] - content[1])
