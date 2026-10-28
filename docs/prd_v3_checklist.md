@@ -23,7 +23,7 @@ development laptop.
 | PRD item | State | Implementation | Tests |
 |---|---|---|---|
 | One notebook: `synthetic_camera_raw_50mp_colab.ipynb` | Tested locally | `notebooks/synthetic_camera_raw_50mp_colab.ipynb`; each section runs one `pipeline.PipelineRun` stage, the same code as `run_pipeline` | `test_notebook_run_all.py`, `test_notebook_structure.py`, `test_notebook_validation_cells.py` |
-| Clean Colab `Runtime → Run all` | Pending Colab | Whole notebook; setup cell installs `REPO_REF` and falls back to `main` after merge (cell 2) | `test_notebook_run_all.py` (tiny PNG, Colab mocked); setup cell mocked in `test_notebook_structure.py` |
+| Clean Colab `Runtime → Run all` | Pending Colab | Whole notebook; setup cell installs `REPO_REF` (default `main`, or a pinned 40-character SHA) with the `sr` extra (cell 2) | `test_notebook_run_all.py` (tiny PNG, Colab mocked); setup cell mocked in `test_notebook_structure.py` |
 | 2K JPEG/PNG input | Tested locally (tiny PNG); full 2K pending Colab | `input_audit.InputInspector` | `test_input_audit.py`, `test_synthraw_pipeline.py` |
 | 4K JPEG/PNG input | Tested locally (tiny PNG); full 4K pending Colab | `input_audit.InputInspector` | `test_input_audit.py`, `test_synthraw_pipeline.py` |
 | α1 II-like 8640 × 5760 native mode | Tested locally (geometry arithmetic and tiny dev canvas); 50 MP allocation pending Colab | `geometry.TargetGeometryPlanner`, `camera_profile.CameraProfileManager` | `test_geometry.py`, `test_camera_profile.py`, `test_synthraw_pipeline.py` |
