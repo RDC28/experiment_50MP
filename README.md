@@ -107,7 +107,7 @@ other-resolution export of the same composition. If you leave it empty, the note
 copy of the input and the report labels it as derived. The second run doubles compute. It is written to
 `<run>_comparison/` and is not bundled.
 
-**DNG compression.** `DNG_COMPRESSION = "UNCOMPRESSED"` (the default, easiest to inspect) writes row
+**DNG compression.** `DNG_COMPRESSION = "UNCOMPRESSED"` (the `ExperimentConfig` default, easiest to inspect) writes row
 strips. `"LOSSLESS"` writes lossless JPEG tiles (DNG `Compression = 7`, at most 256 x 256 photosites each,
 needing `imagecodecs`). Either file passes the same gates: the writer decodes every strip or tile again, and
 LibRaw must reopen the DNG with pixels identical to `raw/sensor_mosaic_uint16.npy`. `libraw_roundtrip.json`
