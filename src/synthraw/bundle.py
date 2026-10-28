@@ -141,3 +141,60 @@ def deliver_bundle(bundle: str | Path, *, max_download_bytes: int = MAX_BROWSER_
             files.download(str(bundle))
             status["download"] = "offered"
     return status
+
+
+# The run's final image: the LibRaw-developed 16-bit TIFF master and the synthetic DNG it was developed from.
+FINAL_IMAGE_FILES = {"tiff16": "masters/developed_50mp_16bit.tif", "dng": "raw/synthetic_50mp.dng"}
+
+
+def deliver_final_image(
+    run_root: str | Path,
+    *,
+    drive_dir: str | Path | None = None,
+    download: bool = True,
+    max_download_bytes: int = MAX_BROWSER_DOWNLOAD_BYTES,
+    log: Any = print,
+) -> dict[str, Any]:
+    """Hand the final TIFF and DNG to the person running the notebook, printing every path.
+
+    With ``drive_dir`` (Google Drive mounted), the Drive path of each file that ``copy_run_to_drive`` already
+    placed at ``drive_dir/<run>/<same path>`` is printed too. With ``download`` in Colab, each file up to
+    ``max_download_bytes`` is offered as a browser download.
+    """
+    root = Path(run_root)
+    result: dict[str, Any] = {"files": {}, "missing": [], "drive": {}, "downloads": {}}
+    for kind, name in FINAL_IMAGE_FILES.items():
+        path = root / name
+        if path.is_file():
+            result["files"][kind] = str(path)
+            log(f"Final {kind}: {path} ({path.stat().st_size / 1024**2:.1f} MB)")
+        else:
+            result["missing"].append(name)
+            log(f"Final {kind} not written: {path} is missing (check WRITE_TIFF16 / WRITE_DNG and the run log)")
+    if drive_dir is not None:
+        for kind, local in result["files"].items():
+            source = Path(local)
+            target = Path(drive_dir) / root.name / source.relative_to(root)
+            if not target.is_file() or target.stat().st_size != source.stat().st_size:
+                continue
+            result["drive"][kind] = str(target)
+            log(f"On Google Drive: {target}")
+    if download:
+        try:
+            from google.colab import files
+        except ImportError:
+            files = None
+            log("Not in Colab: no browser download; use the paths above")
+        offered = result["files"].items() if files is not None else ()
+        for kind, local in offered:
+            size = Path(local).stat().st_size
+            if size > max_download_bytes:
+                result["downloads"][kind] = (
+                    f"skipped: {size / 1024**2:.0f} MB exceeds the {max_download_bytes / 1024**2:.0f} MB "
+                    "browser download limit"
+                )
+            else:
+                files.download(local)
+                result["downloads"][kind] = "offered"
+            log(f"Browser download of {Path(local).name}: {result['downloads'][kind]}")
+    return result

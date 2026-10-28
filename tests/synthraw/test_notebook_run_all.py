@@ -124,7 +124,12 @@ def test_run_all_produces_prd_tree_and_bundle(colab, monkeypatch, tmp_path, geom
     assert "Input audit" in log and "Bundle written" in log
 
     bundle = runs / f"{root.name}.zip"
-    assert colab.downloads == [str(bundle)]
+    # The zip, then the final image: the developed 16-bit TIFF and the DNG.
+    final_tiff, final_dng = root / "masters" / "developed_50mp_16bit.tif", root / "raw" / "synthetic_50mp.dng"
+    assert colab.downloads == [str(bundle), str(final_tiff), str(final_dng)]
+    assert namespace["final_image"]["files"] == {"tiff16": str(final_tiff), "dng": str(final_dng)}
+    # Every full-resolution array is a droppable large array; nothing sensor-sized lands in validation/.
+    assert not {name for name in produced if name.startswith("validation/") and name.endswith(".npy")}
     drive_runs = drive / "MyDrive" / "synthraw_runs"
     assert (drive_runs / bundle.name).read_bytes() == bundle.read_bytes()
     with zipfile.ZipFile(bundle) as archive:

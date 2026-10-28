@@ -15,6 +15,10 @@ from synthraw.geometry import GeometryPlan
 from synthraw.sensor_canvas import SensorCanvasResult, place_sensor_canvas
 
 
+class SRBackendLoadError(RuntimeError):
+    """A learned SR backend that must run could not be loaded; never a silent fallback."""
+
+
 @dataclass(frozen=True)
 class SRScalePlan:
     """Allocation-free model scale and exact content resize (PRD model selection)."""
@@ -49,6 +53,8 @@ class SRRunResult:
 
     Fidelity is measured before geometry cropping so it compares the complete
     source field of view. Seam diagnostics are unavailable for a single tile.
+    sr_input_size is the (width, height) the model actually saw: FAST_DEV_RUN
+    shrinks the source by the same factor as the sensor before SR.
     """
 
     tiled: TiledSRResult
@@ -58,6 +64,7 @@ class SRRunResult:
     seams: SeamDiagnostic | None
     seam_unavailable_reason: str | None
     source_fidelity: SourceFidelityDiagnostic
+    sr_input_size: tuple[int, int] | None = None
 
 
 class SuperResolutionEngine:
@@ -82,7 +89,8 @@ class SuperResolutionEngine:
         directory = Path(workdir)
         left, top, right, bottom = map(round, geometry_plan.content_box)
         content_width, content_height = right - left, bottom - top
-        crop_left, crop_top, crop_right, crop_bottom = geometry_plan.crop_box
+        source_rgb, crop_box = self.fast_dev_source(source_rgb, geometry_plan, directory)
+        crop_left, crop_top, crop_right, crop_bottom = crop_box
         scale_plan = self.plan_scale(
             source_width=source_rgb.shape[1],
             source_height=source_rgb.shape[0],
@@ -120,10 +128,11 @@ class SuperResolutionEngine:
             )
             baseline = np.load(baseline_path, mmap_mode="r")
             overlap = min(environment.tiles.overlap, tiled.effective_tile_size - 1)
+            # A full-resolution array, so it lives with the other large intermediates (left out of the zip).
             seams = diagnose_tile_seams(
                 reconstructed,
                 baseline,
-                directory / "validation/tile_seam_map.npy",
+                directory / "intermediates/sr_tile_seam_map.npy",
                 tile_size=tiled.effective_tile_size,
                 overlap=overlap,
                 scale=scale_plan.scale,
@@ -133,10 +142,33 @@ class SuperResolutionEngine:
             directory / "intermediates/sr_content.npy",
             width=content_width,
             height=content_height,
-            source_box=tuple(value * scale_plan.scale for value in geometry_plan.crop_box),
+            source_box=tuple(value * scale_plan.scale for value in crop_box),
         )
         canvas = place_sensor_canvas(np.load(content_path, mmap_mode="r"), geometry_plan, directory)
-        return SRRunResult(tiled, scale_plan, canvas, content_path, seams, seam_reason, fidelity)
+        sr_input_size = (source_rgb.shape[1], source_rgb.shape[0])
+        return SRRunResult(tiled, scale_plan, canvas, content_path, seams, seam_reason, fidelity, sr_input_size)
+
+    @staticmethod
+    def fast_dev_source(
+        source_rgb: np.ndarray, geometry_plan: GeometryPlan, directory: Path
+    ) -> tuple[np.ndarray, tuple[float, float, float, float]]:
+        """Shrink the SR input by FAST_DEV_RUN's sensor reduction; return it and the matching crop box.
+
+        The source is reduced by the same factor as the sensor, so a fast-dev run keeps the full run's
+        ratio of x4 SR output to sensor content (and the 2K/4K comparison keeps its resolution gap).
+        It never drops below the size whose x4 output still covers the planned content, and never
+        enlarges. Without a reduction the source and crop box are returned unchanged.
+        """
+        factor = min(1.0, max(geometry_plan.fast_dev_reduction, geometry_plan.scale_factor / 4))
+        source_height, source_width = source_rgb.shape[:2]
+        width, height = max(1, round(source_width * factor)), max(1, round(source_height * factor))
+        if (width, height) == (source_width, source_height):
+            return source_rgb, geometry_plan.crop_box
+        path = resize_exact(source_rgb, directory / "intermediates/sr_fast_dev_input.npy", width=width, height=height)
+        x_scale, y_scale = width / source_width, height / source_height
+        left, top, right, bottom = geometry_plan.crop_box
+        crop_box = (left * x_scale, top * y_scale, min(width, right * x_scale), min(height, bottom * y_scale))
+        return np.load(path, mmap_mode="r"), crop_box
 
     @staticmethod
     def plan_scale(*, source_width: int, source_height: int, content_width: int, content_height: int) -> SRScalePlan:
@@ -170,6 +202,12 @@ class SuperResolutionEngine:
         mapping, learned backends load lazily inside Colab with manifest gates. Lanczos
         needs only Pillow and resizes float channels without 8-bit quantisation.
         OOM retry happens within each backend before proceeding to the next one.
+
+        Loading failures that the user must fix raise SRBackendLoadError instead of
+        falling back: a missing Python package for any learned backend, and any load
+        failure of the requested backend when it has a pinned checkpoint. Backends
+        that cannot load by design (no pinned checkpoint, licence-gated stubs) still
+        fall back down the chain and record why.
         """
         chains = {
             "SWINIR": ("SWINIR", "REAL_ESRGAN", "LANCZOS"),
@@ -210,7 +248,10 @@ class SuperResolutionEngine:
                         candidate, scale=scale, cache_dir=cache_dir, accept_licence=accept_licence
                     )
                 except (ImportError, RuntimeError, ValueError, OSError) as error:
-                    reasons.append(f"{candidate}: {type(error).__name__}: {error}")
+                    reason = f"{candidate}: {type(error).__name__}: {error}"
+                    if isinstance(error, ImportError) or (candidate == backend and _pinned(candidate)):
+                        raise SRBackendLoadError(_load_failure_message(backend, reason, error)) from error
+                    reasons.append(reason)
                     continue
             if model is None:
                 reasons.append(f"{candidate}: backend unavailable")
@@ -342,6 +383,23 @@ class SuperResolutionEngine:
             tile,
             benchmark_tile_count=benchmark_count,
         )
+
+
+def _pinned(name: str) -> bool:
+    from synthraw.model_manifest import MODEL_MANIFEST
+
+    return name in MODEL_MANIFEST and MODEL_MANIFEST[name].status == "PINNED"
+
+
+def _load_failure_message(backend: str, reason: str, error: BaseException) -> str:
+    message = f"SR_BACKEND={backend!r} cannot run: {reason}."
+    if isinstance(error, ImportError):
+        package = error.name or "a learned SR dependency"
+        message += (
+            f" The Python package {package!r} is missing; rerun the setup cell, which installs the package with "
+            "its 'sr' extra (torch and spandrel)."
+        )
+    return message + ' Fix this, or set SR_BACKEND = "LANCZOS" to run without learned super-resolution.'
 
 
 @dataclass(frozen=True)

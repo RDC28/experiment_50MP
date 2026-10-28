@@ -9,10 +9,12 @@ import numpy as np
 import pytest
 
 from synthraw.bundle import (
+    FINAL_IMAGE_FILES,
     FINAL_RUN_FILES,
     bundle_run,
     copy_run_to_drive,
     deliver_bundle,
+    deliver_final_image,
     drive_run_folder,
     sync_to_drive,
 )
@@ -213,3 +215,72 @@ def test_execution_log_rebinding_closes_previous_run(tmp_path):
     assert "second" not in (first.directory("logs") / "execution.log").read_text()
     assert "second" in (second.directory("logs") / "execution.log").read_text()
     logger.handlers[0].close()
+
+
+def _final_image(run):
+    run.directory("masters").joinpath("developed_50mp_16bit.tif").write_bytes(b"tiff" * 10)
+    run.directory("raw").joinpath("synthetic_50mp.dng").write_bytes(b"dng" * 4)
+    return {kind: run.root / name for kind, name in FINAL_IMAGE_FILES.items()}
+
+
+def _colab_files(monkeypatch):
+    downloads = []
+    google = types.ModuleType("google")
+    colab = types.ModuleType("google.colab")
+    colab.files = types.SimpleNamespace(download=downloads.append)
+    google.colab = colab
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.colab", colab)
+    return downloads
+
+
+def test_final_image_is_offered_for_download_with_its_drive_paths(run, tmp_path, monkeypatch):
+    """Regression: the run left the final image only inside the zip."""
+    files = _final_image(run)
+    downloads = _colab_files(monkeypatch)
+    drive = tmp_path / "drive"
+    copy_run_to_drive(run.root, drive)
+    messages = []
+    result = deliver_final_image(run.root, drive_dir=drive, log=messages.append)
+    assert downloads == [str(files["tiff16"]), str(files["dng"])]
+    assert result["downloads"] == {"tiff16": "offered", "dng": "offered"}
+    assert result["files"] == {kind: str(path) for kind, path in files.items()}
+    for kind, path in files.items():
+        copied = drive / run.root.name / path.relative_to(run.root)
+        assert result["drive"][kind] == str(copied) and copied.read_bytes() == path.read_bytes()
+        assert any(str(path) in message for message in messages)
+        assert any(str(copied) in message for message in messages)
+    assert result["missing"] == []
+
+
+def test_final_image_missing_from_drive_is_not_reported_there(run, tmp_path):
+    files = _final_image(run)
+    drive = tmp_path / "drive"
+    partial = drive / run.root.name / files["dng"].relative_to(run.root)
+    partial.parent.mkdir(parents=True)
+    partial.write_bytes(b"x")
+    messages = []
+    result = deliver_final_image(run.root, drive_dir=drive, download=False, log=messages.append)
+    assert result["drive"] == {} and result["downloads"] == {}
+    assert not any("On Google Drive" in message for message in messages)
+    assert sorted(path for path in drive.rglob("*") if path.is_file()) == [partial]
+
+
+def test_final_image_outside_colab_prints_paths_only(run, monkeypatch):
+    files = _final_image(run)
+    monkeypatch.setitem(sys.modules, "google.colab", None)
+    messages = []
+    result = deliver_final_image(run.root, log=messages.append)
+    assert result["downloads"] == {} and result["drive"] == {}
+    assert all(any(str(path) in message for message in messages) for path in files.values())
+    assert any("Not in Colab" in message for message in messages)
+
+
+def test_final_image_reports_missing_files_and_large_downloads(run, monkeypatch):
+    run.directory("masters").joinpath("developed_50mp_16bit.tif").write_bytes(b"x" * 100)
+    downloads = _colab_files(monkeypatch)
+    messages = []
+    result = deliver_final_image(run.root, max_download_bytes=99, log=messages.append)
+    assert result["missing"] == ["raw/synthetic_50mp.dng"]
+    assert downloads == [] and result["downloads"]["tiff16"].startswith("skipped")
+    assert any("synthetic_50mp.dng" in message and "missing" in message for message in messages)

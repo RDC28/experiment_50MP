@@ -34,6 +34,13 @@ def test_run_lanczos_all_sensor_fit_modes(tmp_path, mode):
     assert result.tiled.estimated_seconds == result.tiled.benchmark_seconds * result.tiled.tile_count
     assert result.seams is not None
     assert np.load(result.seams.residual_map_path).shape == (80, 192)
+    # Regression: the full-resolution seam map sat in validation/ and went into the bundle zip.
+    assert result.seams.residual_map_path == tmp_path / "intermediates/sr_tile_seam_map.npy"
+    assert {path.relative_to(tmp_path).parts[0] for path in tmp_path.rglob("*.npy")} <= {
+        "intermediates",
+        "confidence",
+    }
+    assert result.sr_input_size == (48, 20)
     assert result.seam_unavailable_reason is None
     assert result.source_fidelity.mean_absolute_error < 0.01
     left, top, right, bottom = map(round, geometry.content_box)
@@ -92,3 +99,43 @@ def test_generative_detail_strength_is_recorded_as_ignored(tmp_path):
         "fidelity output only, no unseen texture added",
     )
     np.testing.assert_allclose(np.load(result.canvas.path), 0.5)
+
+
+def test_fast_dev_run_shrinks_the_sr_input_by_the_sensor_reduction(tmp_path):
+    """Regression: FAST_DEV_RUN ran x4 SR on the full 6336 x 2688 source for a 512 x 342 sensor."""
+    config = ExperimentConfig(SR_BACKEND="LANCZOS", FAST_DEV_RUN=True)
+    source = np.zeros((60, 160, 3), dtype=np.float32)
+    source[..., 0] = np.linspace(0.1, 0.9, 160)
+    source[..., 1] = 0.5
+    geometry = TargetGeometryPlanner().plan(160, 60, config, fast_dev_max_side=96)
+    assert geometry.fast_dev_reduction == pytest.approx(96 / 8640)
+    # A 4K-like source keeps the full run's ratio of SR output to sensor content.
+    geometry = replace(geometry, fast_dev_reduction=0.25)
+    result = SuperResolutionEngine().run(source, geometry, config, environment(), tmp_path)
+    assert result.sr_input_size == (40, 15)
+    assert np.load(result.tiled.path, mmap_mode="r").shape == (60, 160, 3)
+    assert np.load(result.canvas.path, mmap_mode="r").shape == (geometry.height, geometry.width, 3)
+    assert result.source_fidelity.mean_absolute_error < 0.01
+
+
+@pytest.mark.parametrize(
+    ("fast_dev", "reduction", "expected"),
+    [
+        (False, 1.0, (160, 60)),  # No FAST_DEV_RUN: the source is untouched.
+        (True, 0.25, (40, 15)),  # The sensor reduction.
+        (True, 0.01, (24, 9)),  # Never below the size whose x4 output covers the planned content.
+    ],
+)
+def test_fast_dev_source_size(tmp_path, fast_dev, reduction, expected):
+    config = ExperimentConfig(FAST_DEV_RUN=fast_dev)
+    geometry = TargetGeometryPlanner().plan(160, 60, config, fast_dev_max_side=96)
+    geometry = replace(geometry, fast_dev_reduction=reduction)
+    source = np.full((60, 160, 3), 0.5, dtype=np.float32)
+    shrunk, crop_box = SuperResolutionEngine.fast_dev_source(source, geometry, tmp_path)
+    assert (shrunk.shape[1], shrunk.shape[0]) == expected
+    width, height = expected
+    left, top, right, bottom = geometry.crop_box
+    assert crop_box == pytest.approx((left * width / 160, top * height / 60, right * width / 160, bottom * height / 60))
+    assert crop_box[2] <= width and crop_box[3] <= height
+    if expected == (160, 60):
+        assert shrunk is source and crop_box == geometry.crop_box

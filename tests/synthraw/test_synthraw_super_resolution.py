@@ -244,17 +244,32 @@ def test_source_fidelity_rejects_invalid_inputs(invalid):
         diagnose_source_fidelity(sr, source)
 
 
-@pytest.mark.parametrize("backend", ["SWINIR", "HAT", "REAL_ESRGAN", "LANCZOS"])
+@pytest.mark.parametrize("backend", ["HAT", "LANCZOS"])
 def test_backend_unavailable_falls_back_to_real_lanczos(tmp_path, backend):
     source = np.full((5, 7, 3), 0.375, dtype=np.float32)
     result = SuperResolutionEngine().reconstruct(
         source, tmp_path / "sr.npy", backend=backend, scale=2, tiles=TileParameters(4, 1, True, False)
     )
     assert result.backend == "LANCZOS"
-    assert len(result.fallback_reasons) == {"SWINIR": 2, "HAT": 2, "REAL_ESRGAN": 1, "LANCZOS": 0}[backend]
+    assert len(result.fallback_reasons) == {"HAT": 2, "LANCZOS": 0}[backend]
     output = np.load(result.path)
     assert output.shape == (10, 14, 3)
     np.testing.assert_allclose(output, 0.375, atol=1e-6)
+
+
+@pytest.mark.parametrize("backend", ["SWINIR", "REAL_ESRGAN"])
+def test_pinned_backend_that_cannot_load_off_colab_stops(tmp_path, backend):
+    from synthraw.super_resolution import SRBackendLoadError
+
+    with pytest.raises(SRBackendLoadError, match="only inside Colab"):
+        SuperResolutionEngine().reconstruct(
+            np.full((5, 7, 3), 0.375, dtype=np.float32),
+            tmp_path / "sr.npy",
+            backend=backend,
+            scale=2,
+            tiles=TileParameters(4, 1, True, False),
+        )
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_backend_oom_exhaustion_uses_esrgan(tmp_path):
@@ -298,7 +313,9 @@ def test_fallback_does_not_hide_output_collision(tmp_path):
     path = tmp_path / "sr.npy"
     path.write_bytes(b"preserve")
     with pytest.raises(FileExistsError):
-        SuperResolutionEngine().reconstruct(np.zeros((2, 2, 3)), path, scale=2, tiles=TileParameters(4, 1, True, False))
+        SuperResolutionEngine().reconstruct(
+            np.zeros((2, 2, 3)), path, backend="HAT", scale=2, tiles=TileParameters(4, 1, True, False)
+        )
     assert path.read_bytes() == b"preserve"
 
 

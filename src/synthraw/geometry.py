@@ -17,6 +17,7 @@ class GeometryPlan:
     crop_box instead uses source pixels. ActiveArea uses DNG (top, left,
     bottom, right); default crop origin/size use DNG (x, y)/(width, height).
     Fractional content edges retain exact uniform scale before rasterisation.
+    fast_dev_reduction is the factor FAST_DEV_RUN applied to the sensor sides (1.0 otherwise).
     """
 
     width: int
@@ -30,6 +31,7 @@ class GeometryPlan:
     default_crop_size: tuple[int, int]
     active_area: tuple[int, int, int, int]
     memory_bytes: dict[str, int]
+    fast_dev_reduction: float = 1.0
 
 
 class TargetGeometryPlanner:
@@ -61,6 +63,7 @@ class TargetGeometryPlanner:
             ratio = source_width / source_height
             width = max(2, 2 * round(math.sqrt(50_100_000 * ratio) / 2))
             height = max(2, 2 * round(math.sqrt(50_100_000 / ratio) / 2))
+        reduction = 1.0
         if config.FAST_DEV_RUN:
             reduction = min(1.0, fast_dev_max_side / max(width, height))
             width, height = (max(2, 2 * round(side * reduction / 2)) for side in (width, height))
@@ -118,4 +121,5 @@ class TargetGeometryPlanner:
             (right - x, bottom - y),
             (0, 0, height, width),
             memory,
+            reduction,
         )

@@ -31,6 +31,7 @@ SECTIONS = [
     "Validation suite",
     "2K/4K comparison",
     "Provenance + report packaging",
+    "Final image",
 ]
 
 
@@ -51,17 +52,22 @@ def test_notebook_schema_and_order(notebook):
     assert headers == SECTIONS
 
 
-def _run_install_cell(source, ref, failing_refs, monkeypatch, *, colab=False):
-    """Execute the setup cell with REPO_REF replaced and pip and Colab mocked; returns (namespace, refs).
+def _run_install_cell(source, monkeypatch, *, ref=None, failing_refs=(), colab=False, sr_modules=("torch", "spandrel")):
+    """Execute the setup cell with pip and Colab mocked; returns (namespace, refs).
 
-    ExifTool starts missing. ``colab`` makes ``import google.colab`` succeed.
+    With ``ref`` the cell's REPO_REF is replaced first; without it the cell runs as written.
+
+    ExifTool starts missing. ``colab`` makes ``import google.colab`` succeed; ``sr_modules`` are then the
+    learned SR packages that import, the others are missing.
     """
     calls = []
 
     def fake_call(command):
         assert command[:4] == [sys.executable, "-m", "pip", "install"]
         url, target = command[4].rsplit("@", 1)
-        assert url == "git+https://github.com/RDC28/experiment_50MP.git" and len(command) == 5
+        # The sr extra is what installs spandrel, without which SwinIR and Real-ESRGAN cannot load.
+        assert url == "synthetic-raw-50mp-lab[sr] @ git+https://github.com/RDC28/experiment_50MP.git"
+        assert len(command) == 5
         calls.append(target)
         return 1 if target in failing_refs else 0
 
@@ -69,13 +75,17 @@ def _run_install_cell(source, ref, failing_refs, monkeypatch, *, colab=False):
     google.colab = types.ModuleType("google.colab")
     monkeypatch.setitem(sys.modules, "google", google if colab else None)
     monkeypatch.setitem(sys.modules, "google.colab", google.colab if colab else None)
+    for module in ("torch", "spandrel"):
+        monkeypatch.setitem(sys.modules, module, types.ModuleType(module) if module in sr_modules else None)
     monkeypatch.setattr("shutil.which", lambda name: None)
     monkeypatch.setattr("subprocess.call", fake_call)
     monkeypatch.setattr("subprocess.check_call", lambda *args, **kwargs: pytest.fail("use subprocess.call"))
-    patched = re.sub(r'^REPO_REF = ".*"$', f"REPO_REF = {ref!r}", source, count=1, flags=re.MULTILINE)
-    assert patched != source or ref == "fm/exp50mp-v3-synthetic-raw"
+    if ref is not None:
+        patched = re.sub(r'^REPO_REF = ".*"$', f"REPO_REF = {ref!r}", source, count=1, flags=re.MULTILINE)
+        assert patched != source
+        source = patched
     namespace = {}
-    exec(compile(patched, "setup_cell", "exec"), namespace)
+    exec(compile(source, "setup_cell", "exec"), namespace)
     return namespace, calls
 
 
@@ -84,27 +94,19 @@ def install_source(notebook):
     return next(cell.source for cell in notebook.cells if cell.cell_type == "code")
 
 
-def test_install_cell_tries_repo_ref_first(install_source, monkeypatch):
-    namespace, calls = _run_install_cell(install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch)
-    assert calls == ["fm/exp50mp-v3-synthetic-raw"]
-    assert namespace["INSTALLED_REF"] == "fm/exp50mp-v3-synthetic-raw"
-
-
-def test_install_cell_falls_back_to_main_when_branch_is_merged(install_source, monkeypatch):
-    with pytest.warns(UserWarning, match="merged commit SHA"):
-        namespace, calls = _run_install_cell(
-            install_source, "fm/exp50mp-v3-synthetic-raw", {"fm/exp50mp-v3-synthetic-raw"}, monkeypatch
-        )
-    assert calls == ["fm/exp50mp-v3-synthetic-raw", "main"]
-    assert namespace["INSTALLED_REF"] == "main"
+def test_install_cell_defaults_to_main(install_source, monkeypatch):
+    namespace, calls = _run_install_cell(install_source, monkeypatch)
+    assert calls == ["main"] and namespace["INSTALLED_REF"] == "main"
+    with pytest.raises(RuntimeError, match="check REPO_REF"):
+        _run_install_cell(install_source, monkeypatch, failing_refs={"main"})
 
 
 def test_install_cell_pinned_sha_never_falls_back(install_source, monkeypatch):
     sha = "0123456789abcdef0123456789abcdef01234567"
-    namespace, calls = _run_install_cell(install_source, sha, set(), monkeypatch)
+    namespace, calls = _run_install_cell(install_source, monkeypatch, ref=sha)
     assert calls == [sha] and namespace["INSTALLED_REF"] == sha
     with pytest.raises(RuntimeError, match="check REPO_REF"):
-        _run_install_cell(install_source, sha, {sha}, monkeypatch)
+        _run_install_cell(install_source, monkeypatch, ref=sha, failing_refs={sha})
 
 
 @pytest.fixture
@@ -115,15 +117,22 @@ def exiftool_installs(monkeypatch):
 
 
 def test_install_cell_skips_exiftool_outside_colab(install_source, monkeypatch, capsys, exiftool_installs):
-    _run_install_cell(install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch)
+    _run_install_cell(install_source, monkeypatch, sr_modules=())
     assert exiftool_installs == []
     assert "ExifTool: not installed" in capsys.readouterr().out
 
 
 def test_install_cell_installs_the_pinned_exiftool_on_colab(install_source, monkeypatch, exiftool_installs):
-    namespace, calls = _run_install_cell(install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch, colab=True)
+    namespace, calls = _run_install_cell(install_source, monkeypatch, colab=True)
     assert exiftool_installs == ["/content/exiftool"]
-    assert calls == ["fm/exp50mp-v3-synthetic-raw"] and namespace["INSTALLED_REF"] == "fm/exp50mp-v3-synthetic-raw"
+    assert calls == ["main"] and namespace["INSTALLED_REF"] == "main"
+
+
+@pytest.mark.parametrize("missing", ["torch", "spandrel"])
+def test_install_cell_fails_on_colab_without_a_learned_sr_package(install_source, monkeypatch, missing):
+    present = tuple(module for module in ("torch", "spandrel") if module != missing)
+    with pytest.raises(ImportError, match=missing):
+        _run_install_cell(install_source, monkeypatch, colab=True, sr_modules=present)
 
 
 def test_install_cell_continues_with_the_seed_when_exiftool_cannot_be_downloaded(install_source, monkeypatch, capsys):
@@ -136,16 +145,19 @@ def test_install_cell_continues_with_the_seed_when_exiftool_cannot_be_downloaded
     monkeypatch.setenv(EXIFTOOL_UNAVAILABLE_ENV, "")
     monkeypatch.delenv(EXIFTOOL_UNAVAILABLE_ENV)
     with pytest.warns(UserWarning, match="bundled seed"):
-        namespace, _ = _run_install_cell(install_source, "fm/exp50mp-v3-synthetic-raw", set(), monkeypatch, colab=True)
-    assert namespace["INSTALLED_REF"] == "fm/exp50mp-v3-synthetic-raw"
+        namespace, _ = _run_install_cell(install_source, monkeypatch, colab=True)
+    assert namespace["INSTALLED_REF"] == "main"
     assert "OSError: offline" in os.environ[EXIFTOOL_UNAVAILABLE_ENV]
     assert "ExifTool: not installed" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("ref", ["v1.0", "some-branch", "0123456", "0123456789abcdef0123456789abcdef0123456g"])
+@pytest.mark.parametrize(
+    "ref",
+    ["v1.0", "some-branch", "fm/exp50mp-v3-synthetic-raw", "0123456", "0123456789abcdef0123456789abcdef0123456g"],
+)
 def test_install_cell_rejects_unpinned_refs(install_source, monkeypatch, ref):
     with pytest.raises(ValueError, match="40-character commit SHA"):
-        _run_install_cell(install_source, ref, set(), monkeypatch)
+        _run_install_cell(install_source, monkeypatch, ref=ref)
 
 
 def test_all_cells_are_unexecuted_valid_python(notebook):
