@@ -71,8 +71,8 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
 5. The last cell, **Final image**, delivers the result: it shows the preview, prints the paths of the developed
    16-bit TIFF (`masters/developed_50mp_16bit.tif`) and the DNG (`raw/synthetic_50mp.dng`), and offers both
    as browser downloads (`DOWNLOAD_FINAL_IMAGE = True`, each up to `BROWSER_DOWNLOAD_MAX_MB`; a full 50 MP TIFF
-   is about 300 MB, so it takes a few minutes). When Drive is mounted it also prints their paths in the Drive
-   run folder (`MyDrive/synthraw_runs/<run>/`), copying them there if the run folder copy missed them.
+   is about 300 MB, so it takes a few minutes). When the bundle cell's run folder copy put them on Drive, it
+   also prints their paths in the Drive run folder (`MyDrive/synthraw_runs/<run>/`).
 
 **Outputs** (under the run folder)
 

@@ -52,8 +52,10 @@ def test_notebook_schema_and_order(notebook):
     assert headers == SECTIONS
 
 
-def _run_install_cell(source, ref, failing_refs, monkeypatch, *, colab=False, sr_modules=("torch", "spandrel")):
-    """Execute the setup cell with REPO_REF replaced and pip and Colab mocked; returns (namespace, refs).
+def _run_install_cell(source, monkeypatch, *, ref=None, failing_refs=(), colab=False, sr_modules=("torch", "spandrel")):
+    """Execute the setup cell with pip and Colab mocked; returns (namespace, refs).
+
+    With ``ref`` the cell's REPO_REF is replaced first; without it the cell runs as written.
 
     ExifTool starts missing. ``colab`` makes ``import google.colab`` succeed; ``sr_modules`` are then the
     learned SR packages that import, the others are missing.
@@ -78,10 +80,12 @@ def _run_install_cell(source, ref, failing_refs, monkeypatch, *, colab=False, sr
     monkeypatch.setattr("shutil.which", lambda name: None)
     monkeypatch.setattr("subprocess.call", fake_call)
     monkeypatch.setattr("subprocess.check_call", lambda *args, **kwargs: pytest.fail("use subprocess.call"))
-    patched = re.sub(r'^REPO_REF = ".*"$', f"REPO_REF = {ref!r}", source, count=1, flags=re.MULTILINE)
-    assert patched != source or ref == "main"
+    if ref is not None:
+        patched = re.sub(r'^REPO_REF = ".*"$', f"REPO_REF = {ref!r}", source, count=1, flags=re.MULTILINE)
+        assert patched != source
+        source = patched
     namespace = {}
-    exec(compile(patched, "setup_cell", "exec"), namespace)
+    exec(compile(source, "setup_cell", "exec"), namespace)
     return namespace, calls
 
 
@@ -91,19 +95,18 @@ def install_source(notebook):
 
 
 def test_install_cell_defaults_to_main(install_source, monkeypatch):
-    assert re.search(r'^REPO_REF = "main"$', install_source, flags=re.MULTILINE)
-    namespace, calls = _run_install_cell(install_source, "main", set(), monkeypatch)
+    namespace, calls = _run_install_cell(install_source, monkeypatch)
     assert calls == ["main"] and namespace["INSTALLED_REF"] == "main"
     with pytest.raises(RuntimeError, match="check REPO_REF"):
-        _run_install_cell(install_source, "main", {"main"}, monkeypatch)
+        _run_install_cell(install_source, monkeypatch, failing_refs={"main"})
 
 
 def test_install_cell_pinned_sha_never_falls_back(install_source, monkeypatch):
     sha = "0123456789abcdef0123456789abcdef01234567"
-    namespace, calls = _run_install_cell(install_source, sha, set(), monkeypatch)
+    namespace, calls = _run_install_cell(install_source, monkeypatch, ref=sha)
     assert calls == [sha] and namespace["INSTALLED_REF"] == sha
     with pytest.raises(RuntimeError, match="check REPO_REF"):
-        _run_install_cell(install_source, sha, {sha}, monkeypatch)
+        _run_install_cell(install_source, monkeypatch, ref=sha, failing_refs={sha})
 
 
 @pytest.fixture
@@ -114,13 +117,13 @@ def exiftool_installs(monkeypatch):
 
 
 def test_install_cell_skips_exiftool_outside_colab(install_source, monkeypatch, capsys, exiftool_installs):
-    _run_install_cell(install_source, "main", set(), monkeypatch, sr_modules=())
+    _run_install_cell(install_source, monkeypatch, sr_modules=())
     assert exiftool_installs == []
     assert "ExifTool: not installed" in capsys.readouterr().out
 
 
 def test_install_cell_installs_the_pinned_exiftool_on_colab(install_source, monkeypatch, exiftool_installs):
-    namespace, calls = _run_install_cell(install_source, "main", set(), monkeypatch, colab=True)
+    namespace, calls = _run_install_cell(install_source, monkeypatch, colab=True)
     assert exiftool_installs == ["/content/exiftool"]
     assert calls == ["main"] and namespace["INSTALLED_REF"] == "main"
 
@@ -129,7 +132,7 @@ def test_install_cell_installs_the_pinned_exiftool_on_colab(install_source, monk
 def test_install_cell_fails_on_colab_without_a_learned_sr_package(install_source, monkeypatch, missing):
     present = tuple(module for module in ("torch", "spandrel") if module != missing)
     with pytest.raises(ImportError, match=missing):
-        _run_install_cell(install_source, "main", set(), monkeypatch, colab=True, sr_modules=present)
+        _run_install_cell(install_source, monkeypatch, colab=True, sr_modules=present)
 
 
 def test_install_cell_continues_with_the_seed_when_exiftool_cannot_be_downloaded(install_source, monkeypatch, capsys):
@@ -142,7 +145,7 @@ def test_install_cell_continues_with_the_seed_when_exiftool_cannot_be_downloaded
     monkeypatch.setenv(EXIFTOOL_UNAVAILABLE_ENV, "")
     monkeypatch.delenv(EXIFTOOL_UNAVAILABLE_ENV)
     with pytest.warns(UserWarning, match="bundled seed"):
-        namespace, _ = _run_install_cell(install_source, "main", set(), monkeypatch, colab=True)
+        namespace, _ = _run_install_cell(install_source, monkeypatch, colab=True)
     assert namespace["INSTALLED_REF"] == "main"
     assert "OSError: offline" in os.environ[EXIFTOOL_UNAVAILABLE_ENV]
     assert "ExifTool: not installed" in capsys.readouterr().out
@@ -154,7 +157,7 @@ def test_install_cell_continues_with_the_seed_when_exiftool_cannot_be_downloaded
 )
 def test_install_cell_rejects_unpinned_refs(install_source, monkeypatch, ref):
     with pytest.raises(ValueError, match="40-character commit SHA"):
-        _run_install_cell(install_source, ref, set(), monkeypatch)
+        _run_install_cell(install_source, monkeypatch, ref=ref)
 
 
 def test_all_cells_are_unexecuted_valid_python(notebook):
