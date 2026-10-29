@@ -106,3 +106,24 @@ RNG mutation, immutable shared state, JSON records and invalid parameter rejecti
 No full suite, image pipeline, decoder roundtrip, model, notebook or full-frame
 job ran. The remaining MVP and all subsequent phases remain pending; Colab-only
 validation and the unavailable research integrations above remain unresolved.
+
+
+## Implementation evidence: second MVP increment
+
+`prd_v5/geometry.py` implements allocation-free geometry planning with a 50.0 MP
+aspect-preserving target, even Bayer dimensions, native 8640x5760 dimensions,
+uniform source-to-output transforms, supported source crops, sensor-margin
+bands and DNG crop/ActiveArea coordinates. Requested and actual megapixels are
+separate, and buffer payload estimates are explicit rather than peak RAM claims.
+Native crop and outpaint policies are represented; outpaint bands have status
+`required_not_executed`, never a claim that a generator ran. Native center-cover
+may crop vertically for portrait sources despite the PRD policy name
+`CROP_HORIZONTAL`; portrait outpainting may require side bands.
+
+Validation: 20 new lightweight geometry tests pass, including equivalent 2K/4K
+mapping, area accounting, CFA crop support, JSON serialization and invalid input
+rejection. All 46 v5 camera/geometry tests and repository-wide ruff pass. Existing
+pipeline defaults are unchanged. No images, models, notebooks or full-suite tests
+ran. Rasterization, bounded pixel processing, DNG/rawpy/TIFF roundtrip, complete
+configuration/registry and the Colab notebook remain pending within MVP; all
+later phases and Colab-only scientific/performance checks remain pending.
