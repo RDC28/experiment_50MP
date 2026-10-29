@@ -211,3 +211,23 @@ sRGB transfer equation and Bayer phase. All 91 v5 tests pass. No full suite,
 notebook, inference or full-frame work ran. Source decoding/ICC, orchestration,
 DNG/TIFF roundtrip, config, reports and notebook remain MVP work; scientific
 fidelity and Colab-only validation remain unresolved.
+
+
+## Implementation evidence: seventh MVP increment
+
+`decode.py` connects actual JPEG/PNG files to normalized disk-backed sRGB
+arrays. Unprofiled RGB requires explicit assumption; embedded RGB ICC profiles
+use LittleCMS relative-colorimetric conversion without black-point compensation.
+Invalid ICC is blocked. Reports retain source hashes, conversion policy, stored
+raster orientation and endpoint counts as clipping indicators rather than truth.
+Pillow buffers decoded source pixels; a configurable eight-byte-per-pixel gate
+rejects over-budget inputs before loading. This estimates decoder storage, not
+peak RSS. Additional strip buffers scale with strip height. ICC conversion is
+8-bit; HDR/16-bit source precision and EXIF autorotation are not implemented.
+
+Validation: seven new tiny tests cover JPEG/PNG values, ICC conversion, strip
+invariance, policy/resource rejection before decoding and output contracts. The
+existing analytic E2E fixture now starts from an actual PNG and runs decode,
+geometry, inverse ISP and Bayer/ADC against independently calculated codes.
+MVP orchestration, DNG/rawpy/TIFF roundtrip, config, reports and notebook remain
+pending. No models, full-frame processing or Colab validation ran.

@@ -50,11 +50,19 @@ variance; no measured camera calibration or full sensor effects are claimed.
 pixel-center coordinates and row-bounded float32 memmap output. A disk-backed
 boolean source-support mask distinguishes zero-signal sensor margins. Plans
 requiring unavailable outpainting fail before writing. This is not HAT or a
-silent SR fallback; learned fidelity and source decoding remain pending.
+silent SR fallback; learned fidelity remains pending.
+
+`decode.py` decodes 8-bit RGB JPEG/PNG to normalized sRGB float32 memmaps,
+with explicit unprofiled assumptions or LittleCMS relative-colorimetric ICC
+conversion. It reports endpoint clipping indicators, uses stored raster orientation
+and rejects over-budget sources before decode. Pillow holds source pixels in RAM;
+the configurable eight-byte-per-pixel gate is a decoder estimate, not a peak RSS
+guarantee. Strip buffers are additional. ICC output remains 8-bit; this is not HDR
+or a precision-preserving 16-bit source decoder.
 
 ## Pending
 
-The remaining MVP config, complete registry, source decoding/diagnostics/ICC transforms, pipeline orchestration, DNG/rawpy/TIFF roundtrip, reports and new Colab notebook are not
+The remaining MVP config, complete registry, pipeline orchestration, DNG/rawpy/TIFF roundtrip, reports and new Colab notebook are not
 implemented yet. Fidelity, learned RAW, full sensor, full optics and final
 metadata follow MVP in that order. No HAT, HDR model or learned RAW checkpoint is
 executed by this foundation. Upstream checkpoint and scientific limitations in

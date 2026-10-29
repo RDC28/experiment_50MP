@@ -19,8 +19,16 @@ def buffers(tmp_path, plan):
 
 
 def test_identity_and_analytic_sensor(tmp_path):
+    from PIL import Image
+
+    from prd_v5.decode import decode_source
+
     plan = GeometryPlanner().plan(4, 4, target_megapixels=16 / 1e6)
-    source = np.linspace(0, 1, 48, dtype=np.float32).reshape(4, 4, 3)
+    pixels = np.arange(48, dtype=np.uint8).reshape(4, 4, 3) * 5
+    path = tmp_path / "input.png"
+    Image.fromarray(pixels).save(path)
+    source = np.memmap(tmp_path / "decoded", mode="w+", dtype=np.float32, shape=(4, 4, 3))
+    decode_source(path, source, assume_unprofiled_srgb=True)
     rgb, mask = buffers(tmp_path, plan)
     report = rasterize(source, rgb, mask, plan)
     np.testing.assert_array_equal(rgb, source)
