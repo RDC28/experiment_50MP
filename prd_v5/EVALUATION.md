@@ -829,3 +829,27 @@ shared lock; repository-wide ruff, changed Python formatting and diff whitespace
 checks pass. No background processes or heavy jobs were started. HDR, colour
 constancy/profile selection and validation crops remain fidelity work; later
 ordered phases and full-scale Colab/scientific validation remain unresolved.
+
+## Bounded colour-constancy hypothesis (iteration 38)
+
+`colour.resolve_gray_world` adds opt-in executable colour-constancy evidence for
+the fidelity phase. It scans normalized encoded-sRGB arrays/memmaps in bounded
+row strips, inverts the sRGB transfer, excludes endpoint pixels across all
+channels and selects G-normalized gains through the existing ISP field resolver.
+The immutable ISP and selection records can drive the analytic runner, retaining
+ESTIMATED provenance, null confidence, channel statistics and explicit scene and
+channel-proxy assumptions. Missing/degenerate evidence fails without unity fallback.
+Existing pipeline defaults are unchanged. This is an analytic gray-world heuristic,
+not a learned model, calibrated illuminant or recovered capture white balance.
+Rendered WB/tone/colour cannot be disentangled. The inverse ISP divides by gains;
+it does not neutralize the rendered input or establish colour accuracy.
+
+Validation covers independently calculated gains, endpoint exclusions, strip
+invariance, strict JSON/provenance and actual disk-backed inverse-ISP pixel
+changes with passing forward consistency. Notebook dispatch and coherent shared
+paired-source colour evidence remain pending, along with HDR/profile selection,
+later ordered phases and full-scale/scientific Colab validation. No notebook,
+model download, heavy processing, commit or background service was started.
+
+All 285 lightweight v5 tests pass under the shared test lock. Repository-wide
+ruff, changed Python formatting and diff whitespace checks pass.

@@ -400,3 +400,14 @@ paired configuration. Mixed modes, missing joint fields and explicit values fail
 rather than silently override user choices. The default null prior preserves
 existing hypotheses. Both child registries retain the joint alternatives and
 explicit scene EV prior. This does not infer scene brightness from source pixels.
+
+Opt-in colour-constancy evidence: `colour.resolve_gray_world(isp, encoded_srgb)`
+accepts normalized floating-point HxWx3 arrays, including read-only memmaps,
+and returns a new immutable ISP, selection records and a JSON-compatible report.
+Pass its records as `isp_selections` to the existing runner to preserve evidence.
+It scans bounded row strips, excludes pixels with any zero/saturated channel,
+and estimates G-normalized gains under a neutral-average scene prior. This is a
+rendered linear-sRGB channel proxy, not a learned estimator or recovered capture
+WB. The analytic inverse divides by those gains; this API does not neutralize
+the rendered source. Empty evidence fails without fallback. Notebook dispatch
+and shared paired-source evidence selection remain pending; defaults are unchanged.
