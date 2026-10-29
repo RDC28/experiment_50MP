@@ -519,7 +519,7 @@ accept `ACCEPT_SENSOR_EXPERIMENT` for nonzero effects; disabled feature switches
 zero their corresponding amplitudes. Nonzero effects are uncalibrated experimental
 priors, not recovered sensor properties. Requested zero amplitudes report no-op.
 Dead sites retain read/offset electronics; dark/hot expectations scale with shutter.
-DNG NoiseProfile excludes these extended effects. Dual conversion gain remains pending. Run bundles export exact defect selections as described below.
+DNG NoiseProfile excludes these extended effects. Dual conversion profile notebook dispatch remains pending; the experimental API is described below. Run bundles export exact defect selections as described below.
 
 
 Experimental sensor nonlinearity: `SensorEffects(nonlinearity_compression=k)`
@@ -546,3 +546,22 @@ HTML report, including occupancy and overlap semantics. Export happens after
 the independent DNG/TIFF gate. It adds one byte per photosite on disk for the
 working mask and one for the artifact, with bounded strip copies. Zero defect
 fractions produce an all-zero artifact; ADC behavior and seeds are unchanged.
+
+Experimental dual-conversion electronics API: construct
+`DualConversionProfile` from `prd_v5.electronics` with a descriptive `label`,
+`switch_iso`, and explicit `low_full_well_e`, `low_read_noise_e`,
+`high_full_well_e`, `high_read_noise_e`. Call
+`camera, records, evidence = profile.resolve(base_camera, accept_experimental=True)`
+once before paired execution. Use the returned camera in `AnalyticRunConfig`
+and pass `camera_selections=records` to the single or paired runner. The returned
+records preserve both regimes and their selected branch in JSON/HTML. Normal
+config replay retains the selected effective electronics, not automatic future
+ISO reselection; resolve the profile again if changing ISO.
+
+The high branch applies at ISO >= switch_iso. Each branch defines effective
+base conversion gain as full well divided by ADC range; existing ISO/100 analogue
+gain still applies. Temporal noise, saturation and DNG NoiseProfile consequently
+share the selected electronics. This simplified model does not implement
+simultaneous dual readout or establish Sony calibration. Equal regimes can be
+zero-effect and are explicitly reported. Existing defaults remain unchanged.
+Notebook/profile catalogue dispatch and physical/full-scale validation are pending.

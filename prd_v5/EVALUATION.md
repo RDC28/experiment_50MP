@@ -1150,3 +1150,29 @@ No notebook, model, download, heavy processing, background service or commit ran
 
 All 382 lightweight v5 tests pass under the shared resource lock.
 Repository-wide ruff, changed Python formatting and diff whitespace checks pass.
+
+## Full sensor increment: explicit ISO-switched electronics profile
+
+`electronics.DualConversionProfile` now resolves an explicit immutable two-regime
+full-well/read-noise profile into the existing shared camera hypothesis and USER
+selection records. High regime applies at ISO >= switch_iso. Explicit experiment
+acceptance and a descriptive label are required. Both regimes and branch selection
+survive selection evidence in run JSON/HTML. The selected full well determines
+base conversion gain, saturation and temporal NoiseProfile with the existing
+ISO/100 analogue gain law. Pixels and DNG noise metadata use that same camera;
+no independent metadata-only gain switch is introduced. Equal selected electronics
+report zero-effect. Default camera/config behavior remains unchanged.
+
+This is a simplified user-supplied effective electronics hypothesis, not measured
+Sony dual conversion gain, simultaneous dual readout, or scientific validation.
+Config replay retains selected electronics; changing ISO requires explicit profile
+reselection. Notebook/catalogue dispatch remains the next integration step before
+full optics and final metadata. Full-scale and photon-transfer checks remain
+Colab-only. Tests use tiny arrays and real PNG-to-DNG-to-independent-LibRaw/TIFF
+execution, checking ISO boundary arithmetic, seeded noise samples, derived DNG
+NoiseProfile, provenance, replay, zero-effect and invalid profile rejection.
+No model, notebook, download, full-scale job, background service or commit ran.
+
+Validation: all 392 lightweight v5 tests pass under the shared resource lock.
+Repository-wide `python -m ruff check .`, changed Python formatting and diff
+whitespace checks pass.
