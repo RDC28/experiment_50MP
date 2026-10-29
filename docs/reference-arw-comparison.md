@@ -121,5 +121,9 @@ photon-transfer envelope and fit, dark-block tail and banding statistics (about 
 plane), the dark-window banding PSD and hot/dead counts, and `write_realism` writes
 `validation/realism_comparison.json` and `.png` with reference, synthetic and ratio rows. The module
 removes each block's fitted plane before measuring noise and banding, so its numbers on this frame are
-somewhat lower than the scene-inflated ceilings in the tables above. The realism rows are report only:
-no gate reads them.
+somewhat lower than the scene-inflated ceilings in the tables above. On this frame several mid-tone
+signal bins hold no flat block at all (envelope variance up to about 100 000 DN^2 near 1000 DN on the
+greens), which drives a least-squares slope negative, so the module fits the envelope with Theil-Sen
+(median pairwise slope, median intercept) instead. It reports R 2.36 e-/DN, 35.1 k e- full well and
+5.0 e- read noise; G1 / G2 1.95 / 1.98 e-/DN, 28.9 k / 29.4 k e- and about 10 e-; B stays unreliable
+(1.22 e-/DN). The realism rows are report only: no gate reads them.

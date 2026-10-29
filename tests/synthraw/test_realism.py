@@ -10,12 +10,19 @@ BLACK, WHITE = 512.0, 16383.0
 GAIN_DN2_PER_DN, READ_DN = 0.25, 3.0
 
 
-def _mosaic(*, row_banding=0.0, hot=(), seed=0):
-    """Horizontal ramp with shot plus read noise, optional row banding and hot photosites."""
+def _mosaic(*, row_banding=0.0, hot=(), texture=(), seed=0):
+    """Horizontal ramp with shot plus read noise, optional row banding, hot photosites and scene texture.
+
+    ``texture`` is a (low, high) signal range in DN whose every photosite gets 300 DN of extra
+    scatter, so no block in those signal bins is flat, as in the textured mid-tones of a real scene.
+    """
     rng = np.random.default_rng(seed)
     rows, cols = 512, 1024
     signal = np.broadcast_to(np.geomspace(2, 0.6 * (WHITE - BLACK), cols), (rows, cols))
     noisy = signal + rng.normal(size=(rows, cols)) * np.sqrt(GAIN_DN2_PER_DN * signal + READ_DN**2)
+    if texture:
+        textured = (signal >= texture[0]) & (signal <= texture[1])
+        noisy = noisy + 300 * rng.normal(size=(rows, cols)) * textured
     noisy += row_banding * rng.normal(size=(rows, 1))
     mosaic = np.clip(np.round(noisy + BLACK), 0, WHITE)
     for row, column in hot:
@@ -31,6 +38,14 @@ def test_photon_transfer_recovers_the_simulated_noise_model():
     assert fit["full_well_e"] == pytest.approx((WHITE - BLACK) / GAIN_DN2_PER_DN, rel=0.25)
     assert planes["G1"]["defects"]["hot_count"] == 0
     assert planes["G1"]["fraction_clipped"] == 0
+
+
+def test_photon_transfer_ignores_signal_bins_without_a_flat_block():
+    planes = measure_mosaic(_mosaic(texture=(400, 1600)), black=BLACK, white=WHITE, pattern=RGGB)["planes"]
+    for name in ("R", "G1", "G2", "B"):
+        fit = planes[name]["photon_transfer_fit"]
+        assert fit["dn2_per_dn"] == pytest.approx(GAIN_DN2_PER_DN, rel=0.25)
+        assert fit["read_noise_e"] == pytest.approx(READ_DN / GAIN_DN2_PER_DN, rel=0.5)
 
 
 def test_row_banding_and_hot_photosites_are_detected():

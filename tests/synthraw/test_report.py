@@ -7,6 +7,7 @@ from datetime import datetime
 
 import numpy as np
 import pytest
+import tifffile
 from PIL import Image
 
 from synthraw.config import ExperimentConfig
@@ -198,9 +199,19 @@ def test_reference_raw_adds_a_realism_section(reported, tmp_path):
     assert document["label"].startswith("Realism")
     ratios = [row["ratio"] for row in document["rows"] if row["ratio"] is not None]
     assert ratios and all(ratio == pytest.approx(1) for ratio in ratios)
+    # The DNG's D65 ColorMatrix2 gives the camera neutral, which LibRaw alone leaves at zero.
+    neutral = {row["plane"]: row["synthetic"] for row in document["rows"] if row["metric"] == "D65 camera neutral"}
+    with tifffile.TiffFile(reference) as dng:
+        matrix = np.asarray(dng.pages[0].tags["ColorMatrix2"].value, dtype=float).reshape(-1, 2)
+    expected = (matrix[:, 0] / matrix[:, 1]).reshape(3, 3) @ [0.95047, 1.0, 1.08883]
+    assert neutral == pytest.approx({"R": expected[0] / expected[1], "B": expected[2] / expected[1]}, rel=1e-4)
     text = path.read_text()
     section = text.split("Realism against a real reference raw", 1)[1]
     assert "reference.dng" in section and "Dark positive tail" in section
+    table = section.split("</table>", 1)[0]
+    # Zero reference fractions leave the ratio empty; empty cells read n/a, not Python's None.
+    assert any(row["ratio"] is None for row in document["rows"])
+    assert ">n/a<" in table and ">None<" not in table
     assert "Realism: reference raw against the synthetic DNG" in section
     assert not list(root.rglob("reference.dng"))  # the reference is read in place, never copied in
 

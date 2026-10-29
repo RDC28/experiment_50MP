@@ -433,11 +433,13 @@ class ReportGenerator:
             "<th>Reference</th><th>Synthetic</th><th>Synthetic / reference</th></tr>"
         )
         for row in document.get("rows", []):
+            reference_value, synthetic_value, ratio = (
+                "n/a" if row[key] is None else format_measured(row[key]) for key in ("reference", "synthetic", "ratio")
+            )
             parts.append(
                 f"<tr><td>{esc(row['metric'])}</td><td>{esc(row['plane'])}</td><td>{esc(row['unit'])}</td>"
-                f"<td class='num'>{esc(format_measured(row['reference']))}</td>"
-                f"<td class='num'>{esc(format_measured(row['synthetic']))}</td>"
-                f"<td class='num'>{esc(format_measured(row['ratio']))}</td></tr>"
+                f"<td class='num'>{esc(reference_value)}</td><td class='num'>{esc(synthetic_value)}</td>"
+                f"<td class='num'>{esc(ratio)}</td></tr>"
             )
         parts.append("</table>")
         figure = figures.get(REALISM_FIGURE) or root / "validation" / REALISM_FIGURE
