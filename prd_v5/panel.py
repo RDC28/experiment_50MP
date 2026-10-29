@@ -24,6 +24,8 @@ def resolve_camera_panel(
     AUTO/FABRICATE without values use the declared synthetic base hypothesis.
     Joint exposure ESTIMATE requires an explicit exposure_prior. Other absent
     estimates fail rather than inventing evidence.
+    Dual conversion gain accepts an explicitly accepted USER profile dictionary
+    after ISO resolution, with no fabricated calibration or scalar well conflict.
     Read-noise amplitude remains in CAMERA_VALUES; its PRD row combines multiple
     distributions and is deliberately not treated as a scalar override.
     """
@@ -31,6 +33,7 @@ def resolve_camera_panel(
     if len(set(names)) != len(names) or set(modes) != set(names):
         raise ValueError("Panel requires unique fields and exactly one mode per field")
     selected_modes, candidates = {}, {}
+    electronics = None
     if exposure_prior is not None:
         from prd_v5.exposure import resolve_exposure
 
@@ -55,6 +58,13 @@ def resolve_camera_panel(
         if mode not in {"AUTO", "ESTIMATE", "FABRICATE", "USER"}:
             raise ValueError(f"Invalid panel mode: {name}")
         value = field["value"]
+        if name == "Dual conversion gain":
+            if value is None and mode == "AUTO":
+                continue
+            if mode != "USER" or not isinstance(value, dict):
+                raise ValueError("Dual conversion gain requires USER mode and a supplied profile")
+            electronics = dict(value)
+            continue
         target = CAMERA_FIELDS.get(name)
         if target is None:
             if value is not None or mode != field["mode"]:
@@ -77,7 +87,17 @@ def resolve_camera_panel(
                     "CameraHypothesis domain checks",
                 ),
             )
-    return resolve_camera(base, selected_modes, candidates)
+    camera, records = resolve_camera(base, selected_modes, candidates)
+    if electronics is not None:
+        from prd_v5.electronics import DualConversionProfile
+
+        if "full_well_e" in candidates:
+            raise ValueError("Dual conversion gain conflicts with explicit Full-well capacity")
+        accepted = electronics.pop("accept_experimental", False)
+        camera, selected, _ = DualConversionProfile(**electronics).resolve(camera, accept_experimental=accepted)
+        replacements = {r.name: r for r in selected if r.name in {"full_well_e", "read_noise_e"}}
+        records = tuple(replacements.get(r.name, r) for r in records)
+    return camera, records
 
 
 def resolve_analytic_panel(

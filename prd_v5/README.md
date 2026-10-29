@@ -519,7 +519,7 @@ accept `ACCEPT_SENSOR_EXPERIMENT` for nonzero effects; disabled feature switches
 zero their corresponding amplitudes. Nonzero effects are uncalibrated experimental
 priors, not recovered sensor properties. Requested zero amplitudes report no-op.
 Dead sites retain read/offset electronics; dark/hot expectations scale with shutter.
-DNG NoiseProfile excludes these extended effects. Dual conversion profile notebook dispatch remains pending; the experimental API is described below. Run bundles export exact defect selections as described below.
+DNG NoiseProfile excludes these extended effects. Dual conversion profiles are executable through the notebook USER field; the experimental API is described below. Run bundles export exact defect selections as described below.
 
 
 Experimental sensor nonlinearity: `SensorEffects(nonlinearity_compression=k)`
@@ -565,3 +565,10 @@ share the selected electronics. This simplified model does not implement
 simultaneous dual readout or establish Sony calibration. Equal regimes can be
 zero-effect and are explicitly reported. Existing defaults remain unchanged.
 Notebook/profile catalogue dispatch and physical/full-scale validation are pending.
+
+The notebook `Dual conversion gain` USER field accepts a dictionary containing all
+`DualConversionProfile` constructor fields plus `accept_experimental=True`. AUTO
+with a null value keeps default electronics. Selection follows resolved ISO and
+rejects a simultaneous explicit Full-well capacity value. Execution evidence is
+written after paired completion; per-run registry records retain both regimes,
+selection and zero-effect evidence. No measured Sony profile is bundled.

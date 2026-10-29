@@ -1176,3 +1176,24 @@ No model, notebook, download, full-scale job, background service or commit ran.
 Validation: all 392 lightweight v5 tests pass under the shared resource lock.
 Repository-wide `python -m ruff check .`, changed Python formatting and diff
 whitespace checks pass.
+
+## Full sensor integration: executable notebook electronics field
+
+The existing Dual conversion gain catalogue field now accepts a USER dictionary
+with all `DualConversionProfile` fields plus `accept_experimental=True`. Null AUTO
+preserves existing defaults. Selection follows resolved ISO, including joint
+exposure selection, and rejects conflicting explicit Full-well capacity input.
+Both electronics records replace their base records without losing ISO evidence.
+Invalid modes, missing profiles and unaccepted experiments fail before pixel work.
+The notebook passes these records into the existing immutable paired-run config;
+completed-pair state distinguishes absent profiles and zero-effect selections.
+Run JSON/HTML retain experimental profile and branch evidence. No measured Sony
+profile, automatic calibration or simultaneous dual readout is claimed.
+
+Validation: 399 lightweight v5 tests pass under the shared resource lock, including
+panel-to-real-DNG/independent-LibRaw/TIFF execution, ISO branch selection, preserved
+provenance, input immutability, conflicting edits and static notebook validation.
+Repository-wide ruff and changed Python formatting checks pass. Full optics and
+final metadata remain next ordered phases. Full-scale and physical calibration
+validation remain Colab-only. No notebook, model, download, full-scale job,
+background service or commit was started.

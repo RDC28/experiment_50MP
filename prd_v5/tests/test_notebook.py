@@ -173,3 +173,13 @@ def test_notebook_sensor_priors_are_replayable_and_completion_gated():
     assert "if not globals()[switch]" in execution
     assert "and not ACCEPT_SENSOR_EXPERIMENT" in execution
     assert execution.index("result = run_analytic_pair(") < execution.index("states[switch] =")
+
+
+def test_notebook_electronics_field_is_optional_and_completion_gated():
+    notebook, values = assignments()
+    field = next(f for f in values["FIELD_REQUESTS"] if f["name"] == "Dual conversion gain")
+    assert field["value"] is None and field["mode"] == "AUTO"
+    assert "DualConversionProfile" in field["method"]
+    execution = notebook.cells[-1].source
+    assert execution.index("result = run_analytic_pair(") < execution.index('states["Dual conversion gain"]')
+    assert 'not electronics["zero_effect"]' in execution

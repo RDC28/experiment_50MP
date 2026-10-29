@@ -358,3 +358,61 @@ def test_colour_file_panel_budget_and_null_path(tmp_path):
         resolve_analytic_panel_from_source(
             camera, isp, [], {}, colour_source_path=source, assume_unprofiled_srgb=True, max_decode_bytes=1
         )
+
+
+def test_electronics_panel_selects_after_iso_and_retains_evidence(tmp_path):
+    import json
+    from dataclasses import asdict
+
+    from PIL import Image
+
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.tests.test_electronics import PROFILE
+
+    payload = {**asdict(PROFILE), "accept_experimental": True}
+    requests = [
+        {"name": "Dual conversion gain", "value": payload, "mode": "AUTO"},
+        {"name": "ISO", "value": 800, "mode": "AUTO"},
+    ]
+    camera, records = resolve_camera_panel(CameraHypothesis(), requests, {r["name"]: "USER" for r in requests})
+    assert camera.iso == 800 and camera.full_well_e == 26000 and camera.read_noise_e == 1
+    assert payload["accept_experimental"] is True
+    assert len({r.name for r in records}) == len(records)
+    assert next(r for r in records if r.name == "iso").provenance == "USER_SET"
+    evidence = next(r for r in records if r.name == "full_well_e").posterior
+    assert evidence["selected_regime"] == "high"
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (32, 32, 32)).save(source)
+    output = tmp_path / "bundle"
+    AnalyticRunConfig(camera=camera, target_megapixels=0.001024, assume_unprofiled_srgb=True).run(
+        source, output, camera_selections=records
+    )
+    assert '"selected_regime": "high"' in json.dumps(json.loads((output / "manifest.json").read_text()))
+    assert "synthetic test, not Sony" in (output / "report.html").read_text()
+
+
+@pytest.mark.parametrize("mode,value", [("USER", None), ("ESTIMATE", None), ("FABRICATE", {}), ("AUTO", {})])
+def test_electronics_panel_rejects_unsupplied_or_ineligible_profiles(mode, value):
+    with pytest.raises(ValueError, match="requires USER"):
+        resolve_camera_panel(
+            CameraHypothesis(),
+            [{"name": "Dual conversion gain", "value": value, "mode": "AUTO"}],
+            {"Dual conversion gain": mode},
+        )
+
+
+def test_electronics_panel_default_acceptance_and_conflict():
+    from dataclasses import asdict
+
+    from prd_v5.tests.test_electronics import PROFILE
+
+    field = {"name": "Dual conversion gain", "value": None, "mode": "AUTO"}
+    camera, _ = resolve_camera_panel(CameraHypothesis(), [field], {field["name"]: "AUTO"})
+    assert camera == CameraHypothesis()
+    field["value"] = asdict(PROFILE)
+    with pytest.raises(ValueError, match="acceptance"):
+        resolve_camera_panel(camera, [field], {field["name"]: "USER"})
+    field["value"]["accept_experimental"] = True
+    well = {"name": "Full-well capacity", "value": 52000, "mode": "AUTO"}
+    with pytest.raises(ValueError, match="conflicts"):
+        resolve_camera_panel(camera, [field, well], {field["name"]: "USER", well["name"]: "USER"})
