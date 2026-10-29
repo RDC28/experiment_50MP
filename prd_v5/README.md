@@ -224,3 +224,17 @@ tags; actual independent decode evidence stays in the roundtrip stage report.
 Values precede DNG rational rounding. With shot noise disabled, the registry
 retains a null/UNSPECIFIED `dng.NoiseProfile` and the DNG omits that tag because
 its slope must be positive. This remains the analytic subset of the full registry.
+
+For sequential source-resolution runs, call
+`run_analytic_pair(source_2k, source_4k, new_output_dir, config)` from
+`prd_v5.paired`. The same frozen `AnalyticRunConfig` supplies actual camera/ISP
+hypotheses, seeds and settings to both runs. Each child closes working arrays
+before the next starts. Outputs live in `2k/` and `4k/`; `pair_manifest.json`
+links their completed manifests with hashes, observed source dimensions and
+output geometry. It appears only after both runs succeed. A failed second run
+retains the first bundle for diagnosis without claiming pair completion; retry
+in a new directory. Labels are caller-supplied and do not verify scene identity,
+registration or exact resolution. Shared seeds do not imply identical noise for
+different pixel signals. Pair comparison metrics remain unimplemented. Full-size
+paired processing requires Colab and explicit resource budgets; never run it on
+the development Mac.

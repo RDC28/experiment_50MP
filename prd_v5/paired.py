@@ -1,0 +1,59 @@
+"""Sequential analytic source-resolution runs with one shared hypothesis."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import asdict
+from pathlib import Path
+
+from prd_v5.config import AnalyticRunConfig
+
+
+def run_analytic_pair(
+    source_2k: str | Path,
+    source_4k: str | Path,
+    output_dir: str | Path,
+    config: AnalyticRunConfig,
+) -> dict:
+    """Run caller-labelled variants sequentially using exactly the same config.
+
+    Labels do not certify dimensions, registration or common scene content.
+    Actual source dimensions/hashes and geometry remain in each child manifest.
+    A failed child leaves diagnostic outputs but no pair completion manifest.
+    Existing output directories are never reused. Full-scale work is Colab-only.
+    """
+    if not isinstance(config, AnalyticRunConfig):
+        raise ValueError("Expected one validated AnalyticRunConfig")
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=False)
+    runs = {}
+    # Each call closes disk-backed working arrays before the next call starts.
+    for label, source in (("2k", source_2k), ("4k", source_4k)):
+        child = config.run(source, output / label)
+        manifest = output / label / "manifest.json"
+        runs[label] = {
+            "manifest": f"{label}/manifest.json",
+            "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+            "source_sha256": child["source"]["sha256"],
+            "source_dimensions": [child["source"]["width"], child["source"]["height"]],
+            "output_dimensions": [child["geometry"]["width"], child["geometry"]["height"]],
+        }
+    report = {
+        "schema_version": 1,
+        "pipeline": "sequential analytic source-resolution pair; no learned inference",
+        "shared_config": json.loads(config.to_json()),
+        "shared_camera": asdict(config.camera),
+        "runs": runs,
+        "comparison": {
+            "status": "not measured",
+            "limitations": [
+                "2k and 4k are caller labels; scene identity and registration are not verified",
+                "Shared hypotheses and random stream seeds do not guarantee identical noise residuals",
+                "Different aspect ratios can produce different output rasters; no pixelwise metrics computed",
+                "Scientific source-support versus generated-detail comparison remains pending",
+            ],
+        },
+    }
+    (output / "pair_manifest.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    return report

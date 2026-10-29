@@ -2,6 +2,26 @@
 
 Evaluated 2026-10-29 before implementation. `PRD_v5.md` is the supplied document copied byte for byte. This evaluation does not rewrite it. The deliverable is one new Colab notebook under `prd_v5/notebooks/`, backed by composable, tested Python. No notebook, model download, full-frame inference, or training is permitted on the 8 GB development Mac. Full-suite tests must use `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
+## Implementation evidence: twenty-third MVP increment
+
+`paired.run_analytic_pair` executes caller-labelled 2K and 4K sources sequentially
+using one frozen analytic configuration, including actual camera/ISP hypotheses
+and stream seeds. Working arrays close between children. A pair completion
+manifest links both child manifests with SHA-256, observed source dimensions and
+output dimensions; a failed child leaves no pair completion marker. Existing
+directories are protected. Labels do not establish scene identity, registration
+or resolution, and shared streams do not guarantee equal noise residuals.
+Scientific comparison metrics remain pending.
+
+Validation: tiny 16/32-pixel sources execute both independent DNG/TIFF roundtrips,
+retain identical configuration and reproduce identical DNGs for constant equal
+signals. Failure coverage verifies sequential completion, identical config object
+use, released working arrays and retention of the first completed bundle without
+pair completion. All 171 lightweight v5 tests pass under the shared lock;
+repository-wide ruff and changed Python formatting pass. No full-size job, model,
+notebook or background service ran. Complete panel/registry and notebook remain
+pending before later phases; full-scale paired Colab validation remains unresolved.
+
 ## Implementation evidence: twenty-second MVP increment
 
 The analytic registry now includes `dng.*` intended tag records derived directly
