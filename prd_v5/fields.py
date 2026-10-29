@@ -163,3 +163,34 @@ def resolve_isp(
         resolved.append(result)
     isp = AnalyticISP(**{record.name: record.value for record in resolved})
     return isp, tuple(resolved)
+
+
+def validate_selections(base, records: Iterable[CameraField], *, isp: bool = False) -> dict[str, dict]:
+    """Validate input-selection claims against effective values before execution.
+
+    Only executable input fields are eligible. Reapplying each requested mode
+    enforces its provenance policy; the effective hypothesis must stay identical.
+    Omitted records leave existing synthetic provenance unchanged.
+    """
+    from dataclasses import asdict
+
+    supplied = {}
+    for record in records:
+        if not isinstance(record, CameraField):
+            raise ValueError("Selection records must be CameraFields")
+        if record.name in supplied:
+            raise ValueError("Duplicate selection record")
+        supplied[record.name] = record
+    resolver = resolve_isp if isp else resolve_camera
+    effective, _ = resolver(
+        base,
+        {name: record.mode for name, record in supplied.items()},
+        {name: (record,) for name, record in supplied.items()},
+    )
+    if effective != base:
+        raise ValueError("Selection records disagree with effective configuration")
+    result = {}
+    for name, record in supplied.items():
+        key = f"isp.{name}" if isp else name
+        result[key] = asdict(replace(copy.deepcopy(record), name=key))
+    return result

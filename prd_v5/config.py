@@ -9,7 +9,7 @@ from pathlib import Path
 
 from prd_v5.analytic import AnalyticISP
 from prd_v5.geometry import GeometryPlanner
-from prd_v5.hypothesis import CameraHypothesis
+from prd_v5.hypothesis import CameraField, CameraHypothesis
 
 
 @dataclass(frozen=True)
@@ -88,7 +88,14 @@ class AnalyticRunConfig:
         except TypeError as error:
             raise ValueError(f"Invalid analytic configuration fields: {error}") from error
 
-    def run(self, source_path: str | Path, output_dir: str | Path) -> dict:
+    def run(
+        self,
+        source_path: str | Path,
+        output_dir: str | Path,
+        *,
+        camera_selections: tuple[CameraField, ...] = (),
+        isp_selections: tuple[CameraField, ...] = (),
+    ) -> dict:
         """Execute the bounded analytic pipeline with exactly these settings."""
         from prd_v5.pipeline import run_analytic
 
@@ -97,6 +104,8 @@ class AnalyticRunConfig:
             output_dir,
             self.camera,
             self.isp,
+            camera_selections=camera_selections,
+            isp_selections=isp_selections,
             target_megapixels=self.target_megapixels,
             geometry_mode=self.geometry_mode,
             native_fit_policy=self.native_fit_policy,

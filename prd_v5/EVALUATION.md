@@ -2,6 +2,26 @@
 
 Evaluated 2026-10-29 before implementation. `PRD_v5.md` is the supplied document copied byte for byte. This evaluation does not rewrite it. The deliverable is one new Colab notebook under `prd_v5/notebooks/`, backed by composable, tested Python. No notebook, model download, full-frame inference, or training is permitted on the 8 GB development Mac. Full-suite tests must use `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
+## Implementation evidence: twenty-seventh MVP increment
+
+The analytic runner and `AnalyticRunConfig.run` now accept camera/ISP selection
+records from the field resolvers. Before source I/O or output creation, records
+must match executable input names, units, field-mode provenance eligibility and
+the effective validated hypotheses. Duplicates, unresolved evidence, derived or
+identity overrides and inconsistent values fail. Accepted records replace only
+the corresponding input registry entries in the manifest and offline HTML;
+derived electronics and DNG records retain derived provenance. Defaults and JSON
+schema remain unchanged. Saved config replays effective values; selection claims
+are retained in the manifest, not replayed as inferred evidence from config.json.
+
+Validation: 213 lightweight v5 tests pass under the shared lock. Tiny actual
+PNG-to-independent-LibRaw-TIFF output retains USER ISO and ESTIMATED exposure
+records in JSON and HTML alongside matching effective settings. Invalid claims
+fail before even opening a nonexistent source. Repository-wide ruff and changed
+Python formatting pass. JSON/panel selection integration, complete MVP notebook,
+later ordered phases and full-scale Colab/scientific validation remain pending.
+No model, full-frame processing, notebook, commit or background service ran.
+
 ## Implementation evidence: twenty-sixth MVP increment
 
 `fields.resolve_isp` now resolves all four executable analytic ISP inputs from
@@ -606,3 +626,7 @@ pass. No model, notebook, full-frame job, full repository suite, commit or
 background service ran. Complete MVP panel/registry and notebook remain pending
 before later ordered phases. Full-scale Colab and scientific acceptance remain
 unresolved.
+
+## Implementation scheduling checkpoint
+
+Parent review after iteration 26: the analytic path already executes through independent DNG/TIFF development. Prioritize the remaining direct deliverable now: create the single Colab notebook with setup, hardware inspection, every PRD setting and maximum-scale defaults, then advance fidelity, learned RAW dispatch, full sensor, full optics and complete metadata in order. Do not spend the remaining iteration budget on additional small analytic-only schema, report or provenance polish while those phases have not been attempted. Each next increment should close a substantial remaining roadmap requirement end to end, reusing existing tested synthraw implementations where appropriate. Finish with one locked full-suite run and lint, and replace accumulated increment history with a concise final implemented/deferred matrix. Unsupported research checkpoints may be deferred with evidence; available analytic/sensor/optics functionality and the notebook itself should be implemented rather than deferred.

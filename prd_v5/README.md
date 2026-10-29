@@ -258,13 +258,27 @@ in `base_camera.registry()`. Unspecified modes use AUTO and the base synthetic
 hypothesis. Supplied evidence lists replace that field's base candidate.
 Unresolved USER/ESTIMATE inputs fail, as do invalid domains and attempts to set
 derived electronics. Use the returned camera in `AnalyticRunConfig(camera=...)`;
-selection records must be retained separately and are not automatically inserted
-into runner provenance. JSON/panel integration remains pending.
+pass selection records through the runner keywords below to preserve provenance.
+JSON/panel integration remains pending.
 
 `fields.resolve_isp(base_isp, modes, candidates)` applies the same atomic selection
 contract to all four `AnalyticISP` inputs. Names are unprefixed; white balance and
 exposure gain use `ratio` units, matrix and tone switch use null units. Missing
 evidence, unknown inputs, invalid matrices/gains and nonboolean tone switches
 fail before returning a hypothesis. Use the result in `AnalyticRunConfig(isp=...)`.
-Selection records remain separate from runner provenance; this does not perform
-WB/colour/exposure estimation or wire field modes into JSON/the notebook panel.
+Pass selection records through the runner keywords below to preserve provenance.
+This does not perform WB/colour/exposure estimation or wire field modes into
+JSON/the notebook panel.
+
+
+To preserve selection evidence in executed bundles, pass resolver records to
+`config.run(source, output, camera_selections=camera_records,
+isp_selections=isp_records)` (also supported by `run_analytic`). The runner
+checks field names, units, mode eligibility and equality with effective camera/
+ISP values before source I/O. Conflicting, duplicate, unresolved or non-input
+records fail. Accepted selections replace input provenance in the manifest and
+HTML; derived records remain derived. Supply evidence only for supported input
+fields. This retains caller-supplied claims, not independently verified estimates.
+`config.json` still stores effective hypotheses only: replaying it alone does
+not recreate selection provenance. Retain the manifest for that evidence.
+JSON field-mode requests and the notebook panel remain pending.

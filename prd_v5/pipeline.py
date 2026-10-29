@@ -14,8 +14,9 @@ from prd_v5.analytic import AnalyticISP
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.decode import decode_source
 from prd_v5.dng import write_dng
+from prd_v5.fields import validate_selections
 from prd_v5.geometry import GeometryPlanner
-from prd_v5.hypothesis import CameraHypothesis
+from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.inputs import InputInspector
 from prd_v5.raster import rasterize
 from prd_v5.registry import analytic_registry
@@ -38,6 +39,8 @@ def run_analytic(
     strip_rows: int = 64,
     max_decode_bytes: int = 256 * 1024 * 1024,
     max_develop_bytes: int = 512 * 1024 * 1024,
+    camera_selections: tuple[CameraField, ...] = (),
+    isp_selections: tuple[CameraField, ...] = (),
 ) -> dict:
     """Run explicit bilinear/analytic MVP, never an implicit learned fallback.
 
@@ -62,6 +65,8 @@ def run_analytic(
         max_decode_bytes=max_decode_bytes,
         max_develop_bytes=max_develop_bytes,
     )
+    selections = validate_selections(camera, camera_selections)
+    selections.update(validate_selections(isp, isp_selections, isp=True))
     for value in (strip_rows, max_decode_bytes, max_develop_bytes):
         if type(value) is not int or value <= 0:
             raise ValueError("Strip height and memory budgets must be positive integers")
@@ -160,7 +165,7 @@ def run_analytic(
         "source": source.to_dict(),
         "geometry": geometry.to_dict(),
         "camera": asdict(camera),
-        "registry": analytic_registry(camera, source, geometry, isp),
+        "registry": {**analytic_registry(camera, source, geometry, isp), **selections},
         "isp": asdict(isp),
         "stages": stages,
         "artifacts": artifacts,

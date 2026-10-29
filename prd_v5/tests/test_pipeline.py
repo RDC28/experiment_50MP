@@ -161,3 +161,69 @@ def test_saved_configuration_replays_exact_adc(tmp_path):
     for name in ("capture.dng", "developed.tiff", "source_support.npy", "source_clipped.npy", "config.json"):
         assert first["artifacts"][name] == second["artifacts"][name]
     assert "config.json" in (tmp_path / "first/report.html").read_text()
+
+
+def test_selected_input_provenance_survives_bundle(tmp_path):
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.fields import resolve_camera, resolve_isp
+    from prd_v5.hypothesis import CameraField
+
+    def evidence(name, value, units, mode, provenance):
+        return CameraField(name, value, units, mode, provenance, None, None, "Supplied test evidence", "Uncalibrated")
+
+    camera, camera_records = resolve_camera(
+        CameraHypothesis(), {"iso": "USER"}, {"iso": [evidence("iso", 400, "ISO", "USER", "USER_SET")]}
+    )
+    isp, isp_records = resolve_isp(
+        AnalyticISP(),
+        {"exposure_gain": "ESTIMATE"},
+        {"exposure_gain": [evidence("exposure_gain", 2, "ratio", "ESTIMATE", "ESTIMATED")]},
+    )
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((32, 32, 3), 128, dtype=np.uint8)).save(source)
+    config = AnalyticRunConfig(camera=camera, isp=isp, target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    output = tmp_path / "selected"
+    report = config.run(source, output, camera_selections=camera_records, isp_selections=isp_records)
+    saved = json.loads((output / "manifest.json").read_text())
+    for registry in (report["registry"], saved["registry"]):
+        assert registry["iso"]["mode"] == "USER"
+        assert registry["iso"]["provenance"] == "USER_SET"
+        assert registry["iso"]["value"] == report["camera"]["iso"] == 400
+        assert registry["isp.exposure_gain"]["name"] == "isp.exposure_gain"
+        assert registry["isp.exposure_gain"]["provenance"] == "ESTIMATED"
+        assert registry["isp.exposure_gain"]["value"] == report["isp"]["exposure_gain"] == 2
+        assert registry["analogue_gain"]["provenance"] == "DERIVED"
+    page = (output / "report.html").read_text()
+    assert "USER_SET" in page and "ESTIMATED" in page and "Supplied test evidence" in page
+    assert AnalyticRunConfig.from_json((output / "config.json").read_text()) == config
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "units", "mode", "provenance"),
+    [
+        ("iso", 400, "ISO", "USER", "USER_SET"),  # effective default is 100
+        ("iso", 100, "ISO", "USER", "SYNTHETIC"),
+        ("iso", 100, "EV", "AUTO", "SYNTHETIC"),
+        ("gps", [1, 2], None, "USER", "USER_SET"),
+        ("analogue_gain", 1, "ratio", "AUTO", "DERIVED"),
+    ],
+)
+def test_selection_claims_rejected_before_io(tmp_path, name, value, units, mode, provenance):
+    from prd_v5.hypothesis import CameraField
+
+    record = CameraField(name, value, units, mode, provenance, None, None, "Claim", "Unchecked")
+    output = tmp_path / "output"
+    with pytest.raises(ValueError):
+        run_analytic(tmp_path / "missing.png", output, CameraHypothesis(), camera_selections=(record,))
+    assert not output.exists()
+
+
+def test_duplicate_and_mismatched_isp_selections_rejected_before_io(tmp_path):
+    from prd_v5.hypothesis import CameraField
+
+    record = CameraField("exposure_gain", 2, "ratio", "USER", "USER_SET", None, None, "Claim", "Unchecked")
+    for records in ((record,), (record, record)):
+        with pytest.raises(ValueError):
+            run_analytic(tmp_path / "missing.png", tmp_path / "out", CameraHypothesis(), isp_selections=records)
+    assert not (tmp_path / "out").exists()
