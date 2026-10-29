@@ -5,47 +5,210 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "schema_version": {"type": "integer", "const": 1},
-    "camera": {"$ref": "#/$defs/camera"},
-    "isp": {"$ref": "#/$defs/isp"},
-    "geometry_mode": {"enum": ["PRESERVE_SOURCE_ASPECT_50MP", "SONY_A1II_NATIVE"]},
-    "native_fit_policy": {"enum": ["LETTERBOX_SENSOR_MARGIN", "CROP_HORIZONTAL", "OUTPAINT_VERTICAL"]},
-    "target_megapixels": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
-    "assume_unprofiled_srgb": {"type": "boolean"},
-    "strip_rows": {"$ref": "#/$defs/positiveInteger"},
-    "max_decode_bytes": {"$ref": "#/$defs/positiveInteger"},
-    "max_develop_bytes": {"$ref": "#/$defs/positiveInteger"}
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "camera": {
+      "$ref": "#/$defs/camera"
+    },
+    "isp": {
+      "$ref": "#/$defs/isp"
+    },
+    "geometry_mode": {
+      "enum": [
+        "PRESERVE_SOURCE_ASPECT_50MP",
+        "SONY_A1II_NATIVE"
+      ]
+    },
+    "native_fit_policy": {
+      "enum": [
+        "LETTERBOX_SENSOR_MARGIN",
+        "CROP_HORIZONTAL",
+        "OUTPAINT_VERTICAL"
+      ]
+    },
+    "target_megapixels": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1000
+    },
+    "assume_unprofiled_srgb": {
+      "type": "boolean"
+    },
+    "strip_rows": {
+      "$ref": "#/$defs/positiveInteger"
+    },
+    "max_decode_bytes": {
+      "$ref": "#/$defs/positiveInteger"
+    },
+    "max_develop_bytes": {
+      "$ref": "#/$defs/positiveInteger"
+    },
+    "sensor_effects": {
+      "$ref": "#/$defs/sensor_effects"
+    }
   },
   "$defs": {
-    "positiveInteger": {"type": "integer", "minimum": 1},
-    "positiveNumber": {"type": "number", "exclusiveMinimum": 0},
-    "triple": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "positiveNumber": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "triple": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "number"
+      }
+    },
     "camera": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
-        "adc_bits": {"type": "integer", "const": 14},
-        "black_level": {"type": "integer", "minimum": 0, "maximum": 16382},
-        "full_well_e": {"$ref": "#/$defs/positiveNumber"},
-        "read_noise_e": {"type": "number", "minimum": 0},
-        "iso": {"type": "integer", "minimum": 100, "maximum": 32000},
-        "shutter_s": {"$ref": "#/$defs/positiveNumber"},
-        "aperture": {"$ref": "#/$defs/positiveNumber"},
-        "cfa_pattern": {"enum": ["RGGB", "BGGR", "GRBG", "GBRG"]},
-        "shot_noise": {"type": "boolean"},
-        "read_noise": {"type": "boolean"}
+        "seed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "adc_bits": {
+          "type": "integer",
+          "const": 14
+        },
+        "black_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16382
+        },
+        "full_well_e": {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "read_noise_e": {
+          "type": "number",
+          "minimum": 0
+        },
+        "iso": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 32000
+        },
+        "shutter_s": {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "aperture": {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "cfa_pattern": {
+          "enum": [
+            "RGGB",
+            "BGGR",
+            "GRBG",
+            "GBRG"
+          ]
+        },
+        "shot_noise": {
+          "type": "boolean"
+        },
+        "read_noise": {
+          "type": "boolean"
+        }
       }
     },
     "isp": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "camera_to_srgb": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/triple"}},
-        "white_balance": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/positiveNumber"}},
-        "exposure_gain": {"$ref": "#/$defs/positiveNumber"},
-        "inverse_smoothstep": {"type": "boolean"},
-        "hdr_max_radiance": {"type": "number", "minimum": 1, "maximum": 65536}
+        "camera_to_srgb": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/triple"
+          }
+        },
+        "white_balance": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/positiveNumber"
+          }
+        },
+        "exposure_gain": {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "inverse_smoothstep": {
+          "type": "boolean"
+        },
+        "hdr_max_radiance": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 65536
+        }
+      }
+    },
+    "sensor_effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prnu_sigma": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0,
+          "maximum": 1
+        },
+        "dsnu_e": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0
+        },
+        "row_fpn_e": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0
+        },
+        "column_fpn_e": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0
+        },
+        "dark_current_e_per_s": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0
+        },
+        "temperature_c": {
+          "type": "number",
+          "default": 20.0,
+          "minimum": -100,
+          "maximum": 100
+        },
+        "temperature_doubling_c": {
+          "type": "number",
+          "default": 6.0,
+          "minimum": 1
+        },
+        "hot_pixel_fraction": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0,
+          "maximum": 1
+        },
+        "dead_pixel_fraction": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0,
+          "maximum": 1
+        },
+        "hot_pixel_e_per_s": {
+          "type": "number",
+          "default": 1000.0,
+          "minimum": 0
+        }
       }
     }
   }

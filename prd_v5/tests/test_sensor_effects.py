@@ -1,0 +1,115 @@
+"""Small CFA-domain physical checks, without model inference or full frames."""
+
+import json
+from dataclasses import replace
+
+import numpy as np
+import pytest
+from PIL import Image
+
+from prd_v5.config import AnalyticRunConfig
+from prd_v5.hypothesis import CameraHypothesis
+from prd_v5.paired import run_analytic_pair
+from prd_v5.sensor import BayerSensor, SensorEffects
+
+
+def simulate(tmp_path, effects, signal=0.2, camera=None, strip_rows=3):
+    camera = camera or CameraHypothesis(shot_noise=False, read_noise=False)
+    rgb = np.full((24, 32, 3), signal, dtype=np.float64)
+    dest = np.memmap(tmp_path / "adc", mode="w+", dtype=np.uint16, shape=rgb.shape[:2])
+    try:
+        report = BayerSensor(camera, effects).process(rgb, dest, strip_rows=strip_rows)
+        return dest.copy(), report
+    finally:
+        dest._mmap.close()
+
+
+def test_zero_preserves_baseline_and_replay(tmp_path):
+    effects = SensorEffects()
+    a, report = simulate(tmp_path, effects)
+    np.testing.assert_array_equal(a, round(0.2 * 15871 + 512))
+    assert all(not v["effective"] for v in report["body_effects"]["states"].values())
+    config = AnalyticRunConfig(sensor_effects=effects)
+    assert AnalyticRunConfig.from_json(config.to_json()) == config
+
+
+def test_dark_temperature_exposure_arithmetic(tmp_path):
+    effects = SensorEffects(dark_current_e_per_s=100, temperature_c=26)
+    camera = CameraHypothesis(shutter_s=2, shot_noise=False, read_noise=False)
+    a, report = simulate(tmp_path, effects, signal=0, camera=camera)
+    np.testing.assert_array_equal(a, round(512 + 400 / camera.conversion_gain_e_per_dn))
+    assert report["body_effects"]["dark_expectation_e"] == 400
+
+
+@pytest.mark.parametrize("parameter", ["prnu_sigma", "dsnu_e", "row_fpn_e", "column_fpn_e"])
+def test_body_structure_and_strip_invariance(tmp_path, parameter):
+    effects = SensorEffects(**{parameter: 0.03 if parameter == "prnu_sigma" else 100})
+    a, _ = simulate(tmp_path, effects, strip_rows=1)
+    b, _ = simulate(tmp_path, effects, strip_rows=7)
+    np.testing.assert_array_equal(a, b)
+    assert np.std(a) > 1
+    if parameter == "row_fpn_e":
+        assert np.all(a == a[:, :1])
+    if parameter == "column_fpn_e":
+        assert np.all(a == a[:1])
+    c, _ = simulate(tmp_path, effects, camera=CameraHypothesis(seed=9, shot_noise=False, read_noise=False))
+    assert not np.array_equal(a, c)
+
+
+def test_prnu_precedes_poisson(tmp_path):
+    camera = CameraHypothesis(shot_noise=True, read_noise=False)
+    effects = SensorEffects(prnu_sigma=0.1)
+    a, _ = simulate(tmp_path, effects, camera=camera)
+    body_seed = camera.stream_seed("sensor_body")
+    response = np.maximum(np.random.default_rng(np.random.SeedSequence([body_seed, 0, 0])).normal(1, 0.1, 32), 0)
+    expected_e = 0.2 * camera.full_well_e * response
+    shot = np.random.default_rng(np.random.SeedSequence([camera.stream_seed("sensor_shot"), 0])).poisson(expected_e)
+    np.testing.assert_array_equal(a[0], np.rint(shot / camera.conversion_gain_e_per_dn + 512))
+
+
+def test_defects_and_dead_precedence(tmp_path):
+    camera = CameraHypothesis(shutter_s=2, shot_noise=False, read_noise=False)
+    hot = SensorEffects(hot_pixel_fraction=1, hot_pixel_e_per_s=100)
+    a, _ = simulate(tmp_path, hot, signal=0, camera=camera)
+    np.testing.assert_array_equal(a, round(512 + 200 / camera.conversion_gain_e_per_dn))
+    b, _ = simulate(tmp_path, replace(hot, dead_pixel_fraction=1, dark_current_e_per_s=10), camera=camera)
+    np.testing.assert_array_equal(b, 512)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"prnu_sigma": -1},
+        {"dead_pixel_fraction": 2},
+        {"dsnu_e": True},
+        {"temperature_c": float("nan")},
+        {"temperature_doubling_c": 0},
+        {"hot_pixel_e_per_s": 1e20},
+    ],
+)
+def test_reject_invalid_effects(values):
+    with pytest.raises(ValueError):
+        SensorEffects(**values)
+
+
+def test_paired_roundtrip_records_body_effect_and_adc(tmp_path):
+    import rawpy
+
+    source = tmp_path / "source.png"
+    Image.fromarray(np.zeros((32, 32, 3), dtype=np.uint8)).save(source)
+    camera = CameraHypothesis(shutter_s=1, shot_noise=False, read_noise=False)
+    effects = SensorEffects(dark_current_e_per_s=100)
+    config = AnalyticRunConfig(
+        camera=camera, sensor_effects=effects, target_megapixels=0.001024, assume_unprofiled_srgb=True
+    )
+    run_analytic_pair(source, source, tmp_path / "pair", config)
+    for label in ("2k", "4k"):
+        child = tmp_path / "pair" / label
+        with rawpy.imread(str(child / "capture.dng")) as raw:
+            np.testing.assert_array_equal(raw.raw_image, round(512 + 100 / camera.conversion_gain_e_per_dn))
+        manifest = json.loads((child / "manifest.json").read_text())
+        assert manifest["stages"]["sensor"]["body_effects"]["dark_expectation_e"] == 100
+        assert manifest["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+        replay = AnalyticRunConfig.from_json((child / "config.json").read_text())
+        assert replay.sensor_effects == effects
+        assert manifest["registry"]["sensor.dark_current_e_per_s"]["provenance"] == "SYNTHETIC"

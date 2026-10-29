@@ -12,6 +12,7 @@ from prd_v5.fidelity import SRCheckpoint
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.learned import ResidualAdapter
+from prd_v5.sensor import SensorEffects
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class AnalyticRunConfig:
     inference. Paths are supplied at execution, outside the reusable config.
     """
 
+    sensor_effects: SensorEffects = field(default_factory=SensorEffects)
     schema_version: int = 1
     camera: CameraHypothesis = field(default_factory=CameraHypothesis)
     isp: AnalyticISP = field(default_factory=AnalyticISP)
@@ -34,6 +36,8 @@ class AnalyticRunConfig:
     max_develop_bytes: int = 512 * 1024 * 1024
 
     def __post_init__(self):
+        if not isinstance(self.sensor_effects, SensorEffects):
+            raise ValueError("Expected validated SensorEffects")
         if type(self.schema_version) is not int or self.schema_version != 1:
             raise ValueError("Unsupported analytic configuration schema_version")
         if not isinstance(self.camera, CameraHypothesis) or not isinstance(self.isp, AnalyticISP):
@@ -81,7 +85,11 @@ class AnalyticRunConfig:
         if not isinstance(values, dict):
             raise ValueError("Configuration must be a JSON object")
         try:
-            for name, constructor in (("camera", CameraHypothesis), ("isp", AnalyticISP)):
+            for name, constructor in (
+                ("camera", CameraHypothesis),
+                ("isp", AnalyticISP),
+                ("sensor_effects", SensorEffects),
+            ):
                 if name in values:
                     if not isinstance(values[name], dict):
                         raise ValueError(f"{name} must be an object")
@@ -109,6 +117,7 @@ class AnalyticRunConfig:
             output_dir,
             self.camera,
             self.isp,
+            sensor_effects=self.sensor_effects,
             camera_selections=camera_selections,
             isp_selections=isp_selections,
             sr_checkpoint=sr_checkpoint,

@@ -25,7 +25,7 @@ from prd_v5.registry import analytic_registry
 from prd_v5.report import render_report
 from prd_v5.roundtrip import develop_roundtrip
 from prd_v5.runtime import runtime_record
-from prd_v5.sensor import BayerSensor
+from prd_v5.sensor import BayerSensor, SensorEffects
 
 
 def run_analytic(
@@ -34,6 +34,7 @@ def run_analytic(
     camera: CameraHypothesis,
     isp: AnalyticISP | None = None,
     *,
+    sensor_effects: SensorEffects | None = None,
     target_megapixels: float = 50.0,
     geometry_mode: str = "PRESERVE_SOURCE_ASPECT_50MP",
     native_fit_policy: str = "LETTERBOX_SENSOR_MARGIN",
@@ -59,6 +60,8 @@ def run_analytic(
     can be supplied to sequential source-resolution runs. Full-scale execution
     belongs in Colab with explicit memory budgets, never on the development Mac.
     """
+    if sensor_effects is None:
+        sensor_effects = SensorEffects()
     resolve_mode(inverse_mode, residual_adapter, camera)
     if isp is None:
         isp = AnalyticISP()
@@ -66,6 +69,7 @@ def run_analytic(
     # alone. Paths remain caller-supplied so bundles can be replayed elsewhere.
     config = AnalyticRunConfig(
         camera=camera,
+        sensor_effects=sensor_effects,
         isp=isp,
         target_megapixels=target_megapixels,
         geometry_mode=geometry_mode,
@@ -136,7 +140,7 @@ def run_analytic(
             stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows)
             stages["learned_raw"] = apply_residual(rgb, clean, camera, residual_adapter, mode=inverse_mode)
             adc = allocate("adc", np.uint16, shape)
-            stages["sensor"] = BayerSensor(camera).process(clean, adc, strip_rows=strip_rows)
+            stages["sensor"] = BayerSensor(camera, sensor_effects).process(clean, adc, strip_rows=strip_rows)
             stages["dng"] = write_dng(output / "capture.dng", adc, camera, geometry, isp, strip_rows=strip_rows)
             stages["roundtrip"] = develop_roundtrip(
                 output / "capture.dng",
@@ -203,7 +207,7 @@ def run_analytic(
         "source": source.to_dict(),
         "geometry": geometry.to_dict(),
         "camera": asdict(camera),
-        "registry": {**analytic_registry(camera, source, geometry, isp), **selections},
+        "registry": {**analytic_registry(camera, source, geometry, isp), **sensor_effects.registry(), **selections},
         "isp": asdict(isp),
         "stages": stages,
         "artifacts": artifacts,
@@ -243,7 +247,7 @@ def run_analytic(
             "complete PRD configuration",
             "fidelity",
             "learned RAW",
-            "full sensor",
+            "sensor nonlinearity and dual conversion gain",
             "full optics",
             "final metadata",
             "Colab full-scale validation",

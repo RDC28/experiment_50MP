@@ -508,3 +508,16 @@ default requested 1024/128 remains preserved for future halo-aware research
 loaders. Generic nonoverlapping tiles do not certify seam-free semantic models.
 No official architecture compatibility, real model inference, camera adaptation,
 scientific benchmark quality or full-scale Colab acceptance has been validated.
+
+Sensor body priors: `AnalyticRunConfig(sensor_effects=SensorEffects(...))` executes
+CFA-domain PRNU (`prnu_sigma`), DSNU and row/column FPN (electron RMS), dark current
+(electrons/s at 20 C, temperature doubling interval in C), and hot/dead fractions.
+Import `SensorEffects` from `prd_v5.sensor`. The same immutable settings and body
+seed drive both paired runs and survive config.json replay. All amplitudes default
+to zero, preserving prior behavior. In Colab edit `SENSOR_VALUES` and explicitly
+accept `ACCEPT_SENSOR_EXPERIMENT` for nonzero effects; disabled feature switches
+zero their corresponding amplitudes. Nonzero effects are uncalibrated experimental
+priors, not recovered sensor properties. Requested zero amplitudes report no-op.
+Dead sites retain read/offset electronics; dark/hot expectations scale with shutter.
+DNG NoiseProfile excludes these extended effects. Nonlinearity, dual conversion
+gain and defect-mask exports are still pending.

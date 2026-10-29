@@ -1034,3 +1034,36 @@ No notebook, research model, download, heavy job or background service ran.
 All 349 lightweight v5 tests passed under the shared test lock. Repository-wide
 ruff, changed Python formatting and diff whitespace checks passed. No commits
 or background processes were created.
+
+## CFA-domain sensor body effects (iteration 48)
+
+`SensorEffects` now supplies immutable, JSON-replayable synthetic PRNU, DSNU,
+row/column FPN, temperature-scaled dark current and hot/dead defect priors.
+The executable single and sequential paired pipelines retain these parameters
+in config.json, namespaced registry records and sensor-stage evidence. Body maps
+use independent component/absolute-row streams from the shared camera seed;
+column maps require only one row of memory. CFA selection precedes all effects.
+PRNU changes the photoelectron expectation before Poisson sampling. Hot defects
+add exposure-dependent electron expectation; dead defects override photo/hot/dark
+expectations but retain subsequent read noise and offset electronics. Dark current
+is a Poisson expectation when shot noise is enabled, with a declared doubling
+interval relative to 20 C. These are uncalibrated models, not Sony measurements.
+
+The notebook exposes `SENSOR_VALUES`, honors each corresponding ENABLE switch,
+requires `ACCEPT_SENSOR_EXPERIMENT` for nonzero effects and records effective
+states only after pair completion. Zero amplitudes retain exact previous defaults
+and report zero-effect, even when a feature was requested. The existing PRD field
+catalogue remains intact; body coefficients are explicit structured hypotheses,
+not automatically estimated from catalogue field modes. DNG NoiseProfile still
+describes only baseline temporal noise, excluding body maps/dark current; this
+limitation is explicit in stage evidence. Sensor nonlinearity and dual conversion
+gain remain pending before full optics and final metadata, as do defect-mask
+artifacts and physical calibration. Full-scale memory and scientific checks remain
+Colab-only and unresolved.
+
+Validation: 365 lightweight v5 tests pass under the shared lock, including exact
+PRNU-before-Poisson arithmetic, dark temperature/exposure arithmetic, body spatial
+structure and strip/seed invariance, hot/dead precedence, zero-default equivalence,
+config replay and actual tiny paired DNG-to-independent-LibRaw/TIFF validation.
+Notebook validation is static only. No model, notebook, download, full-scale job,
+commit or background service was started.

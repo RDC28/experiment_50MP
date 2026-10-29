@@ -159,3 +159,17 @@ def test_notebook_residual_dispatch_and_completion_evidence():
     assert "residual_adapter=RESIDUAL_ADAPTER" in execution
     assert execution.index("result = run_analytic_pair(") < execution.index('states["INVERSE_ISP_MODE"] = result')
     assert "RAW_OVERLAP) != (1024, 0)" in execution
+
+
+def test_notebook_sensor_priors_are_replayable_and_completion_gated():
+    from prd_v5.sensor import SensorEffects
+
+    notebook, values = assignments()
+    effects = SensorEffects(**values["SENSOR_VALUES"])
+    assert not values["ACCEPT_SENSOR_EXPERIMENT"]
+    assert all(not state["effective"] for state in effects.states().values())
+    execution = notebook.cells[-1].source
+    assert "sensor_effects=sensor_effects" in execution
+    assert "if not globals()[switch]" in execution
+    assert "and not ACCEPT_SENSOR_EXPERIMENT" in execution
+    assert execution.index("result = run_analytic_pair(") < execution.index("states[switch] =")

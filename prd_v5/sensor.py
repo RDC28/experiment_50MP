@@ -2,11 +2,80 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from prd_v5.hypothesis import CameraHypothesis
+from prd_v5.hypothesis import CameraField, CameraHypothesis
+
+
+@dataclass(frozen=True)
+class SensorEffects:
+    """Uncalibrated CFA-body priors; zero amplitudes preserve the MVP exactly.
+
+    Dark current doubles every temperature_doubling_c relative to 20 C.
+    Body maps use camera seed and absolute sensor coordinates, never source size.
+    """
+
+    prnu_sigma: float = 0.0
+    dsnu_e: float = 0.0
+    row_fpn_e: float = 0.0
+    column_fpn_e: float = 0.0
+    dark_current_e_per_s: float = 0.0
+    temperature_c: float = 20.0
+    temperature_doubling_c: float = 6.0
+    hot_pixel_fraction: float = 0.0
+    dead_pixel_fraction: float = 0.0
+    hot_pixel_e_per_s: float = 1000.0
+
+    def __post_init__(self):
+        for name, value in asdict(self).items():
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            if name != "temperature_c" and (value < 0 or value > 1e15):
+                raise ValueError(f"{name} must be nonnegative and <= 1e15")
+        if not -100 <= self.temperature_c <= 100 or self.temperature_doubling_c < 1:
+            raise ValueError("Temperature must be -100..100 C and doubling interval >= 1 C")
+        if max(self.hot_pixel_fraction, self.dead_pixel_fraction) > 1 or self.prnu_sigma > 1:
+            raise ValueError("Defect fractions and PRNU sigma must be <= 1")
+        if self.dark_rate > 1e15 or self.hot_pixel_e_per_s > 1e15:
+            raise ValueError("Dark/hot rates exceed supported numerical range")
+
+    @property
+    def dark_rate(self):
+        return self.dark_current_e_per_s * 2 ** ((self.temperature_c - 20) / self.temperature_doubling_c)
+
+    def registry(self):
+        return {
+            f"sensor.{name}": asdict(
+                CameraField(
+                    f"sensor.{name}",
+                    value,
+                    "C"
+                    if name in ("temperature_c", "temperature_doubling_c")
+                    else "electrons/s"
+                    if name.endswith("per_s")
+                    else "electrons RMS"
+                    if name.endswith("_e")
+                    else "ratio",
+                    "AUTO",
+                    "SYNTHETIC",
+                    None,
+                    None,
+                    "Explicit uncalibrated sensor-body prior; shared camera seed",
+                    "Parameter-domain checks only; physical calibration and full-scale validation pending",
+                )
+            )
+            for name, value in asdict(self).items()
+        }
+
+    def states(self):
+        return {
+            name: {"effective": value > 0, "status": "experimental synthetic prior" if value > 0 else "zero-effect"}
+            for name, value in asdict(self).items()
+            if name not in ("temperature_c", "temperature_doubling_c", "hot_pixel_e_per_s")
+        }
 
 
 @dataclass(frozen=True)
@@ -14,12 +83,13 @@ class BayerSensor:
     """Apply one shared hypothesis to clean camera RGB at final sensor geometry.
 
     Unity clean signal represents base-ISO full well. Shot noise precedes read
-    noise, analogue gain, rounding and clipping. No full-sensor FPN/PRNU or
-    optical effects are implied. CFA origin is the top-left of the supplied
+    noise, analogue gain, rounding and clipping. Optional body effects are synthetic priors, not camera calibration.
+    No optical effects are implied. CFA origin is the top-left of the supplied
     full sensor array; crops must be taken after this stage.
     """
 
     camera: CameraHypothesis = CameraHypothesis()
+    effects: SensorEffects = SensorEffects()
 
     def process(self, source: np.ndarray, destination: np.memmap, *, strip_rows: int = 64) -> dict:
         """Write uint16 ADC codes with row-bounded working memory.
@@ -43,6 +113,16 @@ class BayerSensor:
         ):
             raise ValueError("source and destination must use separate nonoverlapping buffers")
         camera = self.camera
+        effects = self.effects
+
+        def body(component, row=0):
+            return np.random.default_rng(np.random.SeedSequence([camera.stream_seed("sensor_body"), component, row]))
+
+        width = source.shape[1]
+        columns = body(4).normal(0, effects.column_fpn_e, width) if effects.column_fpn_e else None
+        dark_mean = effects.dark_rate * camera.shutter_s
+        if not math.isfinite(dark_mean) or dark_mean > 1e15:
+            raise ValueError("Dark expectation exceeds supported numerical range")
         tile = np.array(["RGB".index(c) for c in camera.cfa_pattern]).reshape(2, 2)
         shot_seed = camera.stream_seed("sensor_shot")
         read_seed = camera.stream_seed("sensor_read")
@@ -60,11 +140,32 @@ class BayerSensor:
                 electrons = mosaic * camera.full_well_e
                 if not np.isfinite(electrons).all() or np.any(electrons > 1e15):
                     raise ValueError("electron expectation exceeds supported numerical range")
+                if effects.prnu_sigma:
+                    electrons *= np.maximum(body(0, y).normal(1, effects.prnu_sigma, width), 0)
+                if effects.dead_pixel_fraction:
+                    dead = body(6, y).random(width) < effects.dead_pixel_fraction
+                    electrons[dead] = 0
+                else:
+                    dead = None
+                if effects.hot_pixel_fraction:
+                    hot = body(5, y).random(width) < effects.hot_pixel_fraction
+                    electrons[hot] += effects.hot_pixel_e_per_s * camera.shutter_s
+                electrons += dark_mean
+                if dead is not None:
+                    electrons[dead] = 0
+                if not np.isfinite(electrons).all() or np.any(electrons > 1e15):
+                    raise ValueError("Sensor expectation exceeds supported numerical range")
                 if camera.shot_noise:
                     electrons = np.random.default_rng(np.random.SeedSequence([shot_seed, y])).poisson(electrons)
                 if camera.read_noise and camera.read_noise_e > 0:
                     read = np.random.default_rng(np.random.SeedSequence([read_seed, y]))
                     electrons = electrons + read.normal(0, camera.read_noise_e, size=len(mosaic))
+                if effects.dsnu_e:
+                    electrons = electrons + body(1, y).normal(0, effects.dsnu_e, width)
+                if effects.row_fpn_e:
+                    electrons = electrons + body(2, y).normal(0, effects.row_fpn_e)
+                if columns is not None:
+                    electrons = electrons + columns
                 codes = np.rint(electrons * camera.analogue_gain / camera.conversion_gain_e_per_dn + camera.black_level)
                 low += int(np.count_nonzero(codes < 0))
                 high += int(np.count_nonzero(codes > camera.white_level))
@@ -73,6 +174,17 @@ class BayerSensor:
         return {
             "method": "CFA_then_electrons_shot_read_gain_ADC",
             "camera_registry": camera.registry(),
+            "body_effects": {
+                "parameters": asdict(effects),
+                "states": effects.states(),
+                "dark_expectation_e": dark_mean,
+                "body_seed": camera.stream_seed("sensor_body"),
+                "order": "CFA, PRNU, defects and dark expectations, shot, read, DSNU/FPN, ADC",
+                "noise_profile_limit": (
+                    "DNG NoiseProfile describes baseline temporal noise only; excludes body maps and dark current"
+                ),
+                "validation": "Experimental uncalibrated priors; dead sites retain read/offset electronics",
+            },
             "cfa_origin": [0, 0],
             "shot_noise_effective": camera.shot_noise,
             "read_noise_effective": camera.read_noise and camera.read_noise_e > 0,
