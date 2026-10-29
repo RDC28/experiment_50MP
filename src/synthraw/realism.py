@@ -322,8 +322,8 @@ def _user_crop(path: str | Path, shape: tuple[int, int]) -> tuple[int, int, int,
 def measure_raw(path: str | Path) -> dict[str, Any]:
     """Open any LibRaw-readable raw (a camera ARW or the synthetic DNG) and measure it.
 
-    The visible area inside any DNG DefaultUserCrop is measured; LibRaw's black and clipping
-    levels, as-shot white balance and XYZ-to-camera matrix are what a raw developer would use.
+    The visible area inside a DNG's default crop and DefaultUserCrop is measured; LibRaw's black and
+    clipping levels, as-shot white balance and XYZ-to-camera matrix are what a raw developer would use.
     """
     import rawpy
 
