@@ -1,5 +1,27 @@
 # PRD v5 evaluation and build plan
 
+## Full optics increment: bounded radial attenuation API
+
+`optics.Vignetting` implements an immutable centered achromatic attenuation
+prior on clean linear camera RGB, intended before CFA and electron-domain noise.
+Transmission is `1 - corner_strength * r_squared`, with pixel-center radius
+normalized by half the sensor diagonal. Zero copies pixels exactly; nonzero
+coefficients require explicit experimental acceptance. HDR radiance is retained
+without unit clipping. Separate float32 disk-backed output, bounded row strips,
+input-domain checks, flush-on-success and JSON-safe effect evidence are supported.
+This is a synthetic forward effect, not inferred lens calibration or removal of
+shading already present in rendered input.
+
+All 409 lightweight v5 tests pass under the shared resource lock. Tiny tests
+independently calculate every output pixel, verifying center/corner behavior,
+symmetry, HDR retention, strip invariance, persisted output, zero defaults and
+invalid-buffer/acceptance/domain rejection. Repository-wide ruff passes.
+Pipeline, shared config, schema and notebook integration remain pending; the
+default runner does not yet apply optics. Distortion, CA, spatial PSF, diffraction,
+defocus and motion remain next optics work before final metadata. Full-scale
+memory and physical validation remain unresolved Colab-only work. No notebook,
+model, download, full-frame job, background service or commit was started.
+
 Evaluated 2026-10-29 before implementation. `PRD_v5.md` is the supplied document copied byte for byte. This evaluation does not rewrite it. The deliverable is one new Colab notebook under `prd_v5/notebooks/`, backed by composable, tested Python. No notebook, model download, full-frame inference, or training is permitted on the 8 GB development Mac. Full-suite tests must use `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
 ## Implementation evidence: initial Colab deliverable (iteration 28)
