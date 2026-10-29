@@ -62,7 +62,7 @@ or a precision-preserving 16-bit source decoder.
 
 ## Pending
 
-The remaining MVP config, complete registry, pipeline orchestration, DNG/rawpy/TIFF roundtrip, reports and new Colab notebook are not
+The remaining MVP config, complete registry, pipeline orchestration, independent rawpy/TIFF roundtrip, reports and new Colab notebook are not
 implemented yet. Fidelity, learned RAW, full sensor, full optics and final
 metadata follow MVP in that order. No HAT, HDR model or learned RAW checkpoint is
 executed by this foundation. Upstream checkpoint and scientific limitations in
@@ -86,3 +86,17 @@ No v5 notebook is runnable yet. Full-scale validation must wait for the new
 notebook and execute in Colab, never on this 8 GB development Mac. No 50 MP,
 checkpoint compatibility, RAW decoder, performance or scientific acceptance
 claim follows from the current arithmetic tests.
+
+## MVP DNG export
+
+`prd_v5.dng.write_dng` connects the shared camera, geometry and analytic ISP
+parameters to the existing uncompressed strip writer. It preserves 14-bit ADC
+values in uint16 storage, CFA phase, crop, black/white levels, exposure and the
+same temporal NoiseProfile used by the sensor. Colour matrices are derived from
+the analytic camera-to-sRGB transform through a declared virtual D65 profile;
+white balance supplies AsShotNeutral. This is not calibrated Sony colour.
+Returned tag records use the legacy writer contract; the full v5 registry is
+still pending. Exact sample/tag checks with tifffile pass on tiny fixtures.
+Independent LibRaw decoding, TIFF development and Adobe conformance remain
+unmeasured, explicitly reported in the result. No successful independent RAW
+roundtrip is claimed by structural verification.

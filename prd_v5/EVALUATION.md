@@ -231,3 +231,27 @@ existing analytic E2E fixture now starts from an actual PNG and runs decode,
 geometry, inverse ISP and Bayer/ADC against independently calculated codes.
 MVP orchestration, DNG/rawpy/TIFF roundtrip, config, reports and notebook remain
 pending. No models, full-frame processing or Colab validation ran.
+
+## Implementation evidence: eighth MVP increment
+
+`prd_v5/dng.py` now bridges the immutable camera, geometry and analytic colour
+hypothesis to the existing bounded uncompressed DNG writer without changing
+legacy defaults. Tags preserve CFA phase, crop, 14-bit black/white levels in
+uint16 storage, ISO/shutter/aperture and temporal NoiseProfile. A virtual D65
+XYZ-to-camera matrix derives from the same camera-to-sRGB transform used in
+unprocessing, and AsShotNeutral derives from its white balance. Both profile
+illuminants are explicitly D65, with no dual-illuminant calibration claim.
+Unknown private identity is not emitted. Structural validation checks all tags
+and every stored sample in strips; independent rawpy and Adobe checks remain
+explicitly not measured. The writer record format is a serialization bridge,
+not completion of the rich v5 registry.
+
+Validation: eight new cases cover four CFA layouts, colour-transform algebra,
+shot-noise-off tag omission, ADC overflow rejection before output, and a tiny
+analytic inverse-ISP -> CFA/electrons/ADC -> actual DNG sample check. All 106 v5
+tests passed, repository-wide ruff passed, and changed Python formatting passed.
+The external lightweight environment gained tifffile. No full suite, notebook,
+model, full-frame processing or background process ran. Independent LibRaw/TIFF
+roundtrip, config/orchestration/reporting and notebook remain MVP work before
+advancing to fidelity. Full-scale and independent developer checks remain
+Colab acceptance work.
