@@ -183,3 +183,91 @@ def test_pipeline_checkpoint_failure_never_falls_back(tmp_path, monkeypatch):
             sr_checkpoint=checkpoint(tmp_path),
         )
     assert list((tmp_path / "out").iterdir()) == []
+
+
+def test_pair_checkpoint_is_shared_and_pixels_reach_both_bundles(tmp_path, monkeypatch):
+    import json
+
+    import rawpy
+    from PIL import Image
+
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.hypothesis import CameraHypothesis
+    from prd_v5.paired import run_analytic_pair
+
+    sources = [tmp_path / name for name in ("low.png", "high.png")]
+    for source, size in zip(sources, (16, 32), strict=True):
+        Image.new("RGB", (size, size), (128, 128, 128)).save(source)
+    spec = checkpoint(tmp_path)
+    loads = []
+
+    def load(selected):
+        loads.append(selected)
+        # A deterministic black prediction distinguishes execution from bilinear input.
+        return lambda patch: np.zeros((patch.shape[0] * 4, patch.shape[1] * 4, 3), np.float32), selected.verify()
+
+    monkeypatch.setattr(fidelity, "load_checkpoint", load)
+    config = AnalyticRunConfig(
+        camera=CameraHypothesis(shot_noise=False, read_noise=False),
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+    )
+    output = tmp_path / "pair"
+    report = run_analytic_pair(*sources, output, config, sr_checkpoint=spec)
+    assert loads == [spec, spec]
+    assert all(selected is spec for selected in loads)
+    assert report["shared_checkpoint"] == spec.verify()
+    assert report["replay"]["additional_checkpoint_required"] is True
+    assert "no learned inference" not in report["pipeline"]
+    assert json.loads((output / "pair_manifest.json").read_text()) == report
+    for label in ("2k", "4k"):
+        child = json.loads((output / label / "manifest.json").read_text())
+        assert child["camera"] == report["shared_camera"]
+        assert child["stages"]["super_resolution"]["checkpoint"] == report["shared_checkpoint"]
+        assert child["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+        with rawpy.imread(str(output / label / "capture.dng")) as raw:
+            assert np.all(raw.raw_image == config.camera.black_level)
+        assert not list((output / label).glob("working-*"))
+
+
+def test_pair_invalid_checkpoint_fails_before_output_creation(tmp_path):
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.paired import run_analytic_pair
+
+    output = tmp_path / "pair"
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        run_analytic_pair(
+            "missing2k",
+            "missing4k",
+            output,
+            AnalyticRunConfig(),
+            sr_checkpoint=replace(checkpoint(tmp_path), sha256="b" * 64),
+        )
+    assert not output.exists()
+
+
+def test_pair_second_checkpoint_failure_never_claims_completion(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.paired import run_analytic_pair
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (16, 16), (128, 128, 128)).save(source)
+    calls = []
+
+    def load(selected):
+        calls.append(selected)
+        if len(calls) == 2:
+            raise RuntimeError("second checkpoint load failed")
+        return lambda patch: np.repeat(np.repeat(patch, 4, axis=0), 4, axis=1), selected.verify()
+
+    monkeypatch.setattr(fidelity, "load_checkpoint", load)
+    output = tmp_path / "pair"
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    with pytest.raises(RuntimeError, match="second checkpoint load failed"):
+        run_analytic_pair(source, source, output, config, sr_checkpoint=checkpoint(tmp_path))
+    assert (output / "2k/manifest.json").is_file()
+    assert not (output / "4k/manifest.json").exists()
+    assert not (output / "pair_manifest.json").exists()
+    assert list((output / "4k").iterdir()) == []

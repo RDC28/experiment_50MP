@@ -721,3 +721,26 @@ Validation: 244 lightweight v5 tests pass under the shared lock, repository-wide
 ruff and changed Python formatting pass, and `git diff --check` is clean. No
 notebook execution, downloads, real inference, full-frame processing, commits or
 background services were started.
+
+## Paired checkpoint SR evidence (iteration 33)
+
+`AnalyticRunConfig.run` and `paired.run_analytic_pair` now accept the optional
+`sr_checkpoint` execution argument. Sequential 2K/4K children use the same frozen
+checkpoint specification and immutable analytic hypotheses. Pair preflight
+checks checkpoint integrity before output creation; each child independently
+verifies and loads it. The pair manifest records shared checkpoint evidence,
+labels SR execution accurately and requires separate checkpoint bytes for replay.
+Existing analytic defaults and portable analytic configuration remain unchanged.
+
+Tiny end-to-end model-double tests prove actual SR pixel effects in both decoded
+DNGs, independent TIFF roundtrips, shared checkpoint/camera evidence and temporary
+array cleanup. Invalid checkpoint preflight creates no output; failure loading
+the second child retains the first bundle without a pair completion marker.
+247 lightweight v5 tests pass under the shared lock; repository-wide ruff,
+changed Python formatting and diff whitespace checks pass. No heavy local work,
+notebook execution, downloads, commits or background services were started.
+
+Notebook SR dispatch, HDR, exposure/profile selection and comparison metrics
+remain fidelity work. Real checkpoint compatibility, scientific fidelity and
+full-scale memory/performance remain unresolved Colab-only validations. Later
+learned RAW, extended sensor, optics and final metadata phases remain pending.

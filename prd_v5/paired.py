@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from prd_v5.config import AnalyticRunConfig
+from prd_v5.fidelity import SRCheckpoint
 from prd_v5.fields import validate_selections
 from prd_v5.hypothesis import CameraField
 
@@ -20,6 +21,7 @@ def run_analytic_pair(
     *,
     camera_selections: tuple[CameraField, ...] = (),
     isp_selections: tuple[CameraField, ...] = (),
+    sr_checkpoint: SRCheckpoint | None = None,
 ) -> dict:
     """Run caller-labelled variants sequentially using exactly the same config.
 
@@ -34,12 +36,19 @@ def run_analytic_pair(
     isp_selections = tuple(isp_selections)
     validate_selections(config.camera, camera_selections)
     validate_selections(config.isp, isp_selections, isp=True)
+    checkpoint_evidence = sr_checkpoint.verify() if sr_checkpoint is not None else None
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=False)
     runs = {}
     # Each call closes disk-backed working arrays before the next call starts.
     for label, source in (("2k", source_2k), ("4k", source_4k)):
-        child = config.run(source, output / label, camera_selections=camera_selections, isp_selections=isp_selections)
+        child = config.run(
+            source,
+            output / label,
+            camera_selections=camera_selections,
+            isp_selections=isp_selections,
+            sr_checkpoint=sr_checkpoint,
+        )
         manifest = output / label / "manifest.json"
         runs[label] = {
             "manifest": f"{label}/manifest.json",
@@ -50,9 +59,18 @@ def run_analytic_pair(
         }
     report = {
         "schema_version": 1,
-        "pipeline": "sequential analytic source-resolution pair; no learned inference",
+        "pipeline": (
+            "sequential checkpoint SR plus analytic source-resolution pair"
+            if sr_checkpoint is not None
+            else "sequential analytic source-resolution pair; no learned inference"
+        ),
         "shared_config": json.loads(config.to_json()),
         "shared_camera": asdict(config.camera),
+        "shared_checkpoint": checkpoint_evidence,
+        "replay": {
+            "additional_checkpoint_required": sr_checkpoint is not None,
+            "limitation": "Shared config stores analytic settings only; SR replay also requires checkpoint bytes",
+        },
         "runs": runs,
         "comparison": {
             "status": "not measured",

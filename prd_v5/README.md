@@ -249,6 +249,18 @@ different pixel signals. Pair comparison metrics remain unimplemented. Full-size
 paired processing requires Colab and explicit resource budgets; never run it on
 the development Mac.
 
+Pass `sr_checkpoint=SRCheckpoint(...)` to `run_analytic_pair` or `config.run`
+to opt into verified checkpoint SR before analytic unprocessing. Both paired
+children receive the same frozen checkpoint specification and camera/ISP config;
+execution is sequential and each child releases working arrays before the next.
+Pair preflight verifies checkpoint integrity before creating outputs. The pair
+manifest retains `shared_checkpoint` evidence and explicitly requires those
+checkpoint bytes in addition to the analytic config for replay. Each child
+verifies and loads the checkpoint independently; a failure never silently falls
+back or creates a pair completion marker. Real inference remains Colab-only.
+The notebook does not yet dispatch this option, and scientific fidelity is not
+established by successful output roundtrips.
+
 For explicit field-mode selection, `fields.resolve_field(name, units, mode,
 candidates)` selects from supplied `CameraField` records and returns a detached
 record retaining the requested mode. AUTO prefers USER_SET, OBSERVED, DERIVED,

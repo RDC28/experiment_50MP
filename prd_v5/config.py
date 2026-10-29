@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from prd_v5.analytic import AnalyticISP
+from prd_v5.fidelity import SRCheckpoint
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 
@@ -95,6 +96,7 @@ class AnalyticRunConfig:
         *,
         camera_selections: tuple[CameraField, ...] = (),
         isp_selections: tuple[CameraField, ...] = (),
+        sr_checkpoint: SRCheckpoint | None = None,
     ) -> dict:
         """Execute the bounded analytic pipeline with exactly these settings."""
         from prd_v5.pipeline import run_analytic
@@ -106,6 +108,7 @@ class AnalyticRunConfig:
             self.isp,
             camera_selections=camera_selections,
             isp_selections=isp_selections,
+            sr_checkpoint=sr_checkpoint,
             target_megapixels=self.target_megapixels,
             geometry_mode=self.geometry_mode,
             native_fit_policy=self.native_fit_policy,
