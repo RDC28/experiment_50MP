@@ -80,6 +80,9 @@ _PROFILE_NOISE_SOURCES = {
     "hot_pixel_e_per_s": "hot_pixel_e_per_s",
 }
 
+# Optical effects LensSimulator applies only under the OPTICAL_SIMULATION master switch.
+_OPTICAL_EFFECTS = ("DISTORTION", "VIGNETTING", "CHROMATIC_ABERRATION", "DIFFRACTION", "DEFOCUS")
+
 
 def is_out_of_memory(error: BaseException) -> bool:
     """Recognize host and CUDA OOM without importing torch."""
@@ -479,9 +482,12 @@ class PipelineRun:
             k1=self.camera_profile.camera["lens_distortion_k1"].value,
             k2=self.camera_profile.camera["lens_distortion_k2"].value,
         )
-        if self.config.DISTORTION and distortion.k1 == distortion.k2 == 0:
-            # An enabled feature that changes nothing must say so, not pass silently.
-            self.fallbacks.append("Optics DISTORTION is enabled but k1 = k2 = 0, so no distortion was applied")
+        # An enabled feature that changes nothing must say so, not pass silently.
+        if not self.config.OPTICAL_SIMULATION:
+            if skipped := [name for name in _OPTICAL_EFFECTS if getattr(self.config, name)]:
+                self.fallbacks.append(f"Optics {', '.join(skipped)} enabled but OPTICAL_SIMULATION is off: not applied")
+        elif self.config.DISTORTION and distortion.k1 == distortion.k2 == 0:
+            self.fallbacks.append("Optics DISTORTION is enabled but k1 = k2 = 0: lens distortion is not modelled")
         camera_rgb = np.load(self.path("intermediates", "05_camera_native_rgb.npy"), mmap_mode="r")
         output = _new_memmap(
             self.path("intermediates", "06_optical_sensor_rgb.npy"), camera_rgb.dtype, camera_rgb.shape

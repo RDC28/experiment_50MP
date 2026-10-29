@@ -2,7 +2,6 @@ import hashlib
 import json
 import sys
 import types
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -718,24 +717,32 @@ def test_without_synthetic_exif_capture_settings_stay_out_of_the_dng_and_sidecar
         assert dng.pages[0].tags[34855].value == 400  # Explicit user exposure is still written.
 
 
-def test_skipped_c2pa_and_noop_distortion_are_reported_not_silent(source_png, tmp_path, monkeypatch):
+def test_realism_measures_only_the_source_content_inside_the_user_crop(source_png, tmp_path):
+    """Regression: realism statistics included the invented outpaint bands outside DefaultUserCrop."""
+    from synthraw.realism import measure_raw
+
+    result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS")
+    outpaint = np.load(result.root / "confidence/outpaint_mask.npy") > 0
+    assert outpaint.any()
+    measured = measure_raw(result.root / "raw/synthetic_50mp.dng")
+    top, left, bottom, right = measured["measured_box"]
+    assert measured["shape"] == [bottom - top, right - left]
+    assert top % 2 == left % 2 == 0
+    assert not outpaint[top:bottom, left:right].any()
+    content_rows = np.flatnonzero(~outpaint.all(axis=1))
+    assert top - content_rows[0] <= 1 and content_rows[-1] + 1 - bottom <= 1
+
+
+def test_skipped_c2pa_and_noop_optics_are_reported_not_silent(source_png, tmp_path):
     """Regression: C2PA was skipped and DISTORTION ran with k1 = k2 = 0 without a word in the run report."""
-    from synthraw.camera_profile import CameraProfileManager
 
-    build = CameraProfileManager.build
+    def fallbacks(name, **settings):
+        result = run_tiny(source_png, tmp_path / name, SR_BACKEND="LANCZOS", **settings)
+        return json.loads((result.root / "validation/run_report.json").read_text())["fallbacks"]
 
-    def zero_distortion(self, *args, **kwargs):
-        profile = build(self, *args, **kwargs)
-        for name in ("lens_distortion_k1", "lens_distortion_k2"):
-            profile.camera[name] = replace(profile.camera[name], value=0.0)
-        return profile
-
-    result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS", DISTORTION=True)
-    report = json.loads((result.root / "validation/run_report.json").read_text())
-    assert any(reason.startswith("C2PA unavailable: ") for reason in report["fallbacks"])
-    assert not any("DISTORTION" in reason for reason in report["fallbacks"])
-
-    monkeypatch.setattr(CameraProfileManager, "build", zero_distortion)
-    result = run_tiny(source_png, tmp_path / "zero", SR_BACKEND="LANCZOS", DISTORTION=True)
-    report = json.loads((result.root / "validation/run_report.json").read_text())
-    assert "Optics DISTORTION is enabled but k1 = k2 = 0, so no distortion was applied" in report["fallbacks"]
+    report = fallbacks("zero", OPTICAL_SIMULATION=True, DISTORTION=True)
+    assert any(reason.startswith("C2PA unavailable: ") for reason in report)
+    assert "Optics DISTORTION is enabled but k1 = k2 = 0: lens distortion is not modelled" in report
+    report = fallbacks("off", DISTORTION=True, VIGNETTING=True)
+    assert "Optics DISTORTION, VIGNETTING enabled but OPTICAL_SIMULATION is off: not applied" in report
+    assert not any(reason.startswith("Optics") for reason in fallbacks("none", OPTICAL_SIMULATION=True))

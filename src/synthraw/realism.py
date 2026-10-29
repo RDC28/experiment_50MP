@@ -281,16 +281,56 @@ def _normalised_neutral(values: Any) -> list[float] | None:
     return (values / values[1]).tolist()
 
 
+def _user_crop(path: str | Path, shape: tuple[int, int]) -> tuple[int, int, int, int]:
+    """(top, left, bottom, right) of a DNG's DefaultUserCrop in the visible mosaic; the whole frame otherwise.
+
+    The synthetic DNG leaves its invented outpaint bands outside DefaultUserCrop, so only source
+    content is measured. Edges round inward to even photosites to keep the CFA phase.
+    """
+    import tifffile
+
+    height, width = shape
+    try:
+        with tifffile.TiffFile(path) as container:
+            tags = container.pages[0].tags
+
+            def values(name: str) -> np.ndarray | None:
+                tag = tags.get(tifffile.TIFF.TAGS[name])
+                if tag is None:
+                    return None
+                value = np.asarray(tag.value, dtype=float).reshape(-1)
+                # RATIONAL and SRATIONAL tags read as numerator, denominator pairs.
+                return value[0::2] / value[1::2] if int(tag.dtype) in (5, 10) else value
+
+            crop, origin, size = values("DefaultUserCrop"), values("DefaultCropOrigin"), values("DefaultCropSize")
+    except tifffile.TiffFileError:
+        return 0, 0, height, width  # Not a TIFF-based raw, so it carries no DNG crop tags.
+    if crop is None:
+        return 0, 0, height, width
+    origin = np.zeros(2) if origin is None else origin
+    size = np.array([width, height], dtype=float) if size is None else size
+    top, left, bottom, right = (
+        round(origin[axis] + fraction * size[axis]) for fraction, axis in zip(crop, (1, 0, 1, 0), strict=True)
+    )
+    top, left = (2 * math.ceil(max(edge, 0) / 2) for edge in (top, left))
+    bottom, right = (2 * (min(edge, limit) // 2) for edge, limit in ((bottom, height), (right, width)))
+    if bottom - top < 4 or right - left < 4:
+        raise ValueError(f"DefaultUserCrop of {Path(path).name} leaves less than 4 x 4 photosites")
+    return top, left, bottom, right
+
+
 def measure_raw(path: str | Path) -> dict[str, Any]:
     """Open any LibRaw-readable raw (a camera ARW or the synthetic DNG) and measure it.
 
-    The visible area is measured; LibRaw's black and clipping levels, as-shot white balance and
-    XYZ-to-camera matrix are what a raw developer would use.
+    The visible area inside any DNG DefaultUserCrop is measured; LibRaw's black and clipping
+    levels, as-shot white balance and XYZ-to-camera matrix are what a raw developer would use.
     """
     import rawpy
 
     with rawpy.imread(str(path)) as raw:
-        mosaic = raw.raw_image_visible.copy()
+        visible = raw.raw_image_visible
+        top, left, bottom, right = _user_crop(path, visible.shape)
+        mosaic = visible[top:bottom, left:right].copy()
         black = float(np.mean(raw.black_level_per_channel))
         # Sony raws clip below the container white level (ARW: 15360 of 16383); prefer the camera's.
         camera_white = [value for value in (raw.camera_white_level_per_channel or ()) if value > 0]
@@ -306,6 +346,7 @@ def measure_raw(path: str | Path) -> dict[str, Any]:
     d65_response = xyz_to_camera @ _D65_XYZ
     measured.update(
         file=Path(path).name,
+        measured_box=[top, left, bottom, right],
         as_shot_neutral=neutral,
         xyz_to_camera=xyz_to_camera.tolist() if np.all(np.isfinite(xyz_to_camera)) else None,
         d65_camera_neutral=_normalised_neutral(d65_response),

@@ -142,25 +142,26 @@ class CameraProfileManager:
         sony_like = not virtual
         for field, value, interval, unit in (
             ("full_well_electrons", 33000.0 if sony_like else 52000.0, [20000.0, 100000.0], "electrons"),
-            ("read_noise_electrons", 4.0 if sony_like else 3.0, [0.3, 10.0], "electrons RMS"),
+            ("read_noise_electrons", 3.0, [0.3, 10.0], "electrons RMS"),
             ("prnu_sigma", 0.01, [0.0, 0.03], "fraction"),
             ("dsnu_sigma_dn", 1.0, [0.0, 64.0], "DN"),
         ):
             add(sensor, field, value, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
             add(sensor, f"{field}_range", interval, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
-        # Noise sources the simulator applies; the Sony-like defect densities come from the measured frame.
+        # Noise sources the simulator applies; the Sony-like profile replaces the defect densities and
+        # read noise with the measured frame's in _add_ilce1m2_sample.
         for field, value, unit in (
             ("row_fpn_electrons", 0.5, "electrons RMS"),
             ("column_fpn_electrons", 0.5, "electrons RMS"),
             ("dark_current_e_per_s", 0.1, "electrons/s"),
-            ("hot_pixel_fraction", 2e-6 if sony_like else 1e-5, "fraction"),
-            ("dead_pixel_fraction", 2e-8 if sony_like else 1e-5, "fraction"),
+            ("hot_pixel_fraction", 1e-5, "fraction"),
+            ("dead_pixel_fraction", 1e-5, "fraction"),
             ("hot_pixel_e_per_s", 1000.0, "electrons/s"),
         ):
             add(sensor, field, value, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
-        # Mild barrel distortion so DISTORTION on is not a silent no-op; not a lens calibration.
-        add(camera, "lens_distortion_k1", 0.008, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
-        add(camera, "lens_distortion_k2", 0.002, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
+        # No lens is modelled: zero coefficients, so DISTORTION applies no geometry and the run report says so.
+        add(camera, "lens_distortion_k1", 0.0, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
+        add(camera, "lens_distortion_k2", 0.0, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
         if sony_like:
             self._add_ilce1m2_sample(camera, sensor)
         profile = CameraProfile(camera, sensor)

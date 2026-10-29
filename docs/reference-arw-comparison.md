@@ -56,7 +56,7 @@ The fix places the reconstructed HDR maximum that was actually produced half a s
 records the headroom used as `BaselineExposure`, and the TIFF developer applies that exposure so the
 unaligned round trip is comparable without a large alignment matrix.
 
-## Noise (single-frame, robust Theil-Sen photon transfer on detrended flat blocks)
+## Noise (single-frame photon transfer, lower-envelope fit on detrended flat blocks)
 
 | Quantity | ILCE-1M2 sample | run_20261029_094146 | Adopted |
 |---|---|---|---|
@@ -89,10 +89,11 @@ For evaluation crops without any invented edge extension, run with `SENSOR_FIT_M
 
 ## Honest no-ops and the 2K/4K comparison
 
-- DISTORTION was on with k1 = k2 = 0: the profile now carries mild barrel defaults (k1 0.008, k2 0.002,
-  fabricated) and the run report warns when distortion is enabled with zero coefficients.
+- DISTORTION was on with k1 = k2 = 0: no lens is calibrated, so every profile keeps k1 = k2 = 0 and no
+  geometry is invented; the run report now states that distortion is enabled but not modelled, and lists
+  any optical effect that is enabled while OPTICAL_SIMULATION is off as not applied.
 - C2PA unavailable was recorded in provenance.json but not in the run report fallbacks; it is now a
-  fallback, and the notebook installs c2pa-python in the setup cell.
+  fallback with its reason. The notebook configures no C2PA signer, so signing stays skipped and reported.
 - The noise gates compared the simulator with itself; they are now labelled self-consistency, and a
   REFERENCE_RAW option produces the realism rows (histograms, noise versus signal, PSD with banding,
   WB and matrix) side by side with the reference.
@@ -108,11 +109,13 @@ For evaluation crops without any invented edge extension, run with `SENSOR_FIT_M
 ## Reproduction
 
 The measurements were made with `rawpy` on the single ARW; the script reads the file once, keeps one
-plane at a time, computes 32 x 32 detrended block statistics, a robust photon-transfer fit, dark-block
-tail statistics, row and column banding, a dark-window PSD and isolated-defect counts. The same
+plane at a time, computes 32 x 32 detrended block statistics, a photon-transfer fit (weighted least
+squares of variance against signal over the 5 % lower variance envelope of the blocks in each signal
+bin, weighted by the square root of the bin's block count), dark-block tail statistics, row and column banding, a dark-window PSD and isolated-defect counts. The same
 procedure is implemented in `synthraw.realism` and runs on Colab against any REFERENCE_RAW:
 `measure_raw` reads a raw with rawpy (levels, camera white, AsShotNeutral, XYZ-to-camera matrix and the
-D65 camera neutral), `measure_mosaic` computes per-plane black-subtracted EV histograms, the
+D65 camera neutral) and keeps only the photosites inside a DNG `DefaultUserCrop` (even edges, so the
+CFA phase holds), which leaves the synthetic outpaint bands out of every statistic; `measure_mosaic` computes per-plane black-subtracted EV histograms, the
 photon-transfer envelope and fit, dark-block tail and banding statistics (about each block's fitted
 plane), the dark-window banding PSD and hot/dead counts, and `write_realism` writes
 `validation/realism_comparison.json` and `.png` with reference, synthetic and ratio rows. The module

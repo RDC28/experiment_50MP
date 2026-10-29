@@ -77,9 +77,15 @@ def test_sony_like_profile_carries_the_measured_ilce1m2_sample():
     assert sensor["full_well_electrons"].value == pytest.approx(
         span * sensor["conversion_gain_e_per_dn"].value, rel=0.01
     )
-    assert camera["lens_distortion_k1"].value > 0
     virtual = CameraProfileManager().build("CINEMA_50MP_VIRTUAL")
     assert "xyz_to_camera_d65" not in virtual.camera
+
+
+@pytest.mark.parametrize("name", PROFILE_NAMES)
+def test_no_profile_models_lens_distortion(name):
+    """No lens is calibrated, so no profile may warp the image geometry the user receives."""
+    camera = CameraProfileManager().build(name).camera
+    assert camera["lens_distortion_k1"].value == camera["lens_distortion_k2"].value == 0
 
 
 def test_sidecars_round_trip_and_fresh_profiles(tmp_path):
