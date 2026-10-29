@@ -853,3 +853,23 @@ model download, heavy processing, commit or background service was started.
 
 All 285 lightweight v5 tests pass under the shared test lock. Repository-wide
 ruff, changed Python formatting and diff whitespace checks pass.
+
+## Shared colour panel evidence (iteration 39)
+
+`panel.resolve_analytic_panel` now accepts an explicit normalized encoded-sRGB
+`colour_source` array/memmap and bounded `colour_strip_rows`. Evidence requires
+AsShotNeutral ESTIMATE mode without a value; missing entries and conflicting
+modes/values fail. The gray-world candidate goes through normal ISP resolution,
+retaining its statistics, ESTIMATED provenance, null confidence and limitations.
+One resolved immutable ISP and its records can drive both paired sources without
+independently sampling or estimating different white-balance hypotheses. Existing
+calls and defaults are unchanged. The caller selects and decodes the shared proxy;
+notebook decoding/dispatch remains pending. No capture WB accuracy is claimed.
+
+Validation: a tiny real PNG-to-paired-DNG/TIFF test checks expected CFA channel
+scaling against an unselected baseline, LibRaw WB metadata, both manifests and
+independent roundtrip completion. Four conflict cases verify rejection. All 290
+lightweight v5 tests pass under the shared test lock; repository-wide ruff,
+changed Python formatting and diff whitespace checks pass. No heavy execution,
+background process or commit was started. HDR/profile selection, later ordered
+phases and full-scale/scientific Colab validation remain unresolved.

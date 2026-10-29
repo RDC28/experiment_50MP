@@ -81,13 +81,22 @@ def resolve_camera_panel(
 
 
 def resolve_analytic_panel(
-    camera: CameraHypothesis, isp, requests: list[dict], modes: dict, *, exposure_prior: dict | None = None
+    camera: CameraHypothesis,
+    isp,
+    requests: list[dict],
+    modes: dict,
+    *,
+    exposure_prior: dict | None = None,
+    colour_source=None,
+    colour_strip_rows: int = 64,
 ):
     """Resolve camera inputs and AsShotNeutral into shared analytic hypotheses.
 
     AsShotNeutral is a positive, green-normalized camera neutral, not WB gains.
     USER values invert into gains; absent AUTO/FABRICATE values keep the declared
-    ISP hypothesis. No illuminant estimator or camera-profile solver is implied.
+    ISP hypothesis. Explicit colour_source evidence requires ESTIMATE mode and
+    supplies a gray-world rendered-sRGB proxy hypothesis shared by paired runs.
+    No calibrated illuminant estimator or camera-profile solver is implied.
     Other colour metadata remains derived from the ISP or unsupported.
     """
     import numpy as np
@@ -97,6 +106,14 @@ def resolve_analytic_panel(
     names = [field["name"] for field in requests]
     if len(set(names)) != len(names) or set(modes) != set(names):
         raise ValueError("Panel requires unique fields and exactly one mode per field")
+    colour_records = ()
+    if colour_source is not None:
+        from prd_v5.colour import resolve_gray_world
+
+        neutral_fields = [field for field in requests if field["name"] == "AsShotNeutral"]
+        if not neutral_fields or modes["AsShotNeutral"] != "ESTIMATE" or neutral_fields[0]["value"] is not None:
+            raise ValueError("Colour evidence requires AsShotNeutral in ESTIMATE mode without a value")
+        _, colour_records, _ = resolve_gray_world(isp, colour_source, strip_rows=colour_strip_rows)
     camera_requests = [field for field in requests if field["name"] != "AsShotNeutral"]
     camera, camera_records = resolve_camera_panel(
         camera,
@@ -104,7 +121,8 @@ def resolve_analytic_panel(
         {field["name"]: modes[field["name"]] for field in camera_requests},
         exposure_prior=exposure_prior,
     )
-    isp_modes, candidates = {}, {}
+    isp_modes = {}
+    candidates = {record.name: (record,) for record in colour_records}
     for field in requests:
         if field["name"] != "AsShotNeutral":
             continue

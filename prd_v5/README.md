@@ -411,3 +411,13 @@ rendered linear-sRGB channel proxy, not a learned estimator or recovered capture
 WB. The analytic inverse divides by those gains; this API does not neutralize
 the rendered source. Empty evidence fails without fallback. Notebook dispatch
 and shared paired-source evidence selection remain pending; defaults are unchanged.
+
+The analytic panel accepts optional `colour_source=encoded_srgb` and
+`colour_strip_rows=64` arguments. Supply an explicitly normalized sRGB proxy
+(array or memmap), with AsShotNeutral in ESTIMATE mode and no explicit value.
+The panel resolves gray-world evidence once into the immutable ISP and selection
+records; pass these to `run_analytic_pair` to share the same hypothesis across
+both variants. Choose the proxy explicitly rather than estimating separately on
+each source. Conflicting modes, missing catalogue entries and degenerate evidence
+fail without fallback. This is a rendered-channel heuristic, not recovered WB.
+Notebook proxy decoding and dispatch remain pending.

@@ -235,3 +235,77 @@ def test_joint_exposure_panel_rejects_conflicting_selections(change):
         modes["ISO"] = change.upper()
     with pytest.raises(ValueError, match="Joint exposure prior requires"):
         resolve_camera_panel(CameraHypothesis(), requests, modes, exposure_prior={"scene_ev100": 4})
+
+
+def test_colour_panel_shared_estimate_drives_paired_raw(tmp_path):
+    import json
+
+    import numpy as np
+    import rawpy
+    from PIL import Image
+
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.paired import run_analytic_pair
+    from prd_v5.panel import resolve_analytic_panel
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (51, 102, 153)).save(source)
+    proxy = np.full((2, 2, 3), [0.2, 0.4, 0.6], dtype=np.float32)
+    camera, isp, camera_records, records = resolve_analytic_panel(
+        CameraHypothesis(shot_noise=False, read_noise=False),
+        AnalyticISP(),
+        [{"name": "AsShotNeutral", "mode": "AUTO", "value": None}],
+        {"AsShotNeutral": "ESTIMATE"},
+        colour_source=proxy,
+        colour_strip_rows=1,
+    )
+    config = AnalyticRunConfig(camera=camera, isp=isp, target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    run_analytic_pair(
+        source, source, tmp_path / "pair", config, camera_selections=camera_records, isp_selections=records
+    )
+    AnalyticRunConfig(camera=camera, target_megapixels=0.001024, assume_unprofiled_srgb=True).run(
+        source, tmp_path / "baseline"
+    )
+    with rawpy.imread(str(tmp_path / "baseline/capture.dng")) as raw:
+        baseline = raw.raw_image.copy().astype(float) - camera.black_level
+    for label in ("2k", "4k"):
+        manifest = json.loads((tmp_path / "pair" / label / "manifest.json").read_text())
+        field = manifest["registry"]["isp.white_balance"]
+        assert field["mode"] == "ESTIMATE" and field["provenance"] == "ESTIMATED"
+        assert field["posterior"]["eligible_pixels"] == 4
+        assert field["confidence"] is None
+        assert field["value"] == list(isp.white_balance)
+        with rawpy.imread(str(tmp_path / "pair" / label / "capture.dng")) as raw:
+            signal = raw.raw_image.copy().astype(float) - camera.black_level
+            for channel, region in enumerate(
+                (
+                    (slice(0, None, 2), slice(0, None, 2)),
+                    (slice(0, None, 2), slice(1, None, 2)),
+                    (slice(1, None, 2), slice(1, None, 2)),
+                )
+            ):
+                np.testing.assert_allclose(signal[region], baseline[region] / isp.white_balance[channel], atol=1)
+            np.testing.assert_allclose(raw.camera_whitebalance[:3], isp.white_balance)
+        assert manifest["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+
+
+@pytest.mark.parametrize("change", ["missing", "auto", "user", "value"])
+def test_colour_panel_rejects_conflicting_evidence(change):
+    import numpy as np
+
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.panel import resolve_analytic_panel
+
+    requests = [{"name": "AsShotNeutral", "mode": "AUTO", "value": None}]
+    modes = {"AsShotNeutral": "ESTIMATE"}
+    if change == "missing":
+        requests, modes = [], {}
+    elif change in {"auto", "user"}:
+        modes["AsShotNeutral"] = change.upper()
+    else:
+        requests[0]["value"] = [1, 1, 1]
+    with pytest.raises(ValueError, match="Colour evidence requires"):
+        resolve_analytic_panel(
+            CameraHypothesis(), AnalyticISP(), requests, modes, colour_source=np.full((1, 1, 3), 0.5)
+        )
