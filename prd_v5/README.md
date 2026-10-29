@@ -62,7 +62,7 @@ or a precision-preserving 16-bit source decoder.
 
 ## Pending
 
-The remaining MVP config, complete registry, HTML reports and new Colab notebook are not
+The remaining MVP config, complete registry and new Colab notebook are not
 implemented yet. Fidelity, learned RAW, full sensor, full optics and final
 metadata follow MVP in that order. No HAT, HDR model or learned RAW checkpoint is
 executed by this foundation. Upstream checkpoint and scientific limitations in
@@ -131,4 +131,14 @@ with any channel at 1, with a count and hash in the manifest. It flags highlight
 uncertainty without claiming recovery. ICC conversion can change endpoints and
 bilinear interpolation can dilute them; below-endpoint clipping is undetected.
 False values must be interpreted alongside source support, not as proof of known
-radiance. HTML reports, further uncertainty masks and the notebook remain pending.
+radiance.
+
+Each successful bundle also includes a self-contained offline `report.html`,
+using the existing synthraw report's system typography and neutral tables.
+It shows artifact hashes, stage evidence, mask semantics, shared hypotheses,
+provenance and pending work. Metadata is HTML-escaped and no scripts, remote
+assets or image allocations are needed. Scientific acceptance remains explicitly
+not measured, separate from file roundtrip success. The manifest hashes the
+report; the report lists the image/mask artifacts rather than its own hash.
+Report export must succeed before the completion manifest is written. Further
+uncertainty masks, complete configuration/registry and the notebook remain pending.

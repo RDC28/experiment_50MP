@@ -339,3 +339,23 @@ Python formatting and diff checks pass. No full suite, model, notebook, full-fra
 job or background service ran. Complete MVP configuration/registry, HTML reports
 and the notebook remain pending before fidelity; all later ordered phases and
 Colab-only scientific/full-scale validation remain unresolved.
+
+
+## Implementation evidence: thirteenth MVP increment
+
+The analytic runner now exports a self-contained offline `report.html` before
+writing the completion manifest. It presents image/mask hashes and byte counts,
+verbatim stage evidence, mask semantics, shared camera/ISP state, partial registry,
+resource limits and pending work. It matches the existing synthraw report's system
+typography and neutral tables. All metadata is escaped; no scripts, external
+assets or image decoding are used. Scientific acceptance stays explicitly not
+measured, separate from successful independent file roundtrips. The manifest
+hashes the HTML; HTML lists image/mask artifacts without a circular self-hash.
+Failed report generation leaves no completion manifest.
+
+Validation: all 118 lightweight v5 tests pass, including metadata injection
+escaping, actual tiny source-to-TIFF-to-report/hash output and report-failure
+cleanup. Repository-wide ruff and changed Python formatting pass. No notebook,
+model, full-frame job, full suite or background service ran. Complete MVP
+configuration/registry and the notebook remain pending before fidelity. Later
+phases and Colab-only scientific/full-scale acceptance remain unresolved.

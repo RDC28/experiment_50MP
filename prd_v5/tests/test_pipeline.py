@@ -25,6 +25,7 @@ def test_complete_bundle(tmp_path):
         "source_support.npy",
         "source_clipped.npy",
         "manifest.json",
+        "report.html",
     }
     support = np.load(output / "source_support.npy", mmap_mode="r", allow_pickle=False)
     try:
@@ -36,6 +37,11 @@ def test_complete_bundle(tmp_path):
         support._mmap.close()
     for name, record in report["artifacts"].items():
         assert record["sha256"] == hashlib.sha256((output / name).read_bytes()).hexdigest()
+    page = (output / "report.html").read_text()
+    assert "Scientific acceptance: not measured" in page
+    assert report["artifacts"]["capture.dng"]["sha256"] in page
+    assert "source_clipped.npy" in page
+    assert "passed" in page
     assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
     assert report["registry"]["gps"]["value"] is None
     with pytest.raises(FileExistsError):
@@ -98,3 +104,18 @@ def test_clipping_mask_retains_endpoint_locations(tmp_path, strip_rows):
         assert report["stages"]["analytic"]["source_clipped_pixels"] == 26
     finally:
         mask._mmap.close()
+
+
+def test_report_failure_has_no_completion_manifest(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((32, 32, 3), 128, dtype=np.uint8)).save(source)
+    output = tmp_path / "run"
+
+    def fail(*args, **kwargs):
+        raise OSError("injected report failure")
+
+    monkeypatch.setattr("prd_v5.pipeline.render_report", fail)
+    with pytest.raises(OSError, match="report failure"):
+        run_analytic(source, output, CameraHypothesis(), target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    assert not (output / "manifest.json").exists()
+    assert not list(output.glob("working-*"))

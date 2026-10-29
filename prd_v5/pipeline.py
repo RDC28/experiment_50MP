@@ -17,6 +17,7 @@ from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraHypothesis
 from prd_v5.inputs import InputInspector
 from prd_v5.raster import rasterize
+from prd_v5.report import render_report
 from prd_v5.roundtrip import develop_roundtrip
 from prd_v5.sensor import BayerSensor
 
@@ -175,6 +176,14 @@ def run_analytic(
             "final metadata",
             "Colab full-scale validation",
         ],
+    }
+    # Render before the completion marker. Hash the HTML in the manifest without
+    # making the report depend on its own digest.
+    report_path = output / "report.html"
+    report_path.write_text(render_report(report), encoding="utf-8")
+    artifacts["report.html"] = {
+        "sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+        "size_bytes": report_path.stat().st_size,
     }
     (output / "manifest.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     return report
