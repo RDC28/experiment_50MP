@@ -369,3 +369,24 @@ explanation so JSON remains finite. These metrics measure render disagreement,
 not recovered detail or scientific fidelity; equal shapes do not prove scene
 identity or registration. Alignment and benchmark-reference evaluation remain
 pending. A comparison read failure prevents pair completion publication.
+
+Joint exposure hypotheses can be selected before constructing the shared run
+configuration, without decoding images or allocating frame buffers:
+
+```python
+from prd_v5.exposure import resolve_exposure
+
+camera, camera_selections, exposure_report = resolve_exposure(
+    CameraHypothesis(), scene_ev100=4.0, candidate_count=8
+)
+config = AnalyticRunConfig(camera=camera)
+# Pass camera_selections to config.run or run_analytic_pair.
+```
+
+This reuses the Sony-like standard-stop envelope and heuristic joint ranking.
+The caller supplies the scene EV100 prior; weights are relative support among
+retained candidates, not calibrated probabilities or inferred capture truth.
+Selected ISO drives gain/noise. Shutter/aperture remain metadata hypotheses and
+leave analytic ISP exposure gain unchanged. The registry retains joint alternatives
+and the EV prior. Automatic image metering and notebook posterior controls remain
+pending; existing defaults and panel selections are unchanged.

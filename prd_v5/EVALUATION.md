@@ -787,3 +787,25 @@ HDR and joint exposure/profile selection remain fidelity work. Full-scale memory
 real checkpoint inference and scientific validation remain Colab-only unresolved
 checks. No notebook, model download, real inference, heavy processing, commit or
 background service was started.
+
+## Executable joint exposure posterior (iteration 36)
+
+`exposure.resolve_exposure` reuses the existing standard-stop exposure estimator
+under an explicit Sony-like camera envelope and caller-supplied scene EV100 prior.
+It atomically selects ISO/shutter/aperture through v5 field resolution, returning
+one immutable camera and executable selection records. Records retain the joint
+alternatives, normalized relative support and EV prior, with null confidence.
+The pipeline already preserves those records in manifest/HTML. ISO recomputes
+sensor gain, saturation and noise; shutter/aperture remain metadata hypotheses.
+ISP exposure gain is independent because absolute radiance and throughput are
+unknown. Existing defaults are unchanged. This is heuristic exposure selection,
+not calibrated probabilities, image metering or recovered capture settings.
+
+Validation: eight new lightweight tests verify deterministic joint selection,
+normalized support, EV response, invalid-input rejection, actual ADC pixel changes
+and a tiny real PNG-to-DNG-to-independent-LibRaw-TIFF bundle with retained joint
+provenance. All 268 v5 tests pass under the shared lock; repository-wide ruff and
+changed Python formatting pass. No heavy local work or background services ran.
+Notebook posterior controls, HDR, colour constancy, profile selection and validation
+crops remain fidelity work. Colab full-scale/scientific validation and later
+ordered phases remain unresolved.
