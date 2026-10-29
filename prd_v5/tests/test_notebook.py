@@ -98,3 +98,16 @@ def test_notebook_dispatches_verified_sr_and_records_only_completed_execution():
     assert execution.index("result = run_analytic_pair(") < execution.index('"status": "executed;')
     assert '"[sr]"' in execution
     assert "(SR_TILE, SR_OVERLAP) != (512, 64)" in execution
+
+
+def test_notebook_exposes_and_dispatches_explicit_joint_exposure_prior():
+    notebook, values = assignments()
+    assert values["EXPOSURE_PRIOR"] is None
+    execution = ast.parse(notebook.cells[-1].source)
+    call = next(
+        node
+        for node in ast.walk(execution)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "resolve_analytic_panel"
+    )
+    prior = next(keyword.value for keyword in call.keywords if keyword.arg == "exposure_prior")
+    assert isinstance(prior, ast.Name) and prior.id == "EXPOSURE_PRIOR"

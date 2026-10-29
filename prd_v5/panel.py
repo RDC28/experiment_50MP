@@ -15,12 +15,15 @@ CAMERA_FIELDS = {
 }
 
 
-def resolve_camera_panel(base: CameraHypothesis, requests: list[dict], modes: dict):
+def resolve_camera_panel(
+    base: CameraHypothesis, requests: list[dict], modes: dict, *, exposure_prior: dict | None = None
+):
     """Resolve supported fields; reject unsupported edits before pixel work.
 
     Explicit catalogue values require USER mode and are labelled USER_SET.
     AUTO/FABRICATE without values use the declared synthetic base hypothesis.
-    ESTIMATE has no estimator and therefore fails rather than inventing evidence.
+    Joint exposure ESTIMATE requires an explicit exposure_prior. Other absent
+    estimates fail rather than inventing evidence.
     Read-noise amplitude remains in CAMERA_VALUES; its PRD row combines multiple
     distributions and is deliberately not treated as a scalar override.
     """
@@ -28,6 +31,23 @@ def resolve_camera_panel(base: CameraHypothesis, requests: list[dict], modes: di
     if len(set(names)) != len(names) or set(modes) != set(names):
         raise ValueError("Panel requires unique fields and exactly one mode per field")
     selected_modes, candidates = {}, {}
+    if exposure_prior is not None:
+        from prd_v5.exposure import resolve_exposure
+
+        joint = {"ISO", "Shutter time", "Aperture"}
+        fields = {field["name"]: field for field in requests}
+        if not joint <= fields.keys() or any(
+            modes[name] != "ESTIMATE" or fields[name]["value"] is not None for name in joint
+        ):
+            raise ValueError(
+                "Joint exposure prior requires ISO, Shutter time and Aperture in ESTIMATE mode without values"
+            )
+        if not isinstance(exposure_prior, dict):
+            raise ValueError("exposure_prior must be a dictionary")
+        _, records, _ = resolve_exposure(base, **exposure_prior)
+        candidates.update(
+            {record.name: (record,) for record in records if record.name in {"iso", "shutter_s", "aperture"}}
+        )
     registry = base.registry()
     for field in requests:
         name = field["name"]
@@ -60,7 +80,9 @@ def resolve_camera_panel(base: CameraHypothesis, requests: list[dict], modes: di
     return resolve_camera(base, selected_modes, candidates)
 
 
-def resolve_analytic_panel(camera: CameraHypothesis, isp, requests: list[dict], modes: dict):
+def resolve_analytic_panel(
+    camera: CameraHypothesis, isp, requests: list[dict], modes: dict, *, exposure_prior: dict | None = None
+):
     """Resolve camera inputs and AsShotNeutral into shared analytic hypotheses.
 
     AsShotNeutral is a positive, green-normalized camera neutral, not WB gains.
@@ -77,7 +99,10 @@ def resolve_analytic_panel(camera: CameraHypothesis, isp, requests: list[dict], 
         raise ValueError("Panel requires unique fields and exactly one mode per field")
     camera_requests = [field for field in requests if field["name"] != "AsShotNeutral"]
     camera, camera_records = resolve_camera_panel(
-        camera, camera_requests, {field["name"]: modes[field["name"]] for field in camera_requests}
+        camera,
+        camera_requests,
+        {field["name"]: modes[field["name"]] for field in camera_requests},
+        exposure_prior=exposure_prior,
     )
     isp_modes, candidates = {}, {}
     for field in requests:

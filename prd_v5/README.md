@@ -390,3 +390,13 @@ Selected ISO drives gain/noise. Shutter/aperture remain metadata hypotheses and
 leave analytic ISP exposure gain unchanged. The registry retains joint alternatives
 and the EV prior. Automatic image metering and notebook posterior controls remain
 pending; existing defaults and panel selections are unchanged.
+
+The notebook exposes optional `EXPOSURE_PRIOR` for this joint estimator. Set it
+for example to `{"scene_ev100": 4.0, "candidate_count": 8}` and set the `ISO`,
+`Shutter time` and `Aperture` entries in `FIELD_MODE` to `ESTIMATE`, leaving
+all three catalogue values null. `resolve_analytic_panel(...,
+exposure_prior=EXPOSURE_PRIOR)` selects them atomically before building the shared
+paired configuration. Mixed modes, missing joint fields and explicit values fail
+rather than silently override user choices. The default null prior preserves
+existing hypotheses. Both child registries retain the joint alternatives and
+explicit scene EV prior. This does not infer scene brightness from source pixels.

@@ -177,3 +177,61 @@ def test_sr_panel_missing_weights_require_explicit_baseline():
         resolve_sr_panel("unknown", None, allow_baseline=True)
     with pytest.raises(ValueError, match="cannot accept"):
         resolve_sr_panel("BILINEAR_BASELINE", {}, allow_baseline=True)
+
+
+def test_joint_exposure_panel_drives_both_real_output_bundles(tmp_path):
+    import json
+
+    import numpy as np
+    import rawpy
+    from PIL import Image
+
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.exposure import resolve_exposure
+    from prd_v5.paired import run_analytic_pair
+    from prd_v5.panel import resolve_analytic_panel
+
+    base = CameraHypothesis(shot_noise=False, read_noise=False)
+    requests = [{"name": name, "mode": "AUTO", "value": None} for name in ("ISO", "Shutter time", "Aperture")]
+    modes = dict.fromkeys((f["name"] for f in requests), "ESTIMATE")
+    camera, isp, records, isp_records = resolve_analytic_panel(
+        base, AnalyticISP(), requests, modes, exposure_prior={"scene_ev100": -8}
+    )
+    expected, _, report = resolve_exposure(base, scene_ev100=-8)
+    assert camera == expected and camera.iso > base.iso
+    assert isp == AnalyticISP()
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (8, 8, 8)).save(source)
+    config = AnalyticRunConfig(camera=camera, isp=isp, target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    run_analytic_pair(source, source, tmp_path / "pair", config, camera_selections=records, isp_selections=isp_records)
+    AnalyticRunConfig(camera=base, target_megapixels=0.001024, assume_unprofiled_srgb=True).run(
+        source, tmp_path / "baseline"
+    )
+    with rawpy.imread(str(tmp_path / "baseline/capture.dng")) as raw:
+        baseline = raw.raw_image.copy()
+    for label in ("2k", "4k"):
+        manifest = json.loads((tmp_path / "pair" / label / "manifest.json").read_text())
+        for name in ("iso", "shutter_s", "aperture"):
+            field = manifest["registry"][name]
+            assert field["mode"] == "ESTIMATE" and field["provenance"] == "ESTIMATED"
+            assert field["posterior"]["joint_candidates"] == report["joint_candidates"]
+            assert field["value"] == getattr(camera, name)
+        with rawpy.imread(str(tmp_path / "pair" / label / "capture.dng")) as raw:
+            assert np.all(raw.raw_image > baseline)
+        assert manifest["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+
+
+@pytest.mark.parametrize("change", ["missing", "user", "value", "auto"])
+def test_joint_exposure_panel_rejects_conflicting_selections(change):
+    requests = [{"name": name, "mode": "AUTO", "value": None} for name in ("ISO", "Shutter time", "Aperture")]
+    modes = dict.fromkeys((f["name"] for f in requests), "ESTIMATE")
+    if change == "missing":
+        requests.pop()
+        modes.pop("Aperture")
+    elif change == "value":
+        requests[0]["value"] = 400
+    else:
+        modes["ISO"] = change.upper()
+    with pytest.raises(ValueError, match="Joint exposure prior requires"):
+        resolve_camera_panel(CameraHypothesis(), requests, modes, exposure_prior={"scene_ev100": 4})

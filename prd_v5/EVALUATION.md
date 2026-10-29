@@ -809,3 +809,23 @@ changed Python formatting pass. No heavy local work or background services ran.
 Notebook posterior controls, HDR, colour constancy, profile selection and validation
 crops remain fidelity work. Colab full-scale/scientific validation and later
 ordered phases remain unresolved.
+
+## Notebook joint exposure dispatch (iteration 37)
+
+The single notebook now exposes `EXPOSURE_PRIOR` and passes it through
+`resolve_analytic_panel` into the executable joint exposure resolver. An explicit
+prior requires all three ISO/shutter/aperture fields in ESTIMATE mode without
+values; conflicting or incomplete choices fail before pixel work. The selected
+immutable camera drives both sequential runs, with joint candidate evidence
+retained in both registries. The default null prior preserves current behavior.
+No image metering, calibrated probability or radiometric shutter/aperture effect
+is claimed; ISO changes the existing sensor electronics.
+
+Validation: tiny real PNG-to-paired-DNG-to-independent-LibRaw-TIFF coverage
+verifies increased ADC samples against the unchanged baseline and matching joint
+provenance in both bundles. Static notebook validation checks explicit prior
+wiring without executing cells. All 274 lightweight v5 tests pass under the
+shared lock; repository-wide ruff, changed Python formatting and diff whitespace
+checks pass. No background processes or heavy jobs were started. HDR, colour
+constancy/profile selection and validation crops remain fidelity work; later
+ordered phases and full-scale Colab/scientific validation remain unresolved.
