@@ -477,3 +477,23 @@ Python formatting checks pass. No model, notebook, full-frame job, full reposito
 suite, commit or background service ran. Complete MVP configuration/registry and
 the notebook remain pending before later ordered phases. Full-scale Colab,
 cross-runtime replay and scientific acceptance remain unresolved.
+
+## Implementation evidence: twentieth MVP increment
+
+The analytic inverse ISP now reports a bounded forward-model consistency check
+on the actual stored clean float32 camera values. Each strip is rendered through
+the supplied exposure/WB, matrix, display clipping, optional smoothstep and sRGB
+transfer. Reports retain maximum absolute error, RMSE, normalized encoded-sRGB
+units and a declared 1e-5 maximum-error tolerance. Irreversible camera gamut
+flooring is reflected as a failed diagnostic, not hidden or promoted to a claim
+of calibrated colour accuracy. The existing manifest/HTML stage evidence carries
+these results; bundle export remains independent of this diagnostic status.
+
+Validation: 167 lightweight v5 tests pass under the shared lock, including
+nonidentity matrix/WB/exposure/tone reconstruction, endpoints, strip-invariant
+metrics, an independently calculated gamut-flooring failure and tiny actual
+PNG-to-LibRaw-TIFF integration. Repository-wide ruff and changed Python formatting
+pass. No model, notebook, full-frame job, full repository suite, commit or
+background service ran. Complete MVP panel/registry and notebook remain pending
+before later ordered phases. Full-scale Colab and scientific acceptance remain
+unresolved.

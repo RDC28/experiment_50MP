@@ -29,7 +29,9 @@ def test_forward_inverse_roundtrip_and_strip_invariance(tmp_path):
     encoded = np.where(toned <= 0.0031308, 12.92 * toned, 1.055 * toned ** (1 / 2.4) - 0.055)
     isp = AnalyticISP(matrix, wb, 1.2, True)
     dest = output(tmp_path, camera.shape)
-    isp.process(encoded, dest, strip_rows=2)
+    report = isp.process(encoded, dest, strip_rows=2)
+    assert report["forward_consistency"]["status"] == "passed"
+    assert report["forward_consistency"]["rmse"] < 1e-6
     np.testing.assert_allclose(dest, camera, atol=2e-7)
     first = dest.copy()
     isp.process(encoded, dest, strip_rows=7)
@@ -78,3 +80,22 @@ def test_out_of_gamut_report(tmp_path):
     report = isp.process(source, dest)
     assert report["negative_camera_samples_floored"] == 1
     np.testing.assert_array_equal(dest, [[[0, 1, 0]]])
+    consistency = report["forward_consistency"]
+    assert consistency["status"] == "failed"
+    expected_error = 1.055 * 0.5 ** (1 / 2.4) - 0.055
+    assert consistency["max_absolute_error"] == pytest.approx(expected_error)
+    assert consistency["rmse"] == pytest.approx(expected_error / np.sqrt(3))
+
+
+def test_forward_consistency_endpoints_and_strip_metrics(tmp_path):
+    source = np.random.default_rng(3).uniform(0, 1, (9, 7, 3)).astype(np.float32)
+    source[0, 0] = [0, 0.04045, 1]
+    dest = output(tmp_path, source.shape)
+    isp = AnalyticISP(white_balance=(2, 1, 1.5), exposure_gain=0.7)
+    first = isp.process(source, dest, strip_rows=1)["forward_consistency"]
+    second = isp.process(source, dest, strip_rows=9)["forward_consistency"]
+    assert first["status"] == "passed"
+    assert first["max_absolute_error"] < 1e-6
+    assert first["max_absolute_error"] == second["max_absolute_error"]
+    assert first["rmse"] == pytest.approx(second["rmse"], abs=1e-15)
+    json.dumps(first, allow_nan=False)

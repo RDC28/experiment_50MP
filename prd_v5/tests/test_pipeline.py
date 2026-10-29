@@ -47,6 +47,7 @@ def test_complete_bundle(tmp_path):
     assert report["runtime"]["libraries"]["libraw"] in page
     assert "Runtime and replay limits" in page
     assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+    assert report["stages"]["analytic"]["forward_consistency"]["status"] == "passed"
     assert report["registry"]["gps"]["value"] is None
     registry = report["registry"]
     assert registry["source.sha256"]["value"] == hashlib.sha256(source.read_bytes()).hexdigest()

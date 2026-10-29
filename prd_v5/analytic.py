@@ -62,6 +62,8 @@ class AnalyticISP:
         gains = np.asarray(self.white_balance, dtype=np.float32) * self.exposure_gain
         clipped = 0
         negative = 0
+        reconstruction_max = 0.0
+        reconstruction_squared = 0.0
         for start in range(0, source.shape[0], strip_rows):
             block = np.asarray(source[start : start + strip_rows], dtype=np.float32)
             if not np.isfinite(block).all() or np.any(block < 0) or np.any(block > 1):
@@ -73,6 +75,18 @@ class AnalyticISP:
             camera = (linear @ inverse.T) / gains
             negative += int(np.count_nonzero(camera < 0))
             destination[start : start + len(block)] = np.maximum(camera, 0)
+            # Validate the stored float32 camera values, including any irreversible
+            # gamut flooring, against the declared forward model. Work stays local
+            # to this strip; this is self-consistency rather than camera truth.
+            stored = np.asarray(destination[start : start + len(block)], dtype=np.float64)
+            forward = (stored * gains) @ np.asarray(self.camera_to_srgb).T
+            forward = np.clip(forward, 0, 1)
+            if self.inverse_smoothstep:
+                forward = forward**2 * (3 - 2 * forward)
+            encoded = np.where(forward <= 0.0031308, 12.92 * forward, 1.055 * forward ** (1 / 2.4) - 0.055)
+            residual = encoded - block
+            reconstruction_max = max(reconstruction_max, float(np.max(np.abs(residual))))
+            reconstruction_squared += float(np.sum(residual**2, dtype=np.float64))
         destination.flush()
         return {
             "method": "analytic_srgb_unprocessing",
@@ -82,5 +96,18 @@ class AnalyticISP:
             "negative_camera_samples_floored": negative,
             "highlight_recovery": "not performed; clipped source values remain uncertain",
             "validation": "analytic transform only; scene radiance accuracy not measured",
+            "forward_consistency": {
+                "status": "passed" if reconstruction_max <= 1e-5 else "failed",
+                "max_absolute_error": reconstruction_max,
+                "rmse": float(np.sqrt(reconstruction_squared / source.size)),
+                "tolerance": 1e-5,
+                "units": "normalized encoded sRGB",
+                "reference": "resampled input before analytic inversion",
+                "method": "stored clean camera RGB -> exposure/WB -> matrix -> clip -> tone -> sRGB",
+                "limitations": (
+                    "Internal model consistency only, not calibrated colour or recovered radiance accuracy; "
+                    "camera gamut flooring and forward display clipping can be irreversible"
+                ),
+            },
             "strip_rows": strip_rows,
         }

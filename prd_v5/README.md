@@ -200,3 +200,11 @@ The offline HTML report lists the configuration artifact and digest. Tiny tests
 verify identical DNG, TIFF and mask hashes when replayed within the same runtime;
 this is not a cross-version or cross-platform bitwise reproducibility guarantee.
 The saved settings cover only the implemented analytic subset, not later models.
+
+Analytic stage reports include `forward_consistency`: the stored clean float32
+camera RGB is rendered through the declared exposure/WB, matrix, display clip,
+optional smoothstep and sRGB transfer, then compared with resampled input.
+Strip-bounded maximum absolute error and RMSE use normalized encoded-sRGB units;
+maximum error above 1e-5 marks this diagnostic failed. Gamut flooring can fail
+the check without preventing bundle export. This measures internal consistency,
+not calibrated colour, recovered highlights or scene radiance truth.
