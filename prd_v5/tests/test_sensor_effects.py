@@ -98,7 +98,7 @@ def test_paired_roundtrip_records_body_effect_and_adc(tmp_path):
     source = tmp_path / "source.png"
     Image.fromarray(np.zeros((32, 32, 3), dtype=np.uint8)).save(source)
     camera = CameraHypothesis(shutter_s=1, shot_noise=False, read_noise=False)
-    effects = SensorEffects(dark_current_e_per_s=100)
+    effects = SensorEffects(dark_current_e_per_s=100, nonlinearity_compression=0.5)
     config = AnalyticRunConfig(
         camera=camera, sensor_effects=effects, target_megapixels=0.001024, assume_unprofiled_srgb=True
     )
@@ -106,10 +106,41 @@ def test_paired_roundtrip_records_body_effect_and_adc(tmp_path):
     for label in ("2k", "4k"):
         child = tmp_path / "pair" / label
         with rawpy.imread(str(child / "capture.dng")) as raw:
-            np.testing.assert_array_equal(raw.raw_image, round(512 + 100 / camera.conversion_gain_e_per_dn))
+            np.testing.assert_array_equal(
+                raw.raw_image, round(512 + 100 / (1 + 0.5 * 100 / camera.full_well_e) / camera.conversion_gain_e_per_dn)
+            )
         manifest = json.loads((child / "manifest.json").read_text())
         assert manifest["stages"]["sensor"]["body_effects"]["dark_expectation_e"] == 100
         assert manifest["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
         replay = AnalyticRunConfig.from_json((child / "config.json").read_text())
         assert replay.sensor_effects == effects
         assert manifest["registry"]["sensor.dark_current_e_per_s"]["provenance"] == "SYNTHETIC"
+
+
+@pytest.mark.parametrize("coefficient", [0.25, 1.0])
+def test_charge_compression_arithmetic_and_strip_invariance(tmp_path, coefficient):
+    effects = SensorEffects(nonlinearity_compression=coefficient)
+    a, report = simulate(tmp_path, effects, signal=0.8, strip_rows=1)
+    b, _ = simulate(tmp_path, effects, signal=0.8, strip_rows=7)
+    np.testing.assert_array_equal(a, b)
+    np.testing.assert_array_equal(a, round(512 + 15871 * 0.8 / (1 + coefficient * 0.8)))
+    assert report["body_effects"]["states"]["nonlinearity_compression"]["effective"]
+    assert "nonlinear" in report["body_effects"]["noise_profile_limit"]
+    config = AnalyticRunConfig(sensor_effects=effects)
+    assert AnalyticRunConfig.from_json(config.to_json()) == config
+
+
+def test_charge_compression_after_shot_before_read(tmp_path):
+    camera = CameraHypothesis(shot_noise=True, read_noise=True)
+    a, _ = simulate(tmp_path, SensorEffects(nonlinearity_compression=0.5), camera=camera)
+    shot = np.random.default_rng(np.random.SeedSequence([camera.stream_seed("sensor_shot"), 0]))
+    q = shot.poisson(np.full(32, 0.2 * camera.full_well_e))
+    read = np.random.default_rng(np.random.SeedSequence([camera.stream_seed("sensor_read"), 0]))
+    signal = q / (1 + 0.5 * q / camera.full_well_e) + read.normal(0, camera.read_noise_e, 32)
+    np.testing.assert_array_equal(a[0], np.rint(signal / camera.conversion_gain_e_per_dn + 512))
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.01, True, float("inf")])
+def test_invalid_charge_compression(value):
+    with pytest.raises(ValueError):
+        SensorEffects(nonlinearity_compression=value)

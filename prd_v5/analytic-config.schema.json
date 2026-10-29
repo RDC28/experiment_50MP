@@ -208,6 +208,12 @@
           "type": "number",
           "default": 1000.0,
           "minimum": 0
+        },
+        "nonlinearity_compression": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0,
+          "maximum": 1
         }
       }
     }

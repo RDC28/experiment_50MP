@@ -18,6 +18,7 @@ class SensorEffects:
     Body maps use camera seed and absolute sensor coordinates, never source size.
     """
 
+    nonlinearity_compression: float = 0.0
     prnu_sigma: float = 0.0
     dsnu_e: float = 0.0
     row_fpn_e: float = 0.0
@@ -37,6 +38,8 @@ class SensorEffects:
                 raise ValueError(f"{name} must be nonnegative and <= 1e15")
         if not -100 <= self.temperature_c <= 100 or self.temperature_doubling_c < 1:
             raise ValueError("Temperature must be -100..100 C and doubling interval >= 1 C")
+        if not 0 <= self.nonlinearity_compression <= 1:
+            raise ValueError("nonlinearity_compression must be in [0, 1]")
         if max(self.hot_pixel_fraction, self.dead_pixel_fraction) > 1 or self.prnu_sigma > 1:
             raise ValueError("Defect fractions and PRNU sigma must be <= 1")
         if self.dark_rate > 1e15 or self.hot_pixel_e_per_s > 1e15:
@@ -157,6 +160,9 @@ class BayerSensor:
                     raise ValueError("Sensor expectation exceeds supported numerical range")
                 if camera.shot_noise:
                     electrons = np.random.default_rng(np.random.SeedSequence([shot_seed, y])).poisson(electrons)
+                if effects.nonlinearity_compression:
+                    # Monotone charge-to-signal compression, before read electronics.
+                    electrons = electrons / (1 + effects.nonlinearity_compression * electrons / camera.full_well_e)
                 if camera.read_noise and camera.read_noise_e > 0:
                     read = np.random.default_rng(np.random.SeedSequence([read_seed, y]))
                     electrons = electrons + read.normal(0, camera.read_noise_e, size=len(mosaic))
@@ -178,10 +184,12 @@ class BayerSensor:
                 "parameters": asdict(effects),
                 "states": effects.states(),
                 "dark_expectation_e": dark_mean,
+                "nonlinearity_model": "q_out = q / (1 + k*q/full_well_e); after shot, before read; k in [0,1]",
                 "body_seed": camera.stream_seed("sensor_body"),
-                "order": "CFA, PRNU, defects and dark expectations, shot, read, DSNU/FPN, ADC",
+                "order": "CFA, PRNU, defects and dark expectations, shot, charge compression, read, DSNU/FPN, ADC",
                 "noise_profile_limit": (
-                    "DNG NoiseProfile describes baseline temporal noise only; excludes body maps and dark current"
+                    "DNG NoiseProfile describes baseline temporal noise only; "
+                    "excludes body maps, dark current and nonlinear charge response"
                 ),
                 "validation": "Experimental uncalibrated priors; dead sites retain read/offset electronics",
             },

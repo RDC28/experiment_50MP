@@ -519,5 +519,17 @@ accept `ACCEPT_SENSOR_EXPERIMENT` for nonzero effects; disabled feature switches
 zero their corresponding amplitudes. Nonzero effects are uncalibrated experimental
 priors, not recovered sensor properties. Requested zero amplitudes report no-op.
 Dead sites retain read/offset electronics; dark/hot expectations scale with shutter.
-DNG NoiseProfile excludes these extended effects. Nonlinearity, dual conversion
-gain and defect-mask exports are still pending.
+DNG NoiseProfile excludes these extended effects. Dual conversion gain and defect-mask exports are still pending.
+
+
+Experimental sensor nonlinearity: `SensorEffects(nonlinearity_compression=k)`
+(or `SENSOR_VALUES` in Colab) applies the monotone charge-response hypothesis
+`q_out = q / (1 + k*q/full_well_e)` after Poisson shot sampling and before read
+noise, offsets, gain and ADC. The dimensionless coefficient is restricted to
+[0, 1]; zero preserves previous pixels exactly. Nonzero values require the
+notebook's existing explicit sensor-experiment acceptance. The registry and
+manifest label this uncalibrated hypothesis, record its order and report zero
+as no-op. The DNG NoiseProfile remains the baseline temporal approximation and
+does not describe the nonlinear response. This is not measured Sony response,
+charge saturation, or dual conversion gain. Physical and full-scale Colab
+validation remain unresolved.

@@ -1067,3 +1067,22 @@ structure and strip/seed invariance, hot/dead precedence, zero-default equivalen
 config replay and actual tiny paired DNG-to-independent-LibRaw/TIFF validation.
 Notebook validation is static only. No model, notebook, download, full-scale job,
 commit or background service was started.
+
+
+## Full sensor increment: bounded nonlinear charge response
+
+`SensorEffects.nonlinearity_compression` now executes a monotone rational
+charge-to-signal compression after shot sampling and before read electronics.
+The coefficient is an explicit uncalibrated synthetic prior in [0, 1]. Zero
+preserves existing behavior; nonzero execution remains experimental. The shared
+immutable config, JSON schema, notebook structured sensor panel, registry and
+stage manifest retain the value. Reports state the formula, order and baseline
+NoiseProfile limitation. No Sony calibration or scientific acceptance is claimed.
+
+Validation: 372 lightweight v5 tests pass under the shared resource lock,
+including independent deterministic arithmetic, seeded shot/read ordering,
+strip invariance, domain rejection, config replay and tiny paired DNG/LibRaw/TIFF
+roundtrip with nonzero compression. Repository-wide `python -m ruff check .`
+passes. No notebook, model, full-scale processing or background service ran.
+Dual conversion gain, remaining optics/metadata work and real-response/full-scale
+Colab validation remain unresolved. No commits were made.
