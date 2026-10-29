@@ -763,3 +763,27 @@ model, download or full-scale job ran locally. Real HAT/Real-ESRGAN compatibilit
 GPU memory and scientific fidelity remain unresolved Colab-only checks. HDR,
 exposure/profile selection and comparison metrics remain fidelity work before
 learned RAW, extended sensor, optics and final metadata phases.
+
+## Full-resolution paired render metrics (iteration 35)
+
+Sequential paired execution now compares both completed developed TIFFs before
+publishing pair completion. `comparison.compare_renders` uses read-only TIFF
+memmaps and bounded float64 row strips to measure normalized MAE, RMSE, maximum
+absolute error, RGB signed bias, PSNR and endpoint saturation fractions at full
+resolution. No alignment, downsampling, resizing or exposure fit is performed.
+Metrics include sensor margins in the LibRaw visible raster, without DefaultCrop.
+Unequal output shapes explicitly skip metrics. Identical samples report null
+PSNR with an infinity explanation, preserving strict JSON. Mappings close on
+success and failure; comparison errors withhold the pair completion marker.
+
+Validation: independently calculated sparse RGB differences verify every metric
+and strip invariance; tiny actual PNG-to-DNG-to-independent-TIFF paired execution
+verifies identical renders, unequal-shape skips and completion failure handling.
+All 260 lightweight v5 tests pass under the shared lock; repository-wide ruff
+and changed Python formatting checks pass. These are render
+disagreement diagnostics, not source registration, recovered truth, perceptual
+quality or a benchmark acceptance claim. Alignment, licensed reference datasets,
+HDR and joint exposure/profile selection remain fidelity work. Full-scale memory,
+real checkpoint inference and scientific validation remain Colab-only unresolved
+checks. No notebook, model download, real inference, heavy processing, commit or
+background service was started.

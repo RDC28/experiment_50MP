@@ -358,3 +358,14 @@ beyond 512/64 currently fail explicitly. Preflight records readiness rather than
 execution; only a completed pair updates SR effective state to executed. Actual
 checkpoint compatibility, memory use and scientific fidelity remain Colab-only
 unvalidated work.
+
+Paired runs now record full-resolution, unaligned developed-TIFF disagreement
+in `pair_manifest.json`: normalized MAE, RMSE, maximum error, channel bias,
+PSNR and per-render saturation fractions. The comparator memory-maps uint16 RGB
+TIFFs and reads row strips. It includes the whole visible raster, including
+sensor margins, without applying DefaultCrop or fitting exposure. Unequal shapes
+skip metrics explicitly. Identical samples have null PSNR with an infinite-PSNR
+explanation so JSON remains finite. These metrics measure render disagreement,
+not recovered detail or scientific fidelity; equal shapes do not prove scene
+identity or registration. Alignment and benchmark-reference evaluation remain
+pending. A comparison read failure prevents pair completion publication.

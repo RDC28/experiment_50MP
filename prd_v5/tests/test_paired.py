@@ -28,7 +28,9 @@ def test_pair_uses_shared_hypotheses_and_links_completed_bundles(tmp_path):
     output = tmp_path / "pair"
     report = run_analytic_pair(low, high, output, config, camera_selections=selections)
     assert json.loads((output / "pair_manifest.json").read_text()) == report
-    assert report["comparison"]["status"] == "not measured"
+    assert report["comparison"]["status"] == "measured render disagreement"
+    assert report["comparison"]["identical"] is True
+    assert report["comparison"]["rmse"] == 0
     assert report["runs"]["2k"]["source_dimensions"] == [16, 16]
     assert report["runs"]["4k"]["source_dimensions"] == [32, 32]
     for label in ("2k", "4k"):
@@ -81,3 +83,32 @@ def test_pair_rejects_conflicting_selection_before_creating_output(tmp_path):
     with pytest.raises(ValueError, match="disagree"):
         run_analytic_pair("missing2k", "missing4k", output, AnalyticRunConfig(), camera_selections=selections)
     assert not output.exists()
+
+
+def test_pair_reports_unequal_rasters_without_metrics(tmp_path):
+    low, high = tmp_path / "low.png", tmp_path / "high.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(low)
+    Image.new("RGB", (48, 32), (90, 80, 100)).save(high)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    report = run_analytic_pair(low, high, tmp_path / "pair", config)
+    assert report["comparison"]["status"] == "not measured"
+    assert "Unequal raster" in report["comparison"]["reason"]
+    assert "rmse" not in report["comparison"]
+    assert (tmp_path / "pair/pair_manifest.json").exists()
+
+
+def test_comparison_failure_cannot_publish_pair_completion(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+
+    def fail(*args, **kwargs):
+        raise OSError("comparison read failed")
+
+    monkeypatch.setattr("prd_v5.paired.compare_renders", fail)
+    output = tmp_path / "pair"
+    with pytest.raises(OSError, match="comparison read failed"):
+        run_analytic_pair(source, source, output, config)
+    assert (output / "2k/manifest.json").exists()
+    assert (output / "4k/manifest.json").exists()
+    assert not (output / "pair_manifest.json").exists()

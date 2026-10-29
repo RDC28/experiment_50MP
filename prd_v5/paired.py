@@ -7,6 +7,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from prd_v5.comparison import compare_renders
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.fidelity import SRCheckpoint
 from prd_v5.fields import validate_selections
@@ -57,6 +58,9 @@ def run_analytic_pair(
             "source_dimensions": [child["source"]["width"], child["source"]["height"]],
             "output_dimensions": [child["geometry"]["width"], child["geometry"]["height"]],
         }
+    comparison = compare_renders(
+        output / "2k/developed.tiff", output / "4k/developed.tiff", strip_rows=config.strip_rows
+    )
     report = {
         "schema_version": 1,
         "pipeline": (
@@ -73,11 +77,11 @@ def run_analytic_pair(
         },
         "runs": runs,
         "comparison": {
-            "status": "not measured",
+            **comparison,
             "limitations": [
                 "2k and 4k are caller labels; scene identity and registration are not verified",
                 "Shared hypotheses and random stream seeds do not guarantee identical noise residuals",
-                "Different aspect ratios can produce different output rasters; no pixelwise metrics computed",
+                "Unequal raster shapes skip metrics; equal shapes do not establish scene registration",
                 "Scientific source-support versus generated-detail comparison remains pending",
             ],
         },
