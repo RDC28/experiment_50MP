@@ -1309,3 +1309,25 @@ lens inversion or complete full-optics implementation is claimed.
 Validation: 453 lightweight v5 tests pass under the shared machine lock;
 repository-wide `python -m ruff check .`, changed-Python formatting and
 `git diff --check` pass. No local full-scale execution was performed.
+
+## Shared paired and Colab distortion controls (iteration 12)
+
+The notebook now exposes all four backward-map coefficients through
+`DISTORTION_VALUES`, retains zero-effect defaults and requires the shared
+experimental optics acceptance for nonzero execution. Disabling
+`ENABLE_DISTORTION` selects identity without losing requested parameters in
+effective-state reporting. Both runs reuse the immutable shared configuration.
+Paired manifests expose each child's completed distortion stage, and notebook
+state references that evidence only after successful pair completion.
+
+A tiny paired edge-image test independently reads both DNGs with LibRaw,
+requires TIFF outputs, observes an ADC change against identity and verifies
+identical paired renders for identical inputs. Static notebook JSON/schema and
+AST checks verify controls, shared dispatch and completion gating without local
+notebook execution. Physical calibration, antialiasing, flux correction and
+full-scale memory/I/O validation remain unresolved Colab-only work; other full
+optics effects remain pending.
+
+Validation: 455 lightweight v5 tests pass under the shared machine lock;
+repository-wide ruff, changed-Python formatting and whitespace checks pass.
+No full-scale execution, model downloads or inference were performed locally.

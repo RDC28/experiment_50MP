@@ -204,3 +204,23 @@ def test_notebook_vignetting_controls_are_shared_and_completion_gated():
     assert "if not ENABLE_VIGNETTING:" in execution
     assert execution.index("result = run_analytic_pair(") < execution.index('states["ENABLE_VIGNETTING"]')
     assert 'result["runs"]["4k"]["optics"]' in execution
+
+
+def test_notebook_distortion_controls_are_shared_and_completion_gated():
+    from prd_v5.optics import Distortion
+
+    notebook, values = assignments()
+    assert Distortion(**values["DISTORTION_VALUES"]) == Distortion()
+    execution = notebook.cells[-1].source
+    tree = ast.parse(execution)
+    call = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "AnalyticRunConfig"
+    )
+    keywords = {k.arg: ast.unparse(k.value) for k in call.keywords}
+    assert keywords["distortion"] == "distortion"
+    assert keywords["accept_experimental_optics"] == "ACCEPT_OPTICS_EXPERIMENT"
+    assert "if not ENABLE_DISTORTION:" in execution
+    assert execution.index("result = run_analytic_pair(") < execution.index('states["ENABLE_DISTORTION"]')
+    assert 'result["runs"]["4k"]["distortion"]' in execution

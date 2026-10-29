@@ -603,7 +603,7 @@ or notebook. It does not estimate lenses, invert a measured projection, conserve
 flux via a Jacobian, or perform antialiasing. Full-scale memory/I/O and physical
 validation remain Colab-only work.
 
-Single-run experimental distortion is available with
+Single-run and paired experimental distortion is available with
 `AnalyticRunConfig(distortion=Distortion(k1=0.1, p1=0.01),
 accept_experimental_optics=True)` from `prd_v5.optics`. All four coefficients
 (`k1`, `k2`, `p1`, `p2`) serialize in config.json and the JSON schema. The backward
@@ -612,5 +612,9 @@ Nonzero coefficients require another 12 bytes per target photosite of scratch
 disk; zero coefficients bypass the mapping and allocate no extra scratch.
 Stage evidence and per-coefficient synthetic registry records distinguish
 execution from the zero-effect bypass. This is an uncalibrated resampling prior,
-not calibrated lens inversion. Notebook/panel controls and paired completion
-reporting remain pending, as do full-scale Colab and physical validation.
+not calibrated lens inversion. In Colab, edit `DISTORTION_VALUES` and explicitly
+set `ACCEPT_OPTICS_EXPERIMENT=True` for nonzero coefficients.
+`ENABLE_DISTORTION=False` bypasses the requested coefficients. Both child runs
+share the immutable configuration; completion-gated effective state links to
+paired distortion stage evidence. Full-scale Colab and physical validation remain
+pending.

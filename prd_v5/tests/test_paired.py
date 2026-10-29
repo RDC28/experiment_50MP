@@ -178,3 +178,32 @@ def test_pair_executes_shared_vignetting_before_independent_roundtrip(tmp_path):
         assert np.mean(after - black) < np.mean(before - black)
         assert after[0, 0] < after[16, 16]
     assert report["comparison"]["identical"] is True
+
+
+def test_pair_executes_shared_distortion_before_independent_roundtrip(tmp_path):
+    import numpy as np
+    import rawpy
+
+    from prd_v5.optics import Distortion
+
+    source = tmp_path / "edge.png"
+    image = np.zeros((32, 32, 3), dtype=np.uint8)
+    image[:, 17:] = 180
+    Image.fromarray(image).save(source)
+    base = dict(target_megapixels=0.001024, assume_unprofiled_srgb=True, strip_rows=3)
+    neutral = run_analytic_pair(source, source, tmp_path / "neutral", AnalyticRunConfig(**base))
+    config = AnalyticRunConfig(**base, distortion=Distortion(k1=0.2), accept_experimental_optics=True)
+    report = run_analytic_pair(source, source, tmp_path / "warped", config)
+    assert report["shared_config"]["distortion"] == {"k1": 0.2, "k2": 0.0, "p1": 0.0, "p2": 0.0}
+    for label in ("2k", "4k"):
+        stage = report["runs"][label]["distortion"]
+        assert stage["status"] == "experimental"
+        assert stage["changed_pixels"] > 0
+        assert neutral["runs"][label]["distortion"]["status"] == "zero_effect"
+        with rawpy.imread(str(tmp_path / "neutral" / label / "capture.dng")) as raw:
+            before = raw.raw_image_visible.copy()
+        with rawpy.imread(str(tmp_path / "warped" / label / "capture.dng")) as raw:
+            after = raw.raw_image_visible.copy()
+        assert np.count_nonzero(before != after) > 0
+        assert (tmp_path / "warped" / label / "developed.tiff").is_file()
+    assert report["comparison"]["identical"] is True

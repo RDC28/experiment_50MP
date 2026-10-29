@@ -64,6 +64,7 @@ def run_analytic_pair(
         runs[label] = {
             "learned_raw": child["stages"]["learned_raw"],
             "optics": child["stages"]["optics"],
+            "distortion": child["stages"]["distortion"],
             "manifest": f"{label}/manifest.json",
             "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
             "source_sha256": child["source"]["sha256"],
