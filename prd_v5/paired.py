@@ -12,6 +12,7 @@ from prd_v5.config import AnalyticRunConfig
 from prd_v5.fidelity import SRCheckpoint
 from prd_v5.fields import validate_selections
 from prd_v5.hypothesis import CameraField
+from prd_v5.learned import ResidualAdapter, resolve_mode
 
 
 def run_analytic_pair(
@@ -23,6 +24,8 @@ def run_analytic_pair(
     camera_selections: tuple[CameraField, ...] = (),
     isp_selections: tuple[CameraField, ...] = (),
     sr_checkpoint: SRCheckpoint | None = None,
+    inverse_mode: str = "ANALYTIC",
+    residual_adapter: ResidualAdapter | None = None,
     comparison_region: tuple[int, int, int, int] | None = None,
 ) -> dict:
     """Run caller-labelled variants sequentially using exactly the same config.
@@ -36,6 +39,7 @@ def run_analytic_pair(
     """
     if not isinstance(config, AnalyticRunConfig):
         raise ValueError("Expected one validated AnalyticRunConfig")
+    learned_state = resolve_mode(inverse_mode, residual_adapter, config.camera)
     validate_region(comparison_region)
     camera_selections = tuple(camera_selections)
     isp_selections = tuple(isp_selections)
@@ -53,9 +57,12 @@ def run_analytic_pair(
             camera_selections=camera_selections,
             isp_selections=isp_selections,
             sr_checkpoint=sr_checkpoint,
+            inverse_mode=inverse_mode,
+            residual_adapter=residual_adapter,
         )
         manifest = output / label / "manifest.json"
         runs[label] = {
+            "learned_raw": child["stages"]["learned_raw"],
             "manifest": f"{label}/manifest.json",
             "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
             "source_sha256": child["source"]["sha256"],
@@ -77,17 +84,23 @@ def run_analytic_pair(
     )
     report = {
         "schema_version": 1,
-        "pipeline": (
+        "pipeline": "sequential experimental learned residual pair"
+        if residual_adapter is not None
+        else (
             "sequential checkpoint SR plus analytic source-resolution pair"
             if sr_checkpoint is not None
             else "sequential analytic source-resolution pair; no learned inference"
         ),
         "shared_config": json.loads(config.to_json()),
+        "inverse_isp": {**learned_state, "status": runs["4k"]["learned_raw"]["status"]},
         "shared_camera": asdict(config.camera),
         "shared_checkpoint": checkpoint_evidence,
         "replay": {
-            "additional_checkpoint_required": sr_checkpoint is not None,
-            "limitation": "Shared config stores analytic settings only; SR replay also requires checkpoint bytes",
+            "additional_checkpoint_required": sr_checkpoint is not None or residual_adapter is not None,
+            "limitation": (
+                "Shared config stores analytic settings only; replay requires SR bytes "
+                "and any caller-loaded residual adapter"
+            ),
         },
         "runs": runs,
         "comparison": {

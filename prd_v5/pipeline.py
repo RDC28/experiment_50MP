@@ -19,6 +19,7 @@ from prd_v5.fields import validate_selections
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.inputs import InputInspector
+from prd_v5.learned import ResidualAdapter, apply_residual, resolve_mode
 from prd_v5.raster import rasterize
 from prd_v5.registry import analytic_registry
 from prd_v5.report import render_report
@@ -43,6 +44,8 @@ def run_analytic(
     camera_selections: tuple[CameraField, ...] = (),
     isp_selections: tuple[CameraField, ...] = (),
     sr_checkpoint: SRCheckpoint | None = None,
+    inverse_mode: str = "ANALYTIC",
+    residual_adapter: ResidualAdapter | None = None,
 ) -> dict:
     """Run explicit bilinear/analytic MVP, never an implicit learned fallback.
 
@@ -56,6 +59,7 @@ def run_analytic(
     can be supplied to sequential source-resolution runs. Full-scale execution
     belongs in Colab with explicit memory budgets, never on the development Mac.
     """
+    resolve_mode(inverse_mode, residual_adapter, camera)
     if isp is None:
         isp = AnalyticISP()
     # Save executable settings, including actual hypotheses rather than a seed
@@ -130,6 +134,7 @@ def run_analytic(
                 stages["raster"]["learned_super_resolution"] = sr_checkpoint.backend
             clean = allocate("clean", np.float32, (*shape, 3))
             stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows)
+            stages["learned_raw"] = apply_residual(rgb, clean, camera, residual_adapter, mode=inverse_mode)
             adc = allocate("adc", np.uint16, shape)
             stages["sensor"] = BayerSensor(camera).process(clean, adc, strip_rows=strip_rows)
             stages["dng"] = write_dng(output / "capture.dng", adc, camera, geometry, isp, strip_rows=strip_rows)
@@ -180,14 +185,18 @@ def run_analytic(
         artifacts[name] = {"sha256": digest.hexdigest(), "size_bytes": path.stat().st_size}
     report = {
         "schema_version": 1,
-        "pipeline": (
+        "pipeline": "experimental learned residual over analytic baseline"
+        if residual_adapter is not None
+        else (
             "verified checkpoint SR with bilinear geometry and analytic inverse ISP"
             if sr_checkpoint is not None
             else "analytic MVP with explicit bilinear resampling; no learned inference"
         ),
         "replay": {
             "config_scope": "analytic settings only",
-            "additional_checkpoint_required": sr_checkpoint is not None,
+            "additional_checkpoint_required": sr_checkpoint is not None or residual_adapter is not None,
+            "inverse_isp": stages["learned_raw"],
+            "residual_replay": "Requires same caller-loaded adapter; config stores analytic baseline only",
             "checkpoint_evidence": "stages.super_resolution.checkpoint" if sr_checkpoint is not None else None,
         },
         "runtime": runtime_record(),

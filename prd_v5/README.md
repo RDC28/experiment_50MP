@@ -483,3 +483,28 @@ and parameters survive in both manifests and replay configs. No empty headroom
 is reserved: sensor saturation and the unchanged 14-bit ADC may clip expanded
 values. Learned HDR remains unavailable. Full-scale and visual validation are
 Colab-only and have not run.
+
+Experimental learned RAW dispatch accepts a caller-loaded `ResidualAdapter` via
+`AnalyticRunConfig.run` or `run_analytic_pair(inverse_mode=..., residual_adapter=...)`.
+Modes are ANALYTIC, HYBRID and LEARNED_RGB2RAW. HYBRID without an adapter records
+an analytic fallback and explicit learned skip; strict learned mode requires an
+adapter before source I/O. No RAW-Flow, SpiralDiff or RAW-Diffusion loader or
+compatible camera-adapted checkpoint is bundled or claimed available.
+
+Adapters must explicitly accept experimental execution and checkpoint licence,
+verify SHA-256 bytes and match `learned.camera_domain(camera)`. The deterministic
+callable receives bounded encoded-sRGB/clean-camera tiles, absolute coordinates
+and the frozen camera. It returns a camera-RGB residual in base-ISO-full-well
+units and per-pixel confidence in [0,1]. Confidence below 0.5 is rejected; other
+residuals are confidence-weighted, negative expectations floored, then CFA and
+physical stochastic noise run separately. This is always an analytic baseline
+plus residual, including strict mode. Confidence is not calibrated probability.
+Manifest records pixel effects, zero effects, checkpoint/domain and replay limits.
+The callable/checkpoint relationship remains the loader author's responsibility.
+
+The notebook exposes `RESIDUAL_ADAPTER=None` and dispatches requested modes.
+With an adapter it currently requires RAW_TILE=1024 and RAW_OVERLAP=0;
+default requested 1024/128 remains preserved for future halo-aware research
+loaders. Generic nonoverlapping tiles do not certify seam-free semantic models.
+No official architecture compatibility, real model inference, camera adaptation,
+scientific benchmark quality or full-scale Colab acceptance has been validated.

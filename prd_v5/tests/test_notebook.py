@@ -148,3 +148,14 @@ def test_notebook_dispatches_optional_native_crop_without_changing_default():
     expression = compile(ast.Expression(region), "<notebook crop argument>", "eval")
     for selected in (None, (0, 1, 4, 5)):
         assert eval(expression, {"COMPARISON_REGION": selected}) == selected
+
+
+def test_notebook_residual_dispatch_and_completion_evidence():
+    notebook, values = assignments()
+    assert values["RESIDUAL_ADAPTER"] is None
+    execution = notebook.cells[-1].source
+    assert "resolve_mode(execution_mode, RESIDUAL_ADAPTER, camera)" in execution
+    assert "inverse_mode=execution_mode" in execution
+    assert "residual_adapter=RESIDUAL_ADAPTER" in execution
+    assert execution.index("result = run_analytic_pair(") < execution.index('states["INVERSE_ISP_MODE"] = result')
+    assert "RAW_OVERLAP) != (1024, 0)" in execution

@@ -11,6 +11,7 @@ from prd_v5.analytic import AnalyticISP
 from prd_v5.fidelity import SRCheckpoint
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField, CameraHypothesis
+from prd_v5.learned import ResidualAdapter
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,8 @@ class AnalyticRunConfig:
         camera_selections: tuple[CameraField, ...] = (),
         isp_selections: tuple[CameraField, ...] = (),
         sr_checkpoint: SRCheckpoint | None = None,
+        inverse_mode: str = "ANALYTIC",
+        residual_adapter: ResidualAdapter | None = None,
     ) -> dict:
         """Execute the bounded analytic pipeline with exactly these settings."""
         from prd_v5.pipeline import run_analytic
@@ -109,6 +112,8 @@ class AnalyticRunConfig:
             camera_selections=camera_selections,
             isp_selections=isp_selections,
             sr_checkpoint=sr_checkpoint,
+            inverse_mode=inverse_mode,
+            residual_adapter=residual_adapter,
             target_megapixels=self.target_megapixels,
             geometry_mode=self.geometry_mode,
             native_fit_policy=self.native_fit_policy,

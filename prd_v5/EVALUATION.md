@@ -1000,3 +1000,37 @@ tiny real paired DNG/LibRaw/TIFF outputs with independently calculated ADC value
 No notebook, download, real inference, heavy processing or background service ran.
 Learned RAW, full sensor/optics, final metadata and benchmark acceptance remain
 pending in roadmap order.
+
+## Learned RAW residual dispatch (iteration 47)
+
+Implemented executable experimental camera-aware residual dispatch through the
+single-run pipeline, shared paired configuration and single Colab notebook.
+Immutable checkpoint/domain contracts verify bytes, normalization, exact camera
+hypotheses and explicit licence/experimental acceptance. Bounded deterministic
+tiles produce clean camera-space residuals and confidence before CFA/electron
+noise. Confidence gating, weighting, nonnegative flooring and zero-effect counts
+are recorded. ANALYTIC rejects an accidental adapter, HYBRID explicitly skips
+missing adapters and LEARNED_RGB2RAW fails before source I/O without one. Strict
+mode still uses the specified analytic-plus-residual architecture. Saved config
+contains the analytic baseline; replay additionally needs the caller-loaded
+adapter. Pair/child manifests retain requested/effective execution evidence.
+
+No compatible RAW-Flow/SpiralDiff/RAW-Diffusion loader or camera-adapted weights
+are supplied or certified. The generic contract cannot verify that a callable
+uses the declared checkpoint. Model-specific normalization, camera adaptation,
+halo/overlap inference and licensed genuine-RAW benchmark validation remain
+research integrations. Notebook defaults preserve requested RAW 1024/128; an
+explicit generic adapter requires 1024/0 and experimental acceptance, preventing
+an unsupported overlap request from silently executing. Default missing-adapter
+HYBRID runs visibly retain analytic execution. Full sensor, optics and metadata
+are the next ordered phases; full-scale/model/scientific checks remain Colab-only.
+
+Validation uses tiny model doubles only: numerical confidence gating, absolute
+tile coordinates, checkpoint/domain/normalization rejection, malformed outputs,
+strict pre-I/O failure, paired PNG-to-DNG-to-independent-LibRaw/TIFF with measured
+ADC changes and manifest evidence, notebook syntax/wiring and failure cleanup.
+No notebook, research model, download, heavy job or background service ran.
+
+All 349 lightweight v5 tests passed under the shared test lock. Repository-wide
+ruff, changed Python formatting and diff whitespace checks passed. No commits
+or background processes were created.
