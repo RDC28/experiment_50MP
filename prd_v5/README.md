@@ -574,11 +574,17 @@ written after paired completion; per-run registry records retain both regimes,
 selection and zero-effect evidence. No measured Sony profile is bundled.
 
 
-Single-run experimental vignetting is available through
+Single-run and paired experimental vignetting is available through
 `AnalyticRunConfig(vignetting=Vignetting(corner_strength=0.4),
 accept_experimental_optics=True)` with `Vignetting` imported from `prd_v5.optics`.
 The saved config replays the effect before CFA and noise. Zero is the default.
 This uncalibrated forward shading prior does not remove shading in the source.
 JSON/HTML evidence reports actual attenuation and scientific limits. The extra
 working float32 RGB mapping requires 12 bytes per target photosite of scratch disk.
-Paired-run and notebook field integration remain pending.
+In Colab, set `VIGNETTING_VALUES["corner_strength"]` in [0, 1] and
+`ACCEPT_OPTICS_EXPERIMENT=True` for nonzero attenuation. `ENABLE_VIGNETTING=False`
+uses zero attenuation while retaining requested parameters in effective.json.
+Defaults request vignetting with zero effect. Completion-gated evidence links
+the executed stage, and both sources use the same immutable configuration.
+The catalogue Vignetting field remains descriptive; use these explicit controls.
+Full-scale memory and physical validation remain Colab-only and unresolved.

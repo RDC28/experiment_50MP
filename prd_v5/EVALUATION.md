@@ -17,7 +17,7 @@ independently calculate every output pixel, verifying center/corner behavior,
 symmetry, HDR retention, strip invariance, persisted output, zero defaults and
 invalid-buffer/acceptance/domain rejection. Repository-wide ruff passes.
 Pipeline, shared config and schema integration are implemented below. Paired-run
-and notebook field integration remain pending. Distortion, CA, spatial PSF, diffraction,
+and notebook controls are integrated below. Distortion, CA, spatial PSF, diffraction,
 defocus and motion remain next optics work before final metadata. Full-scale
 memory and physical validation remain unresolved Colab-only work. No notebook,
 model, download, full-frame job, background service or commit was started.
@@ -1243,3 +1243,21 @@ v5 tests pass under the shared lock; repository-wide ruff, changed Python format
 and diff whitespace checks pass. Paired-run/notebook controls, other optical
 effects, full-scale memory/I/O and scientific calibration remain pending. No
 notebook, inference, download, full-scale job, service or commit ran.
+
+## Shared paired and Colab vignetting controls (iteration 9)
+
+The single v5 notebook now passes `VIGNETTING_VALUES`, the enable switch and
+explicit experimental acceptance into one immutable shared configuration.
+Zero defaults preserve existing pixels. Disabled execution retains requested
+parameters while reporting zero effect. After successful paired completion,
+`effective.json` records the actual 4K stage evidence; both child stage records
+are linked in the pair manifest. The catalogue field remains descriptive, with
+explicit coefficient controls documented in README rather than inferred calibration.
+
+Tiny real paired DNG/LibRaw/TIFF tests verify shared nonzero attenuation, lower
+RAW signal, corner fall-off, zero baseline and identical developed source pairs.
+Notebook JSON/schema and AST checks verify defaults, dispatch and completion gating.
+All 416 v5 tests pass under the shared lock; repository-wide ruff passes.
+Distortion, CA, PSF, diffraction, defocus, motion and final metadata remain pending.
+Full-scale memory, GPU/model and physical validation remain unresolved Colab work.
+No notebook execution, model download, heavy processing or commit was performed.

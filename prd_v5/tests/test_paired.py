@@ -150,3 +150,31 @@ def test_out_of_bounds_crop_prevents_pair_completion(tmp_path):
     assert (output / "2k/manifest.json").exists()
     assert (output / "4k/manifest.json").exists()
     assert not (output / "pair_manifest.json").exists()
+
+
+def test_pair_executes_shared_vignetting_before_independent_roundtrip(tmp_path):
+    import numpy as np
+    import rawpy
+
+    from prd_v5.optics import Vignetting
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (128, 128, 128)).save(source)
+    base = dict(target_megapixels=0.001024, assume_unprofiled_srgb=True, strip_rows=3)
+    neutral = run_analytic_pair(source, source, tmp_path / "neutral", AnalyticRunConfig(**base))
+    config = AnalyticRunConfig(**base, vignetting=Vignetting(0.5), accept_experimental_optics=True)
+    report = run_analytic_pair(source, source, tmp_path / "attenuated", config)
+    assert report["shared_config"]["vignetting"] == {"corner_strength": 0.5}
+    for label in ("2k", "4k"):
+        stage = report["runs"][label]["optics"]
+        assert stage["status"] == "experimental"
+        assert stage["changed_pixels"] == 1024
+        assert neutral["runs"][label]["optics"]["status"] == "zero_effect"
+        with rawpy.imread(str(tmp_path / "neutral" / label / "capture.dng")) as raw:
+            before = raw.raw_image_visible.copy().astype(float)
+        with rawpy.imread(str(tmp_path / "attenuated" / label / "capture.dng")) as raw:
+            after = raw.raw_image_visible.copy().astype(float)
+        black = config.camera.black_level
+        assert np.mean(after - black) < np.mean(before - black)
+        assert after[0, 0] < after[16, 16]
+    assert report["comparison"]["identical"] is True

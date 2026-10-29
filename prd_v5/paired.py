@@ -63,6 +63,7 @@ def run_analytic_pair(
         manifest = output / label / "manifest.json"
         runs[label] = {
             "learned_raw": child["stages"]["learned_raw"],
+            "optics": child["stages"]["optics"],
             "manifest": f"{label}/manifest.json",
             "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
             "source_sha256": child["source"]["sha256"],
