@@ -127,3 +127,22 @@ pipeline defaults are unchanged. No images, models, notebooks or full-suite test
 ran. Rasterization, bounded pixel processing, DNG/rawpy/TIFF roundtrip, complete
 configuration/registry and the Colab notebook remain pending within MVP; all
 later phases and Colab-only scientific/performance checks remain pending.
+
+## Implementation evidence: MVP source headers and identity
+
+`prd_v5/inputs.py` provides bounded 1 MiB streaming file hashing and JPEG/PNG
+header inspection without pixel decode. Source records contain dimensions,
+encoded precision, byte count, ICC digest/description, EXIF presence and an
+explicit colour policy. Unprofiled RGB remains unresolved unless the caller
+explicitly assumes sRGB. Embedded ICC always requires a transform; malformed
+profiles are blocked. Alpha, non-RGB modes and 16-bit PNG are rejected until
+explicit compositing/precision-preserving decoding exists. No private EXIF
+values are copied. Header inspection does not certify file integrity, clipping,
+scene radiance or camera metadata, and is not an implemented ICC transform.
+
+Validation: all 56 lightweight v5 tests passed, including 10 new source tests
+for JPEG/PNG identity, JSON records, valid/invalid ICC, unsupported modes,
+explicit assumptions, no pixel decode and private EXIF omission.
+Repository-wide ruff passed. Python formatting is checked separately from the
+immutable PRD. Source decode/diagnostics and full-scale Colab validation remain
+pending, along with the rest of the MVP and later phases.

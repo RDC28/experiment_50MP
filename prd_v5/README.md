@@ -24,9 +24,16 @@ explicit source crops and sensor margins, CFA-aligned DNG crop metadata and
 individual buffer byte budgets. Outpaint plans identify required generated
 bands as not executed. This planner performs no image reconstruction or padding.
 
+`inputs.py` adds header-only JPEG/PNG source inspection with streaming SHA-256,
+encoded dimensions/precision, ICC hash/description and explicit colour policy.
+Unprofiled RGB needs an explicit sRGB assumption; embedded ICC requires a future
+transform and malformed ICC is blocked. Alpha and unsupported pixel modes are
+rejected. EXIF presence is recorded without copying private identity. This is
+not pixel decoding, clipping diagnostics, or source integrity certification.
+
 ## Pending
 
-The remaining MVP config, complete registry, input inspection, bounded
+The remaining MVP config, complete registry, source decoding/diagnostics/ICC transforms, bounded
 pixel pipeline, DNG/rawpy/TIFF roundtrip, reports and new Colab notebook are not
 implemented yet. Fidelity, learned RAW, full sensor, full optics and final
 metadata follow MVP in that order. No HAT, HDR model or learned RAW checkpoint is
@@ -42,7 +49,7 @@ python -m pytest prd_v5/tests -q
 python -m ruff check .
 ```
 
-These camera and geometry tests allocate no image arrays and download no models. Run any full suite
+These tests use tiny source fixtures and camera/geometry arithmetic, with no model downloads. Run any full suite
 only through `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
 ## Colab execution
