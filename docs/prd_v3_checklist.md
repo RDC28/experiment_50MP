@@ -41,7 +41,7 @@ development laptop.
 | WB inference/manual override | Tested locally | `white_balance.WhiteBalanceEstimator` (`manual_cct`, `manual_tint`, `user_override` recorded) | `test_white_balance.py` |
 | Exposure posterior rather than fake certainty | Tested locally | `exposure.ExposurePosteriorEstimator` (candidate set with weights) | `test_exposure.py` |
 | Optional geometry/lens inference | Tested locally | `camera_geometry.CameraGeometryEstimator` (FOV hypothesis, never lens identification) | `test_camera_geometry.py` |
-| Expected-electron representation | Tested locally | `sensor.ElectronSignalSimulator`; `exposure.exposure_and_gain` keeps the HDR highlight headroom below full well and sets the analogue gain from the posterior ISO | `test_sensor.py`, `test_synthraw_pipeline.py` |
+| Expected-electron representation | Tested locally | `sensor.ElectronSignalSimulator`; `exposure.exposure_and_gain` places the brightest reconstructed HDR value 0.5 EV below full well, records the push as BaselineExposure and sets the analogue gain from the posterior ISO | `test_sensor.py`, `test_synthraw_pipeline.py` |
 | Shot noise | Tested locally | `sensor.SensorNoiseSimulator` (`SHOT_NOISE`) | `test_sensor.py`, `test_validation.py` |
 | Read noise | Tested locally | `sensor.SensorNoiseSimulator` (`READ_NOISE`) | `test_sensor.py` |
 | PRNU/DSNU/FPN toggles | Tested locally | `PRNU`, `DSNU`, `ROW_FPN`, `COLUMN_FPN`, `DARK_CURRENT`, `HOT_PIXELS`, `DEAD_PIXELS` in `SensorNoiseSimulator` | `test_sensor.py` |
@@ -75,7 +75,7 @@ development laptop.
 | `SONY_A1II_NATIVE` | Tested locally | 8640 × 5760 plan with the outpaint, crop or margin policy recorded in `geometry_plan.json` | `test_geometry.py`, `test_sr_run.py` |
 | `CINEMA_50MP_VIRTUAL` | Tested locally | `config` forces `TARGET_PROFILE = "CINEMA_50MP_VIRTUAL"`; profile names say "Virtual Cinema" | `test_synthraw_config.py`, `test_camera_profile.py`, `test_dng_metadata.py` |
 | `SR_BACKEND` | Pending Colab (learned backends); Lanczos tested locally | `SuperResolutionEngine` with `diagnose_source_fidelity` measuring the source-scale downsample | `test_synthraw_super_resolution.py`, `test_sr_run.py` |
-| `GENERATIVE_DETAIL_STRENGTH` | Not implemented | No generative detail backend exists (SUPIR is a gated stub). A value above 0 is recorded as an SR fallback saying it was ignored. `generated_detail_mask.npy` is still written, covering outpainted pixels only | `test_sr_run.py`, `test_sensor_canvas.py` |
+| `GENERATIVE_DETAIL_STRENGTH` | Not implemented | No generative detail backend exists (SUPIR is a gated stub). A value above 0 is recorded as an SR fallback saying it was ignored. `generated_detail_mask.npy` is still written and marks learned-SR content only; outpainted pixels are in `outpaint_mask.npy` | `test_sr_run.py`, `test_sensor_canvas.py` |
 | `HDR_ENABLED` | Tested locally | Created radiance tracked by `highlight_fabricated_mask` and `shadow_fabricated_mask`; `HDRValidator` | `test_hdr.py`, `test_validation.py` |
 | `HDR_*_EV` | Tested locally | Nonnegative EV enforced in `config`; `NumericHealthValidator` rejects negative/NaN radiance | `test_synthraw_config.py`, `test_hdr.py`, `test_validation.py` |
 | `USE_RAW_FLOW` | Gated stub | Falls back to PHYSICS; camera domain labelled "cross-camera prior; not a Sony alpha 1 II model" | `test_experimental.py` |
