@@ -62,7 +62,7 @@ or a precision-preserving 16-bit source decoder.
 
 ## Pending
 
-The remaining MVP config, complete registry, pipeline orchestration, reports and new Colab notebook are not
+The remaining MVP config, complete registry, HTML reports and new Colab notebook are not
 implemented yet. Fidelity, learned RAW, full sensor, full optics and final
 metadata follow MVP in that order. No HAT, HDR model or learned RAW checkpoint is
 executed by this foundation. Upstream checkpoint and scientific limitations in
@@ -120,5 +120,10 @@ completion manifest. Existing output directories are rejected. This explicit
 analytic API is not the forthcoming full PRD configuration or a learned fallback.
 It defaults to 50 MP but rejects that size under its conservative development
 memory budget. Full-scale calls require explicit Colab budgets. The source must
-remain unchanged during a call. Support masks are temporary; packaged masks,
-HTML reports and the notebook remain pending.
+remain unchanged during a call. The bundle also retains `source_support.npy`, a boolean full-sensor geometry mask
+written in strips and included in manifest hashes. Load it with
+`numpy.load(path, mmap_mode="r", allow_pickle=False)` to avoid a full-frame
+allocation. True means source-supported pixel-center geometry; false means a
+sensor margin. This is not a clipping mask or confidence in recovered detail.
+Its coordinates precede DNG crop and TIFF development. HTML reports, additional
+uncertainty masks and the notebook remain pending.

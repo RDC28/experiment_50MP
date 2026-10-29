@@ -90,11 +90,22 @@ def run_analytic(
                 isp,
                 max_working_bytes=max_develop_bytes,
             )
+            # Export only after the independent image gate, without materializing
+            # the full mask in RAM. NPY preserves boolean dtype and raster shape.
+            packaged_support = np.lib.format.open_memmap(
+                output / "source_support.npy", mode="w+", dtype=np.bool_, shape=shape
+            )
+            try:
+                for start in range(0, shape[0], strip_rows):
+                    packaged_support[start : start + strip_rows] = support[start : start + strip_rows]
+                packaged_support.flush()
+            finally:
+                packaged_support._mmap.close()
         finally:
             for array in reversed(arrays):
                 array._mmap.close()
     artifacts = {}
-    for name in ("capture.dng", "developed.tiff"):
+    for name in ("capture.dng", "developed.tiff", "source_support.npy"):
         path = output / name
         digest = hashlib.sha256()
         with path.open("rb") as stream:
@@ -111,6 +122,18 @@ def run_analytic(
         "isp": asdict(isp),
         "stages": stages,
         "artifacts": artifacts,
+        "masks": {
+            "source_support": {
+                "artifact": "source_support.npy",
+                "dtype": "bool",
+                "shape": [geometry.height, geometry.width],
+                "coordinates": "full sensor raster, before DNG crop or TIFF development",
+                "true": "pixel center lies within source-supported geometry",
+                "false": "sensor margin with no source support",
+                "supported_pixels": stages["raster"]["source_supported_pixels"],
+                "limitations": "Geometry support only; not recovered-truth, clipping or learned-detail confidence",
+            }
+        },
         "limits": {
             "strip_rows": strip_rows,
             "max_decode_bytes": max_decode_bytes,

@@ -299,3 +299,22 @@ and injected-stage failure cleanup. All 113 v5 tests and repository-wide ruff
 pass. No full suite, model, notebook, full-frame job or background service ran.
 Complete configuration, packaged masks/reports and the notebook remain MVP work;
 all later phases and full-scale Colab acceptance remain pending.
+
+
+## Implementation evidence: eleventh MVP increment
+
+The analytic runner now packages `source_support.npy` after successful independent
+DNG/TIFF validation. Strip copying into a boolean NPY memmap retains the existing
+geometry support without allocating a full-frame RAM mask. The completion manifest
+records its hash, size, dtype, shape, supported count and full-sensor coordinate
+semantics. False means an unsupported sensor margin; this mask makes no clipping,
+learned-detail confidence or recovered-truth claim. Failed mask exports cannot
+produce a completion manifest, and temporary stage arrays are still removed.
+
+Validation: the tiny source-to-TIFF test reopens the packaged mask without pickle,
+checks shape/dtype/support count and all artifact hashes. A new export-failure
+test checks absence of completion and scratch arrays. All 114 v5 tests and
+repository-wide ruff pass. No full suite, notebook, full-frame job, model or
+background process ran. Remaining MVP work includes complete config/registry,
+HTML reports, further uncertainty masks and the notebook. Later ordered phases
+and full-scale Colab/scientific validation remain pending.
