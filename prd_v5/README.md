@@ -107,3 +107,18 @@ LibRaw allocates whole-frame buffers: a configurable 64-byte/photosite admission
 estimate defaults to 512 MiB, rejecting 50 MP until explicitly raised in Colab.
 This is not a peak RSS guarantee. Adobe conformance, calibrated colour accuracy
 and full-size Colab validation remain unmeasured.
+
+## Analytic MVP runner
+
+`prd_v5.pipeline.run_analytic(source_path, new_output_dir, camera, ...)` now
+connects decoding, bilinear geometry, inverse ISP, CFA/electron noise/ADC, DNG
+and independent LibRaw TIFF validation. Supply the same `CameraHypothesis` to
+sequential input runs. The new output directory contains DNG, TIFF and a JSON
+completion manifest with hashes, stage reports and the current partial registry.
+Temporary memmaps are closed and removed even on failure; failed runs have no
+completion manifest. Existing output directories are rejected. This explicit
+analytic API is not the forthcoming full PRD configuration or a learned fallback.
+It defaults to 50 MP but rejects that size under its conservative development
+memory budget. Full-scale calls require explicit Colab budgets. The source must
+remain unchanged during a call. Support masks are temporary; packaged masks,
+HTML reports and the notebook remain pending.

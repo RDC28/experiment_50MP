@@ -279,3 +279,23 @@ environment. No full suite, model, notebook or full-frame job ran. Full-scale
 Colab memory/decode checks, Adobe conformance and scientific colour accuracy
 remain unmeasured. Configuration, orchestration/reports and the notebook remain
 MVP work before fidelity.
+
+## Implementation evidence: tenth MVP increment
+
+`pipeline.run_analytic` provides a single executable source-to-DNG-to-independent
+TIFF path using the existing bounded stages and one caller-supplied immutable
+camera hypothesis. It requires a new output directory, admits decoder/LibRaw
+budgets before allocation, closes and removes temporary memmaps on all paths,
+and writes a completion manifest only after successful exports. The JSON carries
+geometry, camera/ISP state, partial provenance registry, stage validation reports,
+resource limits and streaming SHA-256 hashes of both deliverables. This is an
+explicit bilinear analytic runner, not a claimed HAT/hybrid implementation or the
+complete PRD configuration. Scientific acceptance remains not measured. Failed
+runs can retain partial deliverables for diagnosis without a completion marker.
+
+Validation: two new tests exercise an actual tiny PNG through independent TIFF,
+JSON and hash verification, overwrite protection, preallocation memory admission
+and injected-stage failure cleanup. All 113 v5 tests and repository-wide ruff
+pass. No full suite, model, notebook, full-frame job or background service ran.
+Complete configuration, packaged masks/reports and the notebook remain MVP work;
+all later phases and full-scale Colab acceptance remain pending.
