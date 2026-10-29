@@ -114,8 +114,9 @@ squares of variance against signal over the 5 % lower variance envelope of the b
 bin, weighted by the square root of the bin's block count), dark-block tail statistics, row and column banding, a dark-window PSD and isolated-defect counts. The same
 procedure is implemented in `synthraw.realism` and runs on Colab against any REFERENCE_RAW:
 `measure_raw` reads a raw with rawpy (levels, camera white, AsShotNeutral, XYZ-to-camera matrix and the
-D65 camera neutral) and keeps only the photosites inside a DNG `DefaultUserCrop` (even edges, so the
-CFA phase holds), which leaves the synthetic outpaint bands out of every statistic; `measure_mosaic` computes per-plane black-subtracted EV histograms, the
+D65 camera neutral) and keeps only the photosites inside a DNG's `DefaultUserCrop` within its
+`DefaultCropOrigin`/`DefaultCropSize` (even edges, so the CFA phase holds), which leaves the synthetic
+outpaint bands and sensor margins out of every statistic; `measure_mosaic` computes per-plane black-subtracted EV histograms, the
 photon-transfer envelope and fit, dark-block tail and banding statistics (about each block's fitted
 plane), the dark-window banding PSD and hot/dead counts, and `write_realism` writes
 `validation/realism_comparison.json` and `.png` with reference, synthetic and ratio rows. The module

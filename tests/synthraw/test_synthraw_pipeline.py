@@ -717,20 +717,22 @@ def test_without_synthetic_exif_capture_settings_stay_out_of_the_dng_and_sidecar
         assert dng.pages[0].tags[34855].value == 400  # Explicit user exposure is still written.
 
 
-def test_realism_measures_only_the_source_content_inside_the_user_crop(source_png, tmp_path):
-    """Regression: realism statistics included the invented outpaint bands outside DefaultUserCrop."""
+@pytest.mark.parametrize("fit", ["OUTPAINT_VERTICAL", "FIT_WITH_SENSOR_MARGINS"])
+def test_realism_measures_only_the_source_content_inside_the_dng_crop(source_png, tmp_path, fit):
+    """Regression: realism statistics included the invented outpaint bands or the neutral sensor margins."""
     from synthraw.realism import measure_raw
 
-    result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS")
-    outpaint = np.load(result.root / "confidence/outpaint_mask.npy") > 0
-    assert outpaint.any()
+    result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS", SENSOR_FIT_MODE=fit)
+    source = np.load(result.root / "confidence/sr_source_supported_mask.npy") > 0
+    assert not source.all()
     measured = measure_raw(result.root / "raw/synthetic_50mp.dng")
     top, left, bottom, right = measured["measured_box"]
     assert measured["shape"] == [bottom - top, right - left]
     assert top % 2 == left % 2 == 0
-    assert not outpaint[top:bottom, left:right].any()
-    content_rows = np.flatnonzero(~outpaint.all(axis=1))
-    assert top - content_rows[0] <= 1 and content_rows[-1] + 1 - bottom <= 1
+    assert source[top:bottom, left:right].all()
+    rows, columns = np.flatnonzero(source.any(axis=1)), np.flatnonzero(source.any(axis=0))
+    assert top - rows[0] <= 1 and rows[-1] + 1 - bottom <= 1
+    assert left - columns[0] <= 1 and columns[-1] + 1 - right <= 1
 
 
 def test_skipped_c2pa_and_noop_optics_are_reported_not_silent(source_png, tmp_path):

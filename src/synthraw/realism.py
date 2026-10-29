@@ -282,10 +282,11 @@ def _normalised_neutral(values: Any) -> list[float] | None:
 
 
 def _user_crop(path: str | Path, shape: tuple[int, int]) -> tuple[int, int, int, int]:
-    """(top, left, bottom, right) of a DNG's DefaultUserCrop in the visible mosaic; the whole frame otherwise.
+    """(top, left, bottom, right) of a DNG's user crop in the visible mosaic; the whole frame without crop tags.
 
-    The synthetic DNG leaves its invented outpaint bands outside DefaultUserCrop, so only source
-    content is measured. Edges round inward to even photosites to keep the CFA phase.
+    The synthetic DNG leaves its invented outpaint bands outside DefaultUserCrop and its neutral
+    sensor margins outside DefaultCropOrigin/Size, so only source content is measured. A missing
+    DefaultUserCrop is the whole default crop. Edges round inward to even photosites to keep the CFA phase.
     """
     import tifffile
 
@@ -305,8 +306,7 @@ def _user_crop(path: str | Path, shape: tuple[int, int]) -> tuple[int, int, int,
             crop, origin, size = values("DefaultUserCrop"), values("DefaultCropOrigin"), values("DefaultCropSize")
     except tifffile.TiffFileError:
         return 0, 0, height, width  # Not a TIFF-based raw, so it carries no DNG crop tags.
-    if crop is None:
-        return 0, 0, height, width
+    crop = np.array([0.0, 0.0, 1.0, 1.0]) if crop is None else crop
     origin = np.zeros(2) if origin is None else origin
     size = np.array([width, height], dtype=float) if size is None else size
     top, left, bottom, right = (
@@ -315,7 +315,7 @@ def _user_crop(path: str | Path, shape: tuple[int, int]) -> tuple[int, int, int,
     top, left = (2 * math.ceil(max(edge, 0) / 2) for edge in (top, left))
     bottom, right = (2 * (min(edge, limit) // 2) for edge, limit in ((bottom, height), (right, width)))
     if bottom - top < 4 or right - left < 4:
-        raise ValueError(f"DefaultUserCrop of {Path(path).name} leaves less than 4 x 4 photosites")
+        raise ValueError(f"The DNG crop of {Path(path).name} leaves less than 4 x 4 photosites")
     return top, left, bottom, right
 
 
