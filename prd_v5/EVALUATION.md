@@ -923,3 +923,19 @@ Tiny PNG-to-DNG-to-LibRaw-TIFF integration verifies crop counts and equivalence
 to independent direct comparison. Tests cover malformed and out-of-bounds regions.
 Notebook crop selection remains pending; no full-scale or scientific validation
 ran locally. Later ordered phases remain pending.
+
+## Colab native-resolution crop selection (iteration 43)
+
+The single v5 notebook now exposes optional `COMPARISON_REGION` and forwards it
+to the paired runner. Default `None` preserves whole-raster comparisons; an
+explicit half-open `(top, left, bottom, right)` adds crop evidence to the printed
+result and saved pair manifest. Panel comments and running documentation identify
+LibRaw visible-raster coordinates and explicitly disclaim scene registration.
+
+Validation: 35 targeted notebook, paired-run and comparison tests pass under the
+shared lock, including tiny real PNG-to-DNG-to-LibRaw-TIFF crop integration.
+Static notebook validation checks the untouched full-scale defaults, schema,
+unexecuted cells and crop argument dispatch. Repository-wide ruff, changed Python
+formatting and diff whitespace checks pass. No notebook execution, heavy work,
+background process or commit started. HDR/profile selection, later ordered phases
+and full-scale/scientific Colab validation remain unresolved.

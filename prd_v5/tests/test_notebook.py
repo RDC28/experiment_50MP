@@ -131,3 +131,20 @@ def test_notebook_shared_colour_proxy_dispatch():
     }.items():
         assert isinstance(kwargs[key], ast.Name) and kwargs[key].id == name
     assert "resolve_analytic_panel_from_source as resolve_analytic_panel" in notebook.cells[-1].source
+
+
+def test_notebook_dispatches_optional_native_crop_without_changing_default():
+    notebook, values = assignments()
+    assert values["COMPARISON_REGION"] is None
+    tree = ast.parse(notebook.cells[-1].source)
+    call = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run_analytic_pair"
+    )
+    region = next(keyword.value for keyword in call.keywords if keyword.arg == "comparison_region")
+    assert isinstance(region, ast.Name) and region.id == "COMPARISON_REGION"
+    # Evaluate only the argument expression, never notebook setup or processing.
+    expression = compile(ast.Expression(region), "<notebook crop argument>", "eval")
+    for selected in (None, (0, 1, 4, 5)):
+        assert eval(expression, {"COMPARISON_REGION": selected}) == selected

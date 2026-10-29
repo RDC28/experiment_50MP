@@ -440,7 +440,7 @@ without resizing, alignment or exposure fitting. Reports retain original raster
 sizes and explicit crop coordinates; metrics and saturation fractions use only
 crop pixels. Out-of-bounds/empty crops fail. An explicitly shared region can be
 measured on unequal rasters, but does not establish scene registration. The default
-whole-raster behavior is unchanged. Notebook/report crop selection remains pending.
+whole-raster behavior is unchanged.
 
 Paired runs also accept `comparison_region=(top, left, bottom, right)` in
 half-open LibRaw visible-raster coordinates. They retain whole-raster
@@ -448,3 +448,9 @@ half-open LibRaw visible-raster coordinates. They retain whole-raster
 metrics and the same registration/scientific limitations. Malformed bounds fail
 before source I/O; bounds outside either developed TIFF prevent pair completion
 while retaining completed child bundles. No crop is selected automatically.
+
+In the Colab panel, set `COMPARISON_REGION = (top, left, bottom, right)` to
+include these metrics in the printed pair result and saved pair manifest.
+The default `None` retains whole-raster metrics only. Coordinates refer to the
+developed TIFF including sensor margins, not source-image or DNG DefaultCrop
+coordinates. Selecting the same coordinates does not establish scene registration.
