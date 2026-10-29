@@ -54,3 +54,87 @@ def test_invalid_profile_fails(matrix):
 def test_profile_requires_explicit_description(label):
     with pytest.raises(ValueError, match="label"):
         resolve_d65_profile(AnalyticISP(), np.eye(3), label=label)
+
+
+def test_catalogue_profile_reaches_paired_dng_and_selection_evidence(tmp_path):
+    import tifffile
+    from PIL import Image
+
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.paired import run_analytic_pair
+    from prd_v5.panel import resolve_analytic_panel_from_source
+
+    matrix = np.linalg.inv(np.asarray(SRGB_TO_XYZ_D65) @ np.diag([0.8, 1, 1.2]))
+    camera, isp, camera_records, isp_records = resolve_analytic_panel_from_source(
+        CameraHypothesis(shot_noise=False, read_noise=False),
+        AnalyticISP(),
+        [
+            {"name": "ColorMatrix1/2", "mode": "AUTO", "value": matrix.tolist()},
+            {"name": "AsShotNeutral", "mode": "AUTO", "value": [0.5, 1, 0.25]},
+        ],
+        {"ColorMatrix1/2": "USER", "AsShotNeutral": "USER"},
+    )
+    assert isp.white_balance == (2, 1, 4)
+    evidence = validate_selections(isp, isp_records, isp=True)["isp.camera_to_srgb"]
+    assert evidence["provenance"] == "USER_SET"
+    assert evidence["posterior"]["illuminant"] == "D65"
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (128, 128, 128)).save(source)
+    output = tmp_path / "pair"
+    run_analytic_pair(
+        source,
+        source,
+        output,
+        AnalyticRunConfig(camera=camera, isp=isp, target_megapixels=0.001024, assume_unprofiled_srgb=True),
+        camera_selections=camera_records,
+        isp_selections=isp_records,
+    )
+    dngs = list(output.rglob("*.dng"))
+    assert len(dngs) == 2
+    for path in dngs:
+        with tifffile.TiffFile(path) as handle:
+            tags = handle.pages[0].tags
+            for name in ("ColorMatrix1", "ColorMatrix2"):
+                rational = np.asarray(tags[name].value).reshape(9, 2)
+                np.testing.assert_allclose((rational[:, 0] / rational[:, 1]).reshape(3, 3), matrix, atol=1e-6)
+    manifests = [json.loads(path.read_text()) for path in output.rglob("manifest.json")]
+    assert len(manifests) == 2
+    for manifest in manifests:
+        assert "user_supplied_d65_xyz_to_camera" in json.dumps(manifest)
+
+
+@pytest.mark.parametrize(
+    "mode,value,error",
+    [
+        ("AUTO", np.eye(3).tolist(), "requires USER"),
+        ("FABRICATE", np.eye(3).tolist(), "requires USER"),
+        ("USER", None, "Unresolved ISP"),
+        ("ESTIMATE", None, "Unresolved ISP"),
+        ("USER", np.zeros((3, 3)).tolist(), "well-conditioned"),
+    ],
+)
+def test_catalogue_profile_rejects_unsupported_evidence(mode, value, error):
+    from prd_v5.panel import resolve_analytic_panel
+
+    with pytest.raises(ValueError, match=error):
+        resolve_analytic_panel(
+            CameraHypothesis(),
+            AnalyticISP(),
+            [{"name": "ColorMatrix1/2", "mode": "AUTO", "value": value}],
+            {"ColorMatrix1/2": mode},
+        )
+
+
+@pytest.mark.parametrize("mode", ["AUTO", "FABRICATE"])
+def test_catalogue_profile_without_value_preserves_base(mode):
+    from prd_v5.panel import resolve_analytic_panel
+
+    base = AnalyticISP()
+    _, isp, _, records = resolve_analytic_panel(
+        CameraHypothesis(),
+        base,
+        [{"name": "ColorMatrix1/2", "mode": "AUTO", "value": None}],
+        {"ColorMatrix1/2": mode},
+    )
+    assert isp == base
+    assert next(record for record in records if record.name == "camera_to_srgb").mode == mode

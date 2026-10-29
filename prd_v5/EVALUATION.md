@@ -650,7 +650,7 @@ unresolved.
 
 ## Implementation scheduling checkpoint
 
-Parent review after iteration 26: the analytic path already executes through independent DNG/TIFF development. Prioritize the remaining direct deliverable now: create the single Colab notebook with setup, hardware inspection, every PRD setting and maximum-scale defaults, then advance fidelity, learned RAW dispatch, full sensor, full optics and complete metadata in order. Do not spend the remaining iteration budget on additional small analytic-only schema, report or provenance polish while those phases have not been attempted. Each next increment should close a substantial remaining roadmap requirement end to end, reusing existing tested synthraw implementations where appropriate. Finish with one locked full-suite run and lint, and replace accumulated increment history with a concise final implemented/deferred matrix. Unsupported research checkpoints may be deferred with evidence; available analytic/sensor/optics functionality and the notebook itself should be implemented rather than deferred.
+Parent review after iteration 45: the analytic path, notebook, paired fidelity SR, crop comparisons, exposure and colour/profile adapters now exist. The remaining 15 iterations must prioritize substantive missing roadmap phases: implement analytic HDR and its uncertainty in one integrated increment; implement honest learned-RAW residual dispatch and unavailable-model reporting in one integrated increment; reuse existing synthraw sensor/optics implementations for complete physical stages and notebook controls; then complete metadata, outputs, acceptance reporting and locked full-suite validation. Avoid separate adapter, wiring and notebook iterations for each individual field. Update the executable pipeline and notebook together when adding a phase. The analytic path already executes through independent DNG/TIFF development. Prioritize the remaining direct deliverable now: create the single Colab notebook with setup, hardware inspection, every PRD setting and maximum-scale defaults, then advance fidelity, learned RAW dispatch, full sensor, full optics and complete metadata in order. Do not spend the remaining iteration budget on additional small analytic-only schema, report or provenance polish while those phases have not been attempted. Each next increment should close a substantial remaining roadmap requirement end to end, reusing existing tested synthraw implementations where appropriate. Finish with one locked full-suite run and lint, and replace accumulated increment history with a concise final implemented/deferred matrix. Unsupported research checkpoints may be deferred with evidence; available analytic/sensor/optics functionality and the notebook itself should be implemented rather than deferred.
 
 
 ## Executable notebook camera panel evidence
@@ -957,3 +957,22 @@ derived DNG matrices under both D65 illuminants. Repository-wide ruff passes.
 No full-scale job, notebook, model, background service or commit was started.
 HDR, benchmark adapters, later ordered phases and Colab scientific validation
 remain unresolved.
+
+# Catalogue D65 profile dispatch evidence (iteration 45)
+
+The notebook's existing `ColorMatrix1/2` row now accepts one nested 3x3
+XYZ-to-camera D65 matrix in USER mode through `panel.resolve_analytic_panel` and
+its source-decoding wrapper. Conversion reuses the tested profile resolver;
+USER_SET evidence retains the original matrix and single-D65 limitations in
+both paired manifests. AsShotNeutral remains independently selectable. Both
+exported ColorMatrix tags use this matrix and D65 illuminants. Absent
+AUTO/FABRICATE values preserve the supplied ISP; unresolved USER/ESTIMATE,
+non-USER explicit values and invalid matrices fail before execution.
+
+Validation: 56 targeted lightweight profile, panel and notebook tests pass,
+including tiny paired PNG-to-DNG/TIFF execution, independent serialized matrix
+checks, provenance retention and simultaneous WB selection. Repository-wide
+ruff and changed Python formatting pass. No models, full-scale processing,
+notebook execution, background processes or commits were started. Automatic
+profile estimation, dual-illuminant interpolation, HDR and later ordered phases
+remain pending; full-scale and scientific Colab acceptance remain unresolved.

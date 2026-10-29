@@ -97,6 +97,7 @@ def resolve_analytic_panel(
     ISP hypothesis. Explicit colour_source evidence requires ESTIMATE mode and
     supplies a gray-world rendered-sRGB proxy hypothesis shared by paired runs.
     No calibrated illuminant estimator or camera-profile solver is implied.
+    ColorMatrix1/2 accepts one USER D65 XYZ-to-camera matrix for both tags.
     Other colour metadata remains derived from the ISP or unsupported.
     """
     import numpy as np
@@ -114,15 +115,32 @@ def resolve_analytic_panel(
         if not neutral_fields or modes["AsShotNeutral"] != "ESTIMATE" or neutral_fields[0]["value"] is not None:
             raise ValueError("Colour evidence requires AsShotNeutral in ESTIMATE mode without a value")
         _, colour_records, _ = resolve_gray_world(isp, colour_source, strip_rows=colour_strip_rows)
-    camera_requests = [field for field in requests if field["name"] != "AsShotNeutral"]
+    profile_modes = {}
+    profile_candidates = {}
+    for field in requests:
+        if field["name"] != "ColorMatrix1/2":
+            continue
+        mode = modes[field["name"]]
+        profile_modes["camera_to_srgb"] = mode
+        if field["value"] is not None:
+            if mode != "USER":
+                raise ValueError("Explicit panel value requires USER mode: ColorMatrix1/2")
+            from prd_v5.profile import resolve_d65_profile
+
+            _, records, _ = resolve_d65_profile(
+                isp, field["value"], label="Notebook ColorMatrix1/2 single-D65 user hypothesis"
+            )
+            profile_candidates = {r.name: (r,) for r in records if r.name == "camera_to_srgb"}
+    camera_requests = [field for field in requests if field["name"] not in {"AsShotNeutral", "ColorMatrix1/2"}]
     camera, camera_records = resolve_camera_panel(
         camera,
         camera_requests,
         {field["name"]: modes[field["name"]] for field in camera_requests},
         exposure_prior=exposure_prior,
     )
-    isp_modes = {}
+    isp_modes = dict(profile_modes)
     candidates = {record.name: (record,) for record in colour_records}
+    candidates.update(profile_candidates)
     for field in requests:
         if field["name"] != "AsShotNeutral":
             continue

@@ -463,4 +463,11 @@ and its records as ISP selections to retain USER_SET provenance. White balance,
 tone and exposure stay independent. Only a precomposed single D65 matrix is
 supported; calibration accuracy, chromatic adaptation and dual-illuminant
 interpolation are not established. The DNG writer retains its virtual synthetic
-profile designation. Notebook catalogue dispatch remains pending.
+profile designation.
+
+In the notebook catalogue, set `ColorMatrix1/2` to USER and supply a nested
+3x3 D65 XYZ-to-camera matrix as its value. The same matrix is used for both DNG
+tags with D65 illuminants. The panel preserves USER_SET matrix provenance across
+both paired bundles and combines it with independent AsShotNeutral selection.
+AUTO/FABRICATE without a value retain the base ISP; USER/ESTIMATE without evidence
+fail. Dual-illuminant pairs and auxiliary transforms remain unsupported.
