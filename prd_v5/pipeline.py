@@ -92,6 +92,19 @@ def run_analytic(
             )
             # Export only after the independent image gate, without materializing
             # the full mask in RAM. NPY preserves boolean dtype and raster shape.
+            clipped_pixels = 0
+            packaged_clipping = np.lib.format.open_memmap(
+                output / "source_clipped.npy", mode="w+", dtype=np.bool_, shape=shape
+            )
+            try:
+                for start in range(0, shape[0], strip_rows):
+                    stop = start + strip_rows
+                    clipped = np.any(rgb[start:stop] >= 1, axis=-1) & support[start:stop]
+                    packaged_clipping[start:stop] = clipped
+                    clipped_pixels += int(np.count_nonzero(clipped))
+                packaged_clipping.flush()
+            finally:
+                packaged_clipping._mmap.close()
             packaged_support = np.lib.format.open_memmap(
                 output / "source_support.npy", mode="w+", dtype=np.bool_, shape=shape
             )
@@ -105,7 +118,7 @@ def run_analytic(
             for array in reversed(arrays):
                 array._mmap.close()
     artifacts = {}
-    for name in ("capture.dng", "developed.tiff", "source_support.npy"):
+    for name in ("capture.dng", "developed.tiff", "source_support.npy", "source_clipped.npy"):
         path = output / name
         digest = hashlib.sha256()
         with path.open("rb") as stream:
@@ -123,6 +136,19 @@ def run_analytic(
         "stages": stages,
         "artifacts": artifacts,
         "masks": {
+            "source_clipped": {
+                "artifact": "source_clipped.npy",
+                "dtype": "bool",
+                "shape": [geometry.height, geometry.width],
+                "coordinates": "full sensor raster, before DNG crop or TIFF development",
+                "true": "source-supported resampled sRGB pixel has at least one channel at 1",
+                "false": "no endpoint detected, or unsupported sensor margin",
+                "clipped_pixels": clipped_pixels,
+                "limitations": (
+                    "Endpoint indicator after ICC and bilinear resampling, not recovered highlight truth; "
+                    "resampling can dilute source endpoints and below-endpoint clipping is undetected"
+                ),
+            },
             "source_support": {
                 "artifact": "source_support.npy",
                 "dtype": "bool",
@@ -132,7 +158,7 @@ def run_analytic(
                 "false": "sensor margin with no source support",
                 "supported_pixels": stages["raster"]["source_supported_pixels"],
                 "limitations": "Geometry support only; not recovered-truth, clipping or learned-detail confidence",
-            }
+            },
         },
         "limits": {
             "strip_rows": strip_rows,

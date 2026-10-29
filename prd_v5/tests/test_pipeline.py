@@ -23,6 +23,7 @@ def test_complete_bundle(tmp_path):
         "capture.dng",
         "developed.tiff",
         "source_support.npy",
+        "source_clipped.npy",
         "manifest.json",
     }
     support = np.load(output / "source_support.npy", mmap_mode="r", allow_pickle=False)
@@ -71,3 +72,29 @@ def test_mask_export_failure_has_no_completion_manifest(tmp_path, monkeypatch):
         run_analytic(source, output, CameraHypothesis(), target_megapixels=0.001024, assume_unprofiled_srgb=True)
     assert not (output / "manifest.json").exists()
     assert not list(output.glob("working-*"))
+
+
+@pytest.mark.parametrize("strip_rows", [1, 7])
+def test_clipping_mask_retains_endpoint_locations(tmp_path, strip_rows):
+    pixels = np.full((32, 32, 3), 128, dtype=np.uint8)
+    pixels[4:9, 6:11, 0] = 255
+    pixels[20, 15] = 255
+    source = tmp_path / "source.png"
+    Image.fromarray(pixels).save(source)
+    output = tmp_path / "run"
+    report = run_analytic(
+        source,
+        output,
+        CameraHypothesis(),
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+        strip_rows=strip_rows,
+    )
+    mask = np.load(output / "source_clipped.npy", mmap_mode="r", allow_pickle=False)
+    try:
+        assert mask.dtype == np.bool_
+        np.testing.assert_array_equal(mask, np.any(pixels == 255, axis=-1))
+        assert report["masks"]["source_clipped"]["clipped_pixels"] == 26
+        assert report["stages"]["analytic"]["source_clipped_pixels"] == 26
+    finally:
+        mask._mmap.close()

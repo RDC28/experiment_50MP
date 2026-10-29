@@ -318,3 +318,24 @@ repository-wide ruff pass. No full suite, notebook, full-frame job, model or
 background process ran. Remaining MVP work includes complete config/registry,
 HTML reports, further uncertainty masks and the notebook. Later ordered phases
 and full-scale Colab/scientific validation remain pending.
+
+
+## Implementation evidence: twelfth MVP increment
+
+The analytic bundle now retains `source_clipped.npy`, a boolean disk-backed
+full-sensor mask identifying source-supported resampled sRGB pixels with any
+channel at 1. Strip-sized comparisons and writes retain bounded working memory.
+The completion manifest includes its hash, dimensions, count and coordinate and
+uncertainty semantics. Unsupported sensor margins are false and must be read
+alongside the support mask. This is an endpoint indicator after ICC conversion
+and bilinear resampling: interpolation can dilute original endpoints, and
+clipping below the endpoint is undetected. It neither recovers highlights nor
+certifies unclipped radiance. Mask export failure still prevents completion.
+
+Validation: two additional tiny PNG-to-independent-TIFF cases check exact mask
+locations, single-channel and all-channel endpoints, the analytic clipping count
+and strip-size invariance. All 116 v5 tests and repository-wide ruff pass; changed
+Python formatting and diff checks pass. No full suite, model, notebook, full-frame
+job or background service ran. Complete MVP configuration/registry, HTML reports
+and the notebook remain pending before fidelity; all later ordered phases and
+Colab-only scientific/full-scale validation remain unresolved.

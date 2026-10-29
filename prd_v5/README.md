@@ -125,5 +125,10 @@ written in strips and included in manifest hashes. Load it with
 `numpy.load(path, mmap_mode="r", allow_pickle=False)` to avoid a full-frame
 allocation. True means source-supported pixel-center geometry; false means a
 sensor margin. This is not a clipping mask or confidence in recovered detail.
-Its coordinates precede DNG crop and TIFF development. HTML reports, additional
-uncertainty masks and the notebook remain pending.
+Its coordinates precede DNG crop and TIFF development. The bundle also includes
+`source_clipped.npy`, a boolean mask of source-supported resampled sRGB pixels
+with any channel at 1, with a count and hash in the manifest. It flags highlight
+uncertainty without claiming recovery. ICC conversion can change endpoints and
+bilinear interpolation can dilute them; below-endpoint clipping is undetected.
+False values must be interpreted alongside source support, not as proof of known
+radiance. HTML reports, further uncertainty masks and the notebook remain pending.
