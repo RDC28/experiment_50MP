@@ -2,6 +2,22 @@
 
 Evaluated 2026-10-29 before implementation. `PRD_v5.md` is the supplied document copied byte for byte. This evaluation does not rewrite it. The deliverable is one new Colab notebook under `prd_v5/notebooks/`, backed by composable, tested Python. No notebook, model download, full-frame inference, or training is permitted on the 8 GB development Mac. Full-suite tests must use `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
+## Implementation evidence: twenty-second MVP increment
+
+The analytic registry now includes `dng.*` intended tag records derived directly
+from the writer's metadata builder, including colour matrices, AsShotNeutral,
+baseline exposure, orientation, synthetic identity and crop. These are derived
+from synthetic hypotheses, not observed capture metadata or decoder evidence.
+Disabled shot noise retains an explicit null/UNSPECIFIED NoiseProfile record
+while the incompatible tag remains absent from the DNG.
+
+Validation: tiny DNG tests compare registry values with serialized profile,
+identity, geometry and orientation tags, allowing rational rounding, and exercise
+both enabled and disabled shot noise. All 169 lightweight v5 tests pass under
+the shared lock; repository-wide ruff passes. Full-scale Colab, complete field-mode
+configuration, notebook and later ordered phases remain pending. No model,
+full-frame job or background service was started.
+
 ## Implementation evidence: twenty-first MVP increment
 
 The distribution now includes the additive `prd_v5` package and its analytic

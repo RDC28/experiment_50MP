@@ -2,9 +2,13 @@
 
 import json
 
+import numpy as np
+import pytest
+import tifffile
 from PIL import Image
 
 from prd_v5.analytic import AnalyticISP
+from prd_v5.dng import build_metadata, write_dng
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraHypothesis
 from prd_v5.inputs import InputInspector
@@ -32,3 +36,36 @@ def test_nondefault_hypotheses_and_detached_records(tmp_path):
     assert fresh["isp.white_balance"]["value"] == (2, 1, 1.5)
     assert fresh["gps"]["value"] is None
     assert fresh["gps"]["mode"] == "USER"
+
+
+@pytest.mark.parametrize("shot_noise", [True, False])
+def test_registry_tracks_written_profile_and_omitted_noise(tmp_path, shot_noise):
+    path = tmp_path / "source.png"
+    Image.new("RGB", (32, 24)).save(path)
+    source = InputInspector().inspect(path, assume_unprofiled_srgb=True)
+    geometry = GeometryPlanner().plan(32, 24, target_megapixels=0.000768)
+    camera = CameraHypothesis(iso=800, shot_noise=shot_noise)
+    isp = AnalyticISP(white_balance=(2, 1, 1.5))
+    registry = analytic_registry(camera, source, geometry, isp)
+    tags = build_metadata(camera, geometry, isp)
+    saved = json.loads(json.dumps(registry, allow_nan=False))
+    for name, tag in tags.items():
+        field = registry[f"dng.{name}"]
+        assert field["value"] == tag.value
+        assert field["provenance"] == "DERIVED"
+        assert field["confidence"] is None
+    mosaic = np.full((geometry.height, geometry.width), camera.black_level, dtype=np.uint16)
+    write_dng(tmp_path / "capture.dng", mosaic, camera, geometry, isp)
+    with tifffile.TiffFile(tmp_path / "capture.dng") as container:
+        actual = container.pages[0].tags
+        for name in ("Orientation", "Make", "Model", "WhiteLevel", "DefaultCropSize"):
+            np.testing.assert_equal(actual[name].value, registry[f"dng.{name}"]["value"])
+        for name in ("ColorMatrix1", "ColorMatrix2", "AsShotNeutral", "BaselineExposure"):
+            value = np.asarray(actual[name].value).reshape(-1, 2)
+            decoded = value[:, 0] / value[:, 1]
+            np.testing.assert_allclose(decoded, np.asarray(saved[f"dng.{name}"]["value"]).ravel(), atol=1e-6)
+        assert ("NoiseProfile" in actual) == shot_noise
+    if not shot_noise:
+        assert saved["dng.NoiseProfile"]["value"] is None
+        assert saved["dng.NoiseProfile"]["provenance"] == "UNSPECIFIED"
+    assert saved["gps"]["value"] is None

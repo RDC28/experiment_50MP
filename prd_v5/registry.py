@@ -3,6 +3,7 @@
 from dataclasses import asdict
 
 from prd_v5.analytic import AnalyticISP
+from prd_v5.dng import build_metadata
 from prd_v5.geometry import GeometryPlan
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.inputs import SourceRecord
@@ -85,5 +86,26 @@ def analytic_registry(
             "DERIVED",
             "GeometryPlanner transform; source_crop uses source pixels, other positions use sensor pixels",
             "Arithmetic geometry checks; not evidence of recovered scene content",
+        )
+    # Use the writer's authoritative builder rather than duplicating profile,
+    # crop or container constants. These are intended tags, not decode evidence.
+    for name, record in build_metadata(camera, geometry, isp).items():
+        add(
+            f"dng.{name}",
+            record.value,
+            record.unit,
+            "DERIVED",
+            f"Intended {record.dng_type} tag from synthetic hypotheses: {record.method}",
+            "DNGMetadataBuilder domain checks; serialized rational rounding applies; "
+            "independent roundtrip evidence is recorded separately, not camera calibration",
+        )
+    if "dng.NoiseProfile" not in records:
+        add(
+            "dng.NoiseProfile",
+            None,
+            None,
+            "UNSPECIFIED",
+            "Tag omitted: disabled shot noise cannot satisfy the DNG positive slope requirement",
+            "Must be absent from serialized DNG when shot noise is disabled",
         )
     return records

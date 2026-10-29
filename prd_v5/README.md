@@ -215,3 +215,12 @@ Strip-bounded maximum absolute error and RMSE use normalized encoded-sRGB units;
 maximum error above 1e-5 marks this diagnostic failed. Gamut flooring can fail
 the check without preventing bundle export. This measures internal consistency,
 not calibrated colour, recovered highlights or scene radiance truth.
+
+The analytic registry includes `dng.*` records for the intended metadata produced
+by the same builder used for export. This exposes derived colour matrices,
+AsShotNeutral, baseline exposure, crop, orientation and explicitly synthetic
+identity without duplicating writer constants. These records describe intended
+tags; actual independent decode evidence stays in the roundtrip stage report.
+Values precede DNG rational rounding. With shot noise disabled, the registry
+retains a null/UNSPECIFIED `dng.NoiseProfile` and the DNG omits that tag because
+its slope must be positive. This remains the analytic subset of the full registry.
