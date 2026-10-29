@@ -89,6 +89,13 @@ only through `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
 ## Colab execution
 
+Installing this repository with `pip install .` includes the `prd_v5` library
+and its analytic JSON schema alongside the legacy packages. Read the installed
+schema with
+`importlib.resources.files("prd_v5").joinpath("analytic-config.schema.json")`;
+it does not require a checkout-relative file path. Installation does not supply
+learned checkpoints or enable unavailable integrations.
+
 No v5 notebook is runnable yet. Full-scale validation must wait for the new
 notebook and execute in Colab, never on this 8 GB development Mac. No 50 MP,
 checkpoint compatibility, full-scale RAW decoder, performance or scientific acceptance

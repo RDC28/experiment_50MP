@@ -32,8 +32,11 @@ dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.9", "nbclient>=0.10", "ipykernel>=
 
 [tool.setuptools]
 # PRD 4.4 keeps the modules directly in src/; they install as the synthetic_raw_lab package.
-package-dir = { "synthetic_raw_lab" = "src", "synthraw" = "src/synthraw" }
-packages = ["synthetic_raw_lab", "synthraw"]
+package-dir = { "synthetic_raw_lab" = "src", "synthraw" = "src/synthraw", "prd_v5" = "prd_v5" }
+packages = ["synthetic_raw_lab", "synthraw", "prd_v5"]
+
+[tool.setuptools.package-data]
+prd_v5 = ["analytic-config.schema.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

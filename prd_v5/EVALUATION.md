@@ -2,6 +2,23 @@
 
 Evaluated 2026-10-29 before implementation. `PRD_v5.md` is the supplied document copied byte for byte. This evaluation does not rewrite it. The deliverable is one new Colab notebook under `prd_v5/notebooks/`, backed by composable, tested Python. No notebook, model download, full-frame inference, or training is permitted on the 8 GB development Mac. Full-suite tests must use `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
+## Implementation evidence: twenty-first MVP increment
+
+The distribution now includes the additive `prd_v5` package and its analytic
+configuration JSON schema, preserving both legacy installed packages. Previously
+the explicit setuptools package list omitted all v5 modules. The schema is
+available through `importlib.resources` without a source checkout.
+
+Validation: built a wheel and installed it without dependencies into an external
+temporary target. All seven pipeline tests passed against that installed package
+outside the checkout, including tiny PNG-to-DNG-to-independent-TIFF execution,
+hashes, replay and failure cleanup. The installed schema passes meta-validation
+and validates the default saved configuration. All 167 lightweight v5 tests pass
+under the shared lock. No full-size processing, model, notebook, commit or
+background service ran. Complete MVP panel/registry and notebook remain pending
+before later ordered phases; full-scale Colab and scientific validation remain
+unresolved.
+
 ## Scope and interpretation
 
 Build the supplied 50 MP experiment. The earlier request mentioned 100/200 MP outputs and diffusion/transformer training from scratch; this document instead requests 50 MP, existing pretrained models and analytic physical simulation. That is a scope divergence, not permission to implement the earlier request.
