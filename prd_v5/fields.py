@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from prd_v5.hypothesis import CameraField, FieldMode
 
 if TYPE_CHECKING:
+    from prd_v5.analytic import AnalyticISP
     from prd_v5.hypothesis import CameraHypothesis
 
 # Identity aliases used by the PRD and existing camera registry.
@@ -117,3 +118,48 @@ def resolve_camera(
     # Construct only after every field resolves; this enforces coupled domains.
     camera = CameraHypothesis(**{record.name: record.value for record in resolved})
     return camera, tuple(resolved)
+
+
+def resolve_isp(
+    base: "AnalyticISP",
+    modes: Mapping[str, FieldMode],
+    candidates: Mapping[str, Iterable[CameraField]] | None = None,
+) -> tuple["AnalyticISP", tuple[CameraField, ...]]:
+    """Resolve analytic ISP evidence before constructing a validated hypothesis.
+
+    Names are unprefixed AnalyticISP inputs; gains use ratio units, other inputs
+    use None, matching the analytic registry. Explicit lists replace base
+    evidence. No estimator runs and no missing value falls back implicitly.
+    Selection records remain separate from the runner's synthetic registry.
+    """
+    from dataclasses import fields
+
+    from prd_v5.analytic import AnalyticISP
+
+    if not isinstance(base, AnalyticISP):
+        raise ValueError("base must be an AnalyticISP")
+    names = {field.name for field in fields(base)}
+    supplied = {} if candidates is None else dict(candidates)
+    unknown = (set(modes) | set(supplied)) - names
+    if unknown:
+        raise ValueError(f"Unknown ISP inputs: {sorted(unknown)}")
+    resolved = []
+    for field in fields(base):
+        units = "ratio" if field.name in ("white_balance", "exposure_gain") else None
+        default = CameraField(
+            field.name,
+            getattr(base, field.name),
+            units,
+            "AUTO",
+            "SYNTHETIC",
+            None,
+            None,
+            "Supplied analytic forward-render hypothesis; no camera calibration inferred",
+            "AnalyticISP domain and matrix conditioning checks; radiance accuracy not measured",
+        )
+        result = resolve_field(field.name, units, modes.get(field.name, "AUTO"), supplied.get(field.name, (default,)))
+        if result.value is None:
+            raise ValueError(f"Unresolved ISP input: {field.name} ({result.mode})")
+        resolved.append(result)
+    isp = AnalyticISP(**{record.name: record.value for record in resolved})
+    return isp, tuple(resolved)

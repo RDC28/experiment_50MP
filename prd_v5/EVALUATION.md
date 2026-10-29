@@ -2,6 +2,24 @@
 
 Evaluated 2026-10-29 before implementation. `PRD_v5.md` is the supplied document copied byte for byte. This evaluation does not rewrite it. The deliverable is one new Colab notebook under `prd_v5/notebooks/`, backed by composable, tested Python. No notebook, model download, full-frame inference, or training is permitted on the 8 GB development Mac. Full-suite tests must use `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
+## Implementation evidence: twenty-sixth MVP increment
+
+`fields.resolve_isp` now resolves all four executable analytic ISP inputs from
+supplied field evidence before constructing a validated hypothesis. Base AUTO
+hypotheses remain explicit; candidate lists replace them, and missing evidence
+fails without fallback. Gain units match the analytic registry. Matrix
+conditioning, positive gains and boolean tone controls remain executable gates.
+Selection records retain modes/provenance separately; JSON/panel and runner
+selection-provenance integration remain pending. No estimator is implied.
+
+Validation: 206 lightweight v5 tests pass under the shared lock, including a
+selected estimated exposure gain changing tiny disk-backed unprocessing by the
+independently calculated factor, with passing forward reconstruction. Tests also
+cover detached WB evidence, missing values, invalid domains/units and unknown
+inputs. Repository-wide ruff and changed Python formatting pass. Full-scale
+Colab validation, remaining MVP panel/notebook and later ordered phases remain
+unresolved. No model, notebook, full-frame job, commit or background service ran.
+
 ## Implementation evidence: twenty-fifth MVP increment
 
 `fields.resolve_camera` bridges supplied field evidence to a validated frozen

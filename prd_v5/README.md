@@ -260,3 +260,11 @@ Unresolved USER/ESTIMATE inputs fail, as do invalid domains and attempts to set
 derived electronics. Use the returned camera in `AnalyticRunConfig(camera=...)`;
 selection records must be retained separately and are not automatically inserted
 into runner provenance. JSON/panel integration remains pending.
+
+`fields.resolve_isp(base_isp, modes, candidates)` applies the same atomic selection
+contract to all four `AnalyticISP` inputs. Names are unprefixed; white balance and
+exposure gain use `ratio` units, matrix and tone switch use null units. Missing
+evidence, unknown inputs, invalid matrices/gains and nonboolean tone switches
+fail before returning a hypothesis. Use the result in `AnalyticRunConfig(isp=...)`.
+Selection records remain separate from runner provenance; this does not perform
+WB/colour/exposure estimation or wire field modes into JSON/the notebook panel.

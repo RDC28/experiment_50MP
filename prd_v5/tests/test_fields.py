@@ -142,3 +142,83 @@ def test_resolved_camera_drives_tiny_adc(tmp_path):
         np.testing.assert_array_equal(dest, round(512 + 0.5 * (16383 - 512)))
     finally:
         dest._mmap.close()
+
+
+def test_isp_resolution_preserves_defaults_and_detaches_sequences():
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.fields import resolve_isp
+
+    base = AnalyticISP()
+    assert resolve_isp(base, {})[0] == base
+    gains = [2, 1, 3]
+    isp, records = resolve_isp(
+        base, {"white_balance": "USER"}, {"white_balance": [evidence("USER_SET", gains, "white_balance", "ratio")]}
+    )
+    gains[0] = 99
+    selected = {record.name: record for record in records}
+    assert isp.white_balance == (2, 1, 3) and base.white_balance == (1, 1, 1)
+    assert selected["white_balance"].value == [2, 1, 3]
+    assert selected["white_balance"].mode == "USER"
+    assert selected["camera_to_srgb"].provenance == "SYNTHETIC"
+
+
+@pytest.mark.parametrize("mode", ["USER", "ESTIMATE"])
+def test_isp_resolution_missing_evidence_fails(mode):
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.fields import resolve_isp
+
+    with pytest.raises(ValueError, match="Unresolved ISP input"):
+        resolve_isp(AnalyticISP(), {"exposure_gain": mode})
+    with pytest.raises(ValueError, match="Unresolved ISP input"):
+        resolve_isp(AnalyticISP(), {}, {"exposure_gain": []})
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "units"),
+    [
+        ("camera_to_srgb", [[0] * 3] * 3, None),
+        ("white_balance", [0, 1, 1], "ratio"),
+        ("exposure_gain", -1, "ratio"),
+        ("inverse_smoothstep", 1, None),
+    ],
+)
+def test_isp_resolution_validates_selected_domains(name, value, units):
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.fields import resolve_isp
+
+    with pytest.raises(ValueError):
+        resolve_isp(AnalyticISP(), {name: "USER"}, {name: [evidence("USER_SET", value, name, units)]})
+
+
+def test_isp_resolution_rejects_unknown_inputs_units_and_base():
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.fields import resolve_isp
+
+    for modes, candidates in [({"iso": "AUTO"}, {}), ({}, {"iso": []})]:
+        with pytest.raises(ValueError, match="Unknown ISP"):
+            resolve_isp(AnalyticISP(), modes, candidates)
+    with pytest.raises(ValueError, match="matching name and units"):
+        resolve_isp(AnalyticISP(), {}, {"exposure_gain": [evidence("OBSERVED", 2, "exposure_gain", "EV")]})
+    with pytest.raises(ValueError, match="base must"):
+        resolve_isp(object(), {})
+
+
+def test_resolved_isp_exposure_drives_tiny_unprocessing(tmp_path):
+    import numpy as np
+
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.fields import resolve_isp
+
+    isp, records = resolve_isp(
+        AnalyticISP(),
+        {"exposure_gain": "ESTIMATE"},
+        {"exposure_gain": [evidence("ESTIMATED", 2, "exposure_gain", "ratio")]},
+    )
+    dest = np.memmap(tmp_path / "clean", mode="w+", dtype=np.float32, shape=(2, 2, 3))
+    try:
+        report = isp.process(np.full((2, 2, 3), 0.5, dtype=np.float32), dest)
+        np.testing.assert_allclose(dest, ((0.5 + 0.055) / 1.055) ** 2.4 / 2, rtol=1e-6)
+        assert report["forward_consistency"]["status"] == "passed"
+        assert next(r for r in records if r.name == "exposure_gain").provenance == "ESTIMATED"
+    finally:
+        dest._mmap.close()
