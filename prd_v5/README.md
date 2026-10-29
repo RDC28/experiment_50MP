@@ -150,3 +150,13 @@ and `geometry.` prevent collisions. Confidence/posteriors stay null; synthetic
 colour/exposure assumptions are not inferred capture truth. Source paths and
 private EXIF values are excluded from these added field records. This remains a
 partial registry, not the complete PRD field-mode configuration.
+
+`config.AnalyticRunConfig` provides strict JSON serialization and execution for
+this implemented analytic subset. Use `AnalyticRunConfig.from_json(text)` and
+`config.run(source_path, new_output_dir)`; `config.to_json()` stores actual camera
+and ISP hypotheses for reuse across sequential inputs. Unknown/duplicate fields,
+unsupported schema versions and invalid numeric values are rejected. Source and
+output paths are supplied separately. Defaults retain 50 MP and conservative
+memory admission, so full-scale use requires explicit Colab budgets. This is not
+the full PRD settings panel: HAT, HYBRID, HDR, learned, full sensor/optics and
+field-mode orchestration remain pending rather than silently ignored switches.

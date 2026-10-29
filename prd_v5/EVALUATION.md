@@ -378,3 +378,24 @@ Repository-wide ruff and changed Python formatting pass. No full suite, notebook
 model, full-frame processing or background service ran. Complete configuration,
 remaining registry fields and the notebook remain MVP work before fidelity;
 later phases and Colab-only scientific/full-scale validation remain unresolved.
+
+## Implementation evidence: fifteenth MVP increment
+
+`config.AnalyticRunConfig` supplies a frozen, versioned JSON configuration for
+the executed analytic subset, including actual shared camera/ISP hypotheses,
+50 MP geometry, colour assumption and resource budgets. Its run method passes
+these settings directly to the existing bounded pipeline. Parsing rejects
+unknown/duplicate fields, nonfinite numbers, invalid domains and unsupported
+versions. File paths remain execution arguments. Conservative development
+budgets still reject full-scale work before allocation; larger budgets must be
+supplied explicitly in Colab. This subset does not claim complete PRD settings,
+field-mode orchestration or learned execution.
+
+Validation: 137 lightweight v5 tests pass under the test lock. New cases verify
+JSON roundtrip, malformed configuration rejection, a real tiny PNG through
+independent LibRaw TIFF with nondefault camera/ISP settings, and full-scale
+memory rejection before output creation. Repository-wide ruff and changed-file
+formatting checks pass. No notebook, model, full-frame job, background process
+or full repository test suite ran. Complete panel/schema coverage and notebook
+remain MVP work; subsequent ordered phases and scientific/Colab validation are
+still pending.
