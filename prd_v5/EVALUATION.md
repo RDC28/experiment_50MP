@@ -680,3 +680,20 @@ selection provenance. Notebook format/syntax and panel wiring are statically
 validated without executing notebook cells. Full-scale Colab validation and the
 remaining ordered fidelity, learned RAW, sensor, optics and metadata work remain
 unresolved.
+
+## Fidelity checkpoint and tiled execution evidence (iteration 31)
+
+`prd_v5.fidelity` now accepts caller-supplied HAT/Real-ESRGAN x4 checkpoint
+contracts with streamed SHA-256 verification, full repository revision, source,
+licence and explicit acceptance. The Colab/CUDA loader uses tensor-only loading
+and validates Spandrel architecture, RGB channels and scale. No checkpoint is
+invented or downloaded. Execution reuses the existing disk-backed halo/blend
+engine with 512/64 defaults, visible OOM tile reduction and failure cleanup.
+Reports preserve requested/effective backend, integrity evidence and no fallback.
+
+Lightweight tests cover actual tiny tiled output with model doubles, OOM retry,
+invalid-output cleanup, integrity/acceptance and incompatible model descriptors.
+Real checkpoint compatibility, full-scale GPU memory/performance and scientific
+fidelity remain Colab-only unresolved validations. Notebook/paired RAW wiring,
+HDR, exposure/profile selection and comparison metrics remain fidelity work;
+this standalone SR API does not claim completion of that phase.

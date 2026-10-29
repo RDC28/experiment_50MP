@@ -312,3 +312,15 @@ neutral. Both paired manifests retain USER selection provenance. AUTO/FABRICATE
 without a value retain the explicit ISP hypothesis; ESTIMATE requires evidence
 and currently fails. ColourMatrix1/2 are DNG matrices, not camera-to-sRGB inputs;
 those catalogue overrides still fail rather than being incorrectly mapped.
+
+Fidelity increment: `prd_v5.fidelity.SRCheckpoint` accepts a user-provided HAT
+or Real-ESRGAN x4 checkpoint, expected SHA-256, full repository revision, source,
+licence and explicit acceptance. `fidelity.reconstruct(source_rgb, output_path,
+spec)` is a Colab CUDA-only SR API producing a disk-backed float32 encoded-sRGB
+NPY at x4 with 512/64 halo tiles. It verifies bytes and Spandrel architecture,
+scale and RGB channels before inference, uses safe tensor-only loading and
+reports any OOM tile reduction. There is no download or implicit fallback.
+Install the package's `sr` extra in Colab to supply torch/Spandrel. This API is
+not yet connected to notebook paired RAW execution. Actual checkpoint loading,
+full-scale GPU execution, seam/fidelity acceptance and scientific metrics remain
+unvalidated; local tests use explicit model doubles only.
