@@ -1255,5 +1255,7 @@ class RawTherapeeRenderer:
             "DNG structure",
             None,
             measured={"available": True, "returncode": returncode, "rendered": rendered, "output": str(output)},
+            # A successful render is a plain report row; a failed one stays untargeted so it is listed as skipped.
+            target="report only" if rendered else "",
             detail="neutral render succeeded" if rendered else f"render failed (not a gate): {message}",
         )

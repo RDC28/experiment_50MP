@@ -24,7 +24,7 @@ from synthraw.report import (
     validate_and_report,
 )
 from synthraw.validation import ValidationCheck, ValidationThresholds
-from synthraw.validation_runner import ValidationRunner
+from synthraw.validation_runner import ValidationRun, ValidationRunner
 
 
 @pytest.fixture(scope="module")
@@ -159,6 +159,32 @@ def test_near_threshold_lists_thin_passes_only():
     assert rows[0]["margin"] == pytest.approx(0.0104)
     failed = [ValidationCheck("colour_delta_e00", "Colour", False, measured={"median_delta_e00": 2.6})]
     assert near_threshold(failed, thresholds) == []
+
+
+def test_glance_lists_untargeted_skips_but_not_report_only_rows(tmp_path):
+    checks = [
+        ValidationCheck("roundtrip_supported_ssim", "Round trip", None, detail="TIFF not written"),
+        ValidationCheck("rawtherapee_neutral_render", "DNG structure", None, target="report only", detail="ok"),
+        ValidationCheck("hdr_generated_area", "HDR", None, target="report only: no threshold", detail="area"),
+    ]
+    text = "".join(ReportGenerator._at_a_glance(ValidationRun(tmp_path, checks), {"fallbacks": ["HDR off"]}, {}))
+    skipped = text.split("Skipped, fallen back or no-op features", 1)[1]
+    assert "HDR off" in skipped and "roundtrip_supported_ssim: TIFF not written" in skipped
+    assert "rawtherapee_neutral_render" not in skipped and "hdr_generated_area" not in skipped
+
+
+def test_near_threshold_measures_bounded_metrics_against_their_headroom():
+    thresholds = {"roundtrip_supported_ssim": 0.97, "noise_fit_r2": 0.95}
+    # 0.995 is within 10% of 0.97 but uses 83% of the headroom to 1; 0.972 uses under 7%.
+    checks = [
+        ValidationCheck("roundtrip_supported_ssim", "Round trip", True, measured={"ssim": 0.972}),
+        ValidationCheck("noise_fit_r2", "Noise", True, measured={"r2": 0.995}),
+    ]
+    rows = near_threshold(checks, thresholds)
+    assert [row["check"] for row in rows] == ["roundtrip_supported_ssim"]
+    assert rows[0]["margin"] == pytest.approx(0.002 / 0.03)
+    perfect = [ValidationCheck("roundtrip_supported_ssim", "Round trip", True, measured={"ssim": 1.0})]
+    assert near_threshold(perfect, thresholds) == []
 
 
 def test_reference_raw_adds_a_realism_section(reported, tmp_path):

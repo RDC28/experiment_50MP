@@ -83,18 +83,20 @@ SUPPORT_MASKS = (
     ("outpaint_mask.npy", "Outpaint bands (invented edge extension)"),
     ("generated_detail_mask.npy", "Learned SR detail (model-synthesised)"),
 )
-# Numeric gates and targets checked for a thin margin: (check, measured key, threshold field, higher is better).
-MARGIN_RULES: tuple[tuple[str, str, str, bool], ...] = (
-    ("roundtrip_supported_ssim", "ssim", "roundtrip_supported_ssim", True),
-    ("roundtrip_whole_ssim", "ssim", "roundtrip_whole_ssim", True),
-    ("colour_delta_e00", "median_delta_e00", "median_delta_e00", False),
-    ("sr_seam_ratio", "ratio", "seam_ratio", False),
-    ("noise_profile_agreement", "S_relative_error", "noise_profile_rel_tol", False),
-    ("noise_profile_agreement", "O_relative_error", "noise_profile_rel_tol", False),
-    ("noise_fit_r2", "r2", "noise_fit_r2", True),
-    ("white_balance_response", "clipped_increase", "wb_max_clipped_increase", False),
+# Numeric gates and targets checked for a thin margin:
+# (check, measured key, threshold field, higher is better, upper bound of the metric or None).
+MARGIN_RULES: tuple[tuple[str, str, str, bool, float | None], ...] = (
+    ("roundtrip_supported_ssim", "ssim", "roundtrip_supported_ssim", True, 1.0),
+    ("roundtrip_whole_ssim", "ssim", "roundtrip_whole_ssim", True, 1.0),
+    ("colour_delta_e00", "median_delta_e00", "median_delta_e00", False, None),
+    ("sr_seam_ratio", "ratio", "seam_ratio", False, None),
+    ("noise_profile_agreement", "S_relative_error", "noise_profile_rel_tol", False, None),
+    ("noise_profile_agreement", "O_relative_error", "noise_profile_rel_tol", False, None),
+    ("noise_fit_r2", "r2", "noise_fit_r2", True, 1.0),
+    ("white_balance_response", "clipped_increase", "wb_max_clipped_increase", False, None),
 )
-# A passing value closer than this fraction of its threshold is reported as marginal.
+# A passing value closer than this fraction of its threshold is reported as marginal. For a metric bounded
+# above (SSIM, R^2) the fraction is of the headroom between threshold and bound, not of the threshold itself.
 NEAR_THRESHOLD_FRACTION = 0.10
 _CSS = """
 body{font:14px/1.45 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:0 auto;max-width:1100px;
@@ -214,16 +216,17 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def near_threshold(checks: Iterable[ValidationCheck], thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Gates and QA targets that passed by less than NEAR_THRESHOLD_FRACTION of their threshold."""
+    """Gates and QA targets that passed by less than NEAR_THRESHOLD_FRACTION of their threshold (or headroom)."""
     by_name = {check.name: check for check in checks}
     rows = []
-    for name, key, threshold_name, higher in MARGIN_RULES:
+    for name, key, threshold_name, higher, bound in MARGIN_RULES:
         check = by_name.get(name)
         value = None if check is None else check.measured.get(key)
         threshold = thresholds.get(threshold_name)
         if check is None or not check.passed or not isinstance(value, (int, float)) or not threshold:
             continue
-        margin = (value - threshold) / threshold if higher else (threshold - value) / threshold
+        scale = bound - threshold if bound is not None and bound > threshold else threshold
+        margin = (value - threshold) / scale if higher else (threshold - value) / scale
         if 0 <= margin < NEAR_THRESHOLD_FRACTION:
             rows.append(
                 {
@@ -376,8 +379,8 @@ class ReportGenerator:
         marginal = near_threshold(run.checks, thresholds)
         if marginal:
             parts.append(
-                f"<p class='warn'>Passed within {NEAR_THRESHOLD_FRACTION:.0%} of the threshold "
-                "(a small change in content or seed could fail them):</p>"
+                f"<p class='warn'>Passed within {NEAR_THRESHOLD_FRACTION:.0%} of the threshold, or of the "
+                "headroom to 1 for SSIM and R^2 (a small change in content or seed could fail them):</p>"
                 "<table class='kv'><tr><th>Check</th><th>Measured</th><th>Threshold</th><th>Margin</th></tr>"
             )
             parts += [
@@ -393,7 +396,7 @@ class ReportGenerator:
         skipped += [
             f"{check.name}: {check.detail or 'not measured'}"
             for check in run.checks
-            if check.passed is None and _kind(check) != "report only"
+            if check.passed is None and "report" not in check.target
         ]
         if skipped:
             parts.append("<p class='warn'>Skipped, fallen back or no-op features in this run:</p><ul>")

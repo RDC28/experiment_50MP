@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
+from synthraw.exposure import MAX_DEVELOPMENT_SHIFT_EV, MIN_DEVELOPMENT_SHIFT_EV
 from synthraw.libraw_validator import HardValidationError
 
 ADOBE_GAMMA = 563 / 256
@@ -72,7 +73,7 @@ class TIFFWriter:
             raise ValueError("rows_per_strip must be a positive integer")
         if not math.isfinite(baseline_exposure_ev):
             raise ValueError("baseline_exposure_ev must be finite")
-        shift = float(2.0 ** min(3.0, max(-2.0, baseline_exposure_ev)))
+        shift = float(2.0 ** min(MAX_DEVELOPMENT_SHIFT_EV, max(MIN_DEVELOPMENT_SHIFT_EV, baseline_exposure_ev)))
         path = Path(path)
         if path.resolve() == Path(dng_path).resolve():
             raise ValueError("TIFF destination must differ from the source DNG")

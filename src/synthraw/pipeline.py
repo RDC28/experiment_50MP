@@ -505,7 +505,7 @@ class PipelineRun:
         ProvenanceWriter().write(self.groups["optics"], self.path("metadata", "optical_parameters.json"))
 
     def electrons_noise(self) -> None:
-        from synthraw.exposure import exposure_and_gain
+        from synthraw.exposure import exposure_and_gain, placement_clamp_note
         from synthraw.sensor import ElectronSignalSimulator, realisation_noise_seeds
 
         sensor = self.camera_profile.sensor
@@ -531,6 +531,10 @@ class PipelineRun:
             self.config, exposure, self.camera_profile.camera, hdr_peak=peak if peak > 0 else None
         )
         sensor.update(gain_records)
+        clamp_note = placement_clamp_note(gain_records)
+        if clamp_note is not None:
+            self.fallbacks.append(clamp_note)
+            self.log(clamp_note)
         self.analogue_gain = gain_records["applied_analogue_gain"].value
         # The DNG BaselineExposure is the push that undoes this placement; the posterior record follows it.
         self.baseline_exposure_ev = round(gain_records["applied_baseline_exposure_ev"].value, 4)

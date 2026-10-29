@@ -261,6 +261,7 @@ class CameraProfileManager:
                 raise ValueError("Reference RAW has invalid black/white levels")
             if wb.size < 3 or not np.isfinite(wb[:3]).all() or np.any(wb[:3] <= 0):
                 raise ValueError("Reference RAW has no valid camera white balance")
+            sample_span = profile.sensor["WhiteLevel"].value - profile.sensor["BlackLevel"].value
             for field, value in {
                 "sensor_width": raw.sizes.raw_width,
                 "sensor_height": raw.sizes.raw_height,
@@ -279,6 +280,20 @@ class CameraProfileManager:
                 "WhiteLevel": raw.white_level,
             }.items():
                 measured(profile.sensor, field, value)
+            # A conversion gain measured at the built-in sample's levels does not carry over to other levels:
+            # map full well to the reference's ADC range instead, as the pipeline does without a measurement.
+            span = white - float(levels.mean())
+            gain = profile.sensor.get("conversion_gain_e_per_dn")
+            if gain is not None and gain.method.startswith(ILCE1M2_SAMPLE_METHOD) and span != sample_span:
+                profile.sensor["conversion_gain_e_per_dn"] = FieldRecord(
+                    "conversion_gain_e_per_dn",
+                    profile.sensor["full_well_electrons"].value / span,
+                    Provenance.FABRICATED,
+                    "Full-well to the reference RAW's ADC range; the ILCE-1M2 sample gain was measured at "
+                    "different black/white levels",
+                    unit="electrons/DN",
+                    dependencies=["full_well_electrons", "WhiteLevel", "BlackLevel"],
+                )
             measured(profile.camera, "camera_whitebalance", wb.tolist())
             # The reference capture's white balance, not the synthetic exposure's AsShotNeutral.
             measured(profile.camera, "reference_as_shot_neutral", (wb[1] / wb[:3]).tolist())

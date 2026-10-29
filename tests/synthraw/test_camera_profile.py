@@ -222,3 +222,34 @@ def test_native_config_identity_and_margin_geometry(settings):
     assert profile.sensor["adc_bits"].value == config.ADC_BITS
     assert profile.sensor["default_crop_origin"].value == list(geometry.default_crop_origin)
     assert profile.sensor["default_crop_size"].value == list(geometry.default_crop_size)
+
+
+def test_reference_raw_levels_replace_the_sample_conversion_gain(tmp_path):
+    from dataclasses import replace
+
+    import numpy as np
+
+    from synthraw.dng_metadata import DNGMetadataBuilder
+    from synthraw.dng_writer import DNGWriter
+    from synthraw.geometry import TargetGeometryPlanner
+
+    geometry = replace(
+        TargetGeometryPlanner().plan(64, 48),
+        outpaint_bands=(),
+        width=64,
+        height=48,
+        active_area=(0, 0, 48, 64),
+        default_crop_origin=(0, 0),
+        default_crop_size=(64, 48),
+    )
+    # A 12-bit reference: the 14-bit sample's measured gain no longer maps full well onto its range.
+    records = DNGMetadataBuilder().build(
+        geometry, cfa_phase="RGGB", as_shot_neutral=(0.5, 1, 0.75), black_level=256, white_level=4095
+    )
+    path = DNGWriter().write(tmp_path / "reference.dng", np.full((48, 64), 1024, dtype=np.uint16), records)
+    sample = CameraProfileManager().build().sensor["conversion_gain_e_per_dn"]
+    assert sample.provenance == Provenance.MEASURED
+    gain = CameraProfileManager().build(source="REFERENCE_RAW", reference_raw=path).sensor["conversion_gain_e_per_dn"]
+    assert gain.value == pytest.approx(33000.0 / (4095 - 256))
+    assert gain.provenance == Provenance.FABRICATED
+    assert "reference RAW" in gain.method
