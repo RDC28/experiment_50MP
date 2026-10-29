@@ -1105,3 +1105,25 @@ hot-current contribution. Repository-wide ruff and diff whitespace checks pass.
 No models, notebooks, downloads, full-scale jobs, background services or commits
 were started. Dual conversion gain, defect-mask export, optics/final metadata and
 full-scale/scientific Colab validation remain unresolved.
+
+## Full sensor increment: bounded defect-mask output API
+
+`BayerSensor.process(..., defect_mask=...)` optionally writes a caller-owned,
+sensor-sized uint8 memmap using the exact defect selections applied to ADC
+simulation. Bit 0 records hot selection, bit 1 dead selection, and value 3 retains
+overlap despite dead-charge precedence. Every row is overwritten and the buffer
+is flushed on success. Shape, dtype, writability and buffer separation are checked
+before ADC writes. Working memory remains row-bounded and requesting the mask
+consumes no additional random draws. Stage evidence distinguishes mask writing
+from occupancy reporting. Flags describe synthetic selections, not detected
+camera defects or guaranteed changes to ADC codes.
+
+Validation: all 379 lightweight v5 tests pass under the shared resource lock.
+Tests independently reconstruct flags, check partial/zero/full occupancy, overlaps,
+strip invariance, persisted bytes, unchanged ADC output and pre-write rejection of
+invalid/aliased buffers. Repository-wide ruff and diff whitespace checks pass.
+The pipeline does not yet request or package this optional buffer; run-bundle
+artifact export and notebook wiring remain pending. Dual conversion gain,
+optics/final metadata and full-scale/scientific Colab validation also remain
+unresolved. No notebook, model, download, full-scale job, background service or
+commit was started.

@@ -173,3 +173,55 @@ def test_realized_defect_occupancy_matches_seeded_maps(tmp_path, hot_fraction, d
     assert occupancy["hot_and_dead"] == np.count_nonzero(hot & dead)
     assert occupancy["hot_surviving_dead_override"] == np.count_nonzero(hot & ~dead)
     np.testing.assert_array_equal(a[dead], camera.black_level)
+
+
+@pytest.mark.parametrize("hot_fraction,dead_fraction", [(0, 0), (1, 1), (0.4, 0.3)])
+def test_disk_backed_defect_mask_matches_simulation(tmp_path, hot_fraction, dead_fraction):
+    camera = CameraHypothesis(shot_noise=False, read_noise=False)
+    effects = SensorEffects(hot_pixel_fraction=hot_fraction, dead_pixel_fraction=dead_fraction)
+    baseline, occupancy_report = simulate(tmp_path, effects)
+    source = np.full((24, 32, 3), 0.2)
+    adc = np.memmap(tmp_path / "masked-adc", mode="w+", dtype=np.uint16, shape=(24, 32))
+    mask = np.memmap(tmp_path / "defects", mode="w+", dtype=np.uint8, shape=(24, 32))
+    try:
+        for strip_rows in (1, 7):
+            mask[:] = 255  # Every site must be overwritten, including zero-effect sites.
+            report = BayerSensor(camera, effects).process(source, adc, strip_rows=strip_rows, defect_mask=mask)
+            np.testing.assert_array_equal(adc, baseline)
+            seed = camera.stream_seed("sensor_body")
+            for y in range(24):
+                hot = np.random.default_rng(np.random.SeedSequence([seed, 5, y])).random(32) < hot_fraction
+                dead = np.random.default_rng(np.random.SeedSequence([seed, 6, y])).random(32) < dead_fraction
+                np.testing.assert_array_equal(mask[y], hot.astype(np.uint8) | (dead.astype(np.uint8) << 1))
+            occupancy = occupancy_report["body_effects"]["defect_occupancy"]
+            assert np.count_nonzero(mask & 1) == occupancy["hot_selected"]
+            assert np.count_nonzero(mask & 2) == occupancy["dead_selected"]
+            assert np.count_nonzero(mask == 3) == occupancy["hot_and_dead"]
+            assert report["body_effects"]["defect_mask"]["written"] is True
+        persisted = np.memmap(tmp_path / "defects", mode="r", dtype=np.uint8, shape=(24, 32))
+        try:
+            np.testing.assert_array_equal(persisted, mask)
+        finally:
+            persisted._mmap.close()
+        assert occupancy_report["body_effects"]["defect_mask"]["written"] is False
+    finally:
+        adc._mmap.close()
+        mask._mmap.close()
+
+
+def test_defect_mask_rejected_before_adc_writes(tmp_path):
+    source = np.zeros((2, 4, 3))
+    adc = np.memmap(tmp_path / "adc", mode="w+", dtype=np.uint16, shape=(2, 4))
+    alias = np.memmap(tmp_path / "adc", mode="r+", dtype=np.uint8, shape=(2, 4))
+    readonly = np.memmap(tmp_path / "readonly", mode="w+", dtype=np.uint8, shape=(2, 4))
+    readonly.flags.writeable = False
+    try:
+        adc[:] = 123
+        for invalid in (np.zeros((2, 4), dtype=np.uint8), adc, alias, readonly):
+            with pytest.raises(ValueError, match="defect_mask"):
+                BayerSensor().process(source, adc, defect_mask=invalid)
+            np.testing.assert_array_equal(adc, 123)
+    finally:
+        alias._mmap.close()
+        readonly._mmap.close()
+        adc._mmap.close()

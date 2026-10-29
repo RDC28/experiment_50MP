@@ -533,3 +533,11 @@ as no-op. The DNG NoiseProfile remains the baseline temporal approximation and
 does not describe the nonlinear response. This is not measured Sony response,
 charge saturation, or dual conversion gain. Physical and full-scale Colab
 validation remain unresolved.
+
+The low-level sensor API can optionally write exact synthetic defect selections:
+pass a separate writable `np.memmap` with dtype `uint8` and the final sensor's
+`(height, width)` shape as `BayerSensor.process(..., defect_mask=mask)`. Bit 0
+means hot selected, bit 1 dead selected; 3 preserves overlap. The caller owns
+buffer closure and must discard partial ADC/mask buffers after failure. These
+flags are uncalibrated selections, not detected defects. The run-bundle pipeline
+and Colab notebook do not yet export this optional mask.
