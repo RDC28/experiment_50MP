@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 from prd_v5.analytic import AnalyticISP
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.hypothesis import CameraHypothesis
-from prd_v5.optics import Vignetting
+from prd_v5.optics import Distortion, Vignetting
 
 
 @pytest.fixture
@@ -28,6 +28,7 @@ def test_schema_covers_every_implemented_setting(schema):
     validator.validate(json.loads(AnalyticRunConfig().to_json()))
     config = AnalyticRunConfig(
         vignetting=Vignetting(0.7),
+        distortion=Distortion(k1=0.1, k2=-0.1, p1=0.02, p2=-0.02),
         accept_experimental_optics=True,
         camera=CameraHypothesis(seed=2**64 - 1, black_level=0, iso=32000, read_noise_e=0),
         isp=AnalyticISP(white_balance=(2, 1, 3), inverse_smoothstep=True),
@@ -42,6 +43,9 @@ def test_schema_covers_every_implemented_setting(schema):
     "value",
     [
         {"unknown": 1},
+        {"distortion": {"k1": 0.26}},
+        {"distortion": {"p1": True}},
+        {"distortion": {"unknown": 0}},
         {"vignetting": {"corner_strength": 1.1}},
         {"vignetting": {"unknown": 0}},
         {"accept_experimental_optics": 1},

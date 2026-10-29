@@ -602,3 +602,15 @@ This uncalibrated synthetic API is not yet wired into configuration, the runner
 or notebook. It does not estimate lenses, invert a measured projection, conserve
 flux via a Jacobian, or perform antialiasing. Full-scale memory/I/O and physical
 validation remain Colab-only work.
+
+Single-run experimental distortion is available with
+`AnalyticRunConfig(distortion=Distortion(k1=0.1, p1=0.01),
+accept_experimental_optics=True)` from `prd_v5.optics`. All four coefficients
+(`k1`, `k2`, `p1`, `p2`) serialize in config.json and the JSON schema. The backward
+bilinear edge-extension map runs after vignetting and before CFA/electron noise.
+Nonzero coefficients require another 12 bytes per target photosite of scratch
+disk; zero coefficients bypass the mapping and allocate no extra scratch.
+Stage evidence and per-coefficient synthetic registry records distinguish
+execution from the zero-effect bypass. This is an uncalibrated resampling prior,
+not calibrated lens inversion. Notebook/panel controls and paired completion
+reporting remain pending, as do full-scale Colab and physical validation.

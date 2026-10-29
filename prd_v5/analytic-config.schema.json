@@ -63,6 +63,36 @@
     "accept_experimental_optics": {
       "type": "boolean",
       "default": false
+    },
+    "distortion": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "k1": {
+          "type": "number",
+          "minimum": -0.25,
+          "maximum": 0.25,
+          "default": 0
+        },
+        "k2": {
+          "type": "number",
+          "minimum": -0.25,
+          "maximum": 0.25,
+          "default": 0
+        },
+        "p1": {
+          "type": "number",
+          "minimum": -0.25,
+          "maximum": 0.25,
+          "default": 0
+        },
+        "p2": {
+          "type": "number",
+          "minimum": -0.25,
+          "maximum": 0.25,
+          "default": 0
+        }
+      }
     }
   },
   "$defs": {

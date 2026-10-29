@@ -89,3 +89,52 @@ def test_prewrite_validation(tmp_path):
         with pytest.raises(ValueError, match="nonnegative"):
             Distortion().process(source, dest, strip_rows=1)
         assert np.all(dest == -5)
+
+
+def test_pipeline_distortion_replay_roundtrip_and_strip_invariance(tmp_path):
+    from dataclasses import replace
+
+    import rawpy
+    from PIL import Image
+
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.hypothesis import CameraHypothesis
+
+    image = np.zeros((32, 32, 3), dtype=np.uint8)
+    image[:, 10:20] = 180
+    source = tmp_path / "source.png"
+    Image.fromarray(image).save(source)
+    base = AnalyticRunConfig(
+        camera=CameraHypothesis(shot_noise=False, read_noise=False),
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+    )
+    active = replace(base, distortion=Distortion(k1=0.2, p1=0.1), accept_experimental_optics=True)
+    captures = []
+    for i, config in enumerate((base, replace(active, strip_rows=1), replace(active, strip_rows=7))):
+        restored = AnalyticRunConfig.from_json(config.to_json())
+        assert restored == config
+        output = tmp_path / str(i)
+        report = restored.run(source, output)
+        with rawpy.imread(str(output / "capture.dng")) as raw:
+            captures.append(raw.raw_image.copy())
+            assert raw.raw_image.dtype == np.uint16
+        stage = report["stages"]["distortion"]
+        assert stage["status"] == ("experimental" if i else "zero_effect")
+        assert stage["changed_pixels"] > 0 if i else stage["changed_pixels"] == 0
+        assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+        assert report["registry"]["optics.distortion.k1"]["value"] == config.distortion.k1
+        assert AnalyticRunConfig.from_json((output / "config.json").read_text()) == config
+        if i:
+            assert "brown_conrady_backward" in (output / "report.html").read_text()
+    assert np.count_nonzero(captures[0] != captures[1]) > 32
+    np.testing.assert_array_equal(captures[1], captures[2])
+
+
+def test_distortion_config_acceptance_and_types():
+    from prd_v5.config import AnalyticRunConfig
+
+    with pytest.raises(ValueError, match="acceptance"):
+        AnalyticRunConfig(distortion=Distortion(k1=0.1))
+    with pytest.raises(ValueError, match="Distortion"):
+        AnalyticRunConfig(distortion={})

@@ -1287,3 +1287,25 @@ degenerate dimensions and rejection before writes. All 448 lightweight v5 tests
 pass under the shared resource lock. Repository-wide ruff, changed-file formatting
 and whitespace checks pass. No notebook, model, download, full-frame job,
 background service or commit was started.
+
+## Full optics increment: single-run distortion integration (iteration 11)
+
+`AnalyticRunConfig` and its strict JSON schema now retain all four validated
+backward-map coefficients and explicit experimental acceptance. The single-run
+pipeline executes disk-backed distortion after radial attenuation and before
+CFA/electron-domain noise, with an identity bypass requiring no extra scratch.
+Active mapping adds 12 bytes per photosite of scratch disk. JSON/HTML stage
+records expose changed pixels, out-of-footprint samples and interpolation limits;
+each coefficient has a synthetic registry record and config replay evidence.
+
+Tiny end-to-end edge output tests independently open DNG pixels through
+LibRaw, require the TIFF gate, observe a nonzero ADC effect, and verify exact
+pixel invariance across strip sizes. API numerical tests remain the independent
+sampling arithmetic oracle. Defaults preserve the existing pixel path.
+Notebook controls, paired completion evidence, physical calibration, antialiasing,
+flux correction and full-scale Colab validation remain unresolved. No calibrated
+lens inversion or complete full-optics implementation is claimed.
+
+Validation: 453 lightweight v5 tests pass under the shared machine lock;
+repository-wide `python -m ruff check .`, changed-Python formatting and
+`git diff --check` pass. No local full-scale execution was performed.
