@@ -80,3 +80,65 @@ def test_invalid_mode_and_nonboolean_gate_are_rejected():
         resolve_field("iso", None, "UNKNOWN")
     with pytest.raises(ValueError, match="booleans"):
         resolve_field("iso", None, "AUTO", fabricate_unobservable_metadata=1)
+
+
+def test_camera_resolution_recomputes_electronics_and_preserves_base():
+    from prd_v5.fields import resolve_camera
+
+    base = CameraHypothesis()
+    camera, records = resolve_camera(base, {"iso": "USER"}, {"iso": [evidence("USER_SET", 800, units="ISO")]})
+    assert camera.iso == 800 and camera.analogue_gain == 8
+    assert camera.saturation_e == base.full_well_e / 8
+    assert camera.noise_profile[0] == 8 / base.full_well_e
+    assert base.iso == 100
+    selected = {record.name: record for record in records}
+    assert selected["iso"].mode == "USER" and selected["iso"].provenance == "USER_SET"
+    assert selected["full_well_e"].provenance == "SYNTHETIC"
+    assert selected["full_well_e"].value == base.full_well_e
+
+
+@pytest.mark.parametrize("mode", ["USER", "ESTIMATE"])
+def test_camera_resolution_never_silently_reuses_missing_evidence(mode):
+    from prd_v5.fields import resolve_camera
+
+    with pytest.raises(ValueError, match="Unresolved camera input: iso"):
+        resolve_camera(CameraHypothesis(), {"iso": mode})
+
+
+@pytest.mark.parametrize("name", ["white_level", "gps", "misspelled"])
+def test_camera_resolution_rejects_unknown_and_derived_inputs(name):
+    from prd_v5.fields import resolve_camera
+
+    for modes, candidates in [({name: "AUTO"}, {}), ({}, {name: []})]:
+        with pytest.raises(ValueError, match="Unknown or derived"):
+            resolve_camera(CameraHypothesis(), modes, candidates)
+
+
+def test_camera_resolution_validates_selected_domains_and_explicit_empty_candidates():
+    from prd_v5.fields import resolve_camera
+
+    with pytest.raises(ValueError, match="ISO"):
+        resolve_camera(CameraHypothesis(), {"iso": "USER"}, {"iso": [evidence("USER_SET", 50, units="ISO")]})
+    with pytest.raises(ValueError, match="Unresolved"):
+        resolve_camera(CameraHypothesis(), {}, {"iso": []})
+    camera, records = resolve_camera(CameraHypothesis(), {})
+    assert camera == CameraHypothesis() and len(records) == 11
+
+
+def test_resolved_camera_drives_tiny_adc(tmp_path):
+    import numpy as np
+
+    from prd_v5.fields import resolve_camera
+    from prd_v5.sensor import BayerSensor
+
+    camera, _ = resolve_camera(
+        CameraHypothesis(shot_noise=False, read_noise=False),
+        {"iso": "ESTIMATE"},
+        {"iso": [evidence("ESTIMATED", 400, units="ISO")]},
+    )
+    dest = np.memmap(tmp_path / "adc", mode="w+", dtype=np.uint16, shape=(2, 2))
+    try:
+        BayerSensor(camera).process(np.full((2, 2, 3), 0.125), dest)
+        np.testing.assert_array_equal(dest, round(512 + 0.5 * (16383 - 512)))
+    finally:
+        dest._mmap.close()

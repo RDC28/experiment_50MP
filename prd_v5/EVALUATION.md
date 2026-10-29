@@ -2,6 +2,24 @@
 
 Evaluated 2026-10-29 before implementation. `PRD_v5.md` is the supplied document copied byte for byte. This evaluation does not rewrite it. The deliverable is one new Colab notebook under `prd_v5/notebooks/`, backed by composable, tested Python. No notebook, model download, full-frame inference, or training is permitted on the 8 GB development Mac. Full-suite tests must use `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
+## Implementation evidence: twenty-fifth MVP increment
+
+`fields.resolve_camera` bridges supplied field evidence to a validated frozen
+camera hypothesis. It resolves every executable camera input atomically, retains
+selection records and recomputes coupled gain, saturation and NoiseProfile.
+Unspecified modes preserve explicit base hypotheses through AUTO. Explicit
+candidate lists replace base evidence; missing USER/ESTIMATE values fail without
+fallback. Unknown/derived inputs, mismatched units and invalid physical domains
+are rejected. No estimator or sampler is implied. Selection records remain a
+separate return value; runner provenance and JSON/panel integration are pending.
+
+Validation: all 197 lightweight v5 tests pass under the shared lock, including
+resolved ISO driving a tiny disk-backed Bayer/ADC output, missing-evidence
+rejection, domain checks and preserved base state. Repository-wide ruff and
+changed Python formatting pass. Full-scale Colab validation, complete MVP panel
+and notebook, and later ordered phases remain unresolved. No model, notebook,
+full-frame job, commit or background service ran.
+
 ## Implementation evidence: twenty-fourth MVP increment
 
 `fields.resolve_field` now executes all four PRD field modes against supplied

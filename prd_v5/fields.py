@@ -1,10 +1,14 @@
 """Resolve field modes from actual evidence, without inventing estimators."""
 
 import copy
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 from prd_v5.hypothesis import CameraField, FieldMode
+
+if TYPE_CHECKING:
+    from prd_v5.hypothesis import CameraHypothesis
 
 # Identity aliases used by the PRD and existing camera registry.
 USER_ONLY_FIELDS = frozenset({"gps", "serial_number", "camera_serial", "lens_serial", "timestamp", "shutter_count"})
@@ -70,3 +74,46 @@ def resolve_field(
             # Detach nested JSON values as well as the immutable record itself.
             return replace(copy.deepcopy(candidate), mode=mode)
     return empty
+
+
+def resolve_camera(
+    base: "CameraHypothesis",
+    modes: "Mapping[str, FieldMode]",
+    candidates: "Mapping[str, Iterable[CameraField]] | None" = None,
+) -> tuple["CameraHypothesis", tuple[CameraField, ...]]:
+    """Resolve executable camera inputs atomically against a shared hypothesis.
+
+    Unspecified modes use AUTO with the base's explicit synthetic hypothesis.
+    Supplied candidate lists replace that default evidence for their field.
+    Missing estimates/user values fail rather than silently reuse the base.
+    Derived electronics are recomputed by CameraHypothesis, never overridden.
+    Returned records describe input selection only; existing runner provenance
+    does not automatically incorporate them. No estimation or sampling runs.
+    """
+    from dataclasses import fields
+
+    from prd_v5.hypothesis import CameraHypothesis
+
+    if not isinstance(base, CameraHypothesis):
+        raise ValueError("base must be a CameraHypothesis")
+    names = {field.name for field in fields(base)}
+    supplied = {} if candidates is None else dict(candidates)
+    unknown = (set(modes) | set(supplied)) - names
+    if unknown:
+        raise ValueError(f"Unknown or derived camera inputs: {sorted(unknown)}")
+    registry = base.registry()
+    resolved = []
+    for field in fields(base):
+        default = CameraField(**registry[field.name])
+        result = resolve_field(
+            field.name,
+            default.units,
+            modes.get(field.name, "AUTO"),
+            supplied.get(field.name, (default,)),
+        )
+        if result.value is None:
+            raise ValueError(f"Unresolved camera input: {field.name} ({result.mode})")
+        resolved.append(result)
+    # Construct only after every field resolves; this enforces coupled domains.
+    camera = CameraHypothesis(**{record.name: record.value for record in resolved})
+    return camera, tuple(resolved)

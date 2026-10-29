@@ -250,3 +250,13 @@ Identity fields require USER mode. For other unobservable metadata, callers must
 set `unobservable_metadata=True`; synthetic/prior values then require
 `fabricate_unobservable_metadata=True` (default false), even in AUTO. This API
 is not yet wired into the analytic JSON configuration or a notebook panel.
+
+`fields.resolve_camera(base_camera, modes, candidates)` resolves executable
+camera inputs together and returns `(validated_camera, selection_records)`.
+Modes are keyed by `CameraHypothesis` input names; evidence must use the units
+in `base_camera.registry()`. Unspecified modes use AUTO and the base synthetic
+hypothesis. Supplied evidence lists replace that field's base candidate.
+Unresolved USER/ESTIMATE inputs fail, as do invalid domains and attempts to set
+derived electronics. Use the returned camera in `AnalyticRunConfig(camera=...)`;
+selection records must be retained separately and are not automatically inserted
+into runner provenance. JSON/panel integration remains pending.
