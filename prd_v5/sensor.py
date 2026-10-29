@@ -130,6 +130,7 @@ class BayerSensor:
         shot_seed = camera.stream_seed("sensor_shot")
         read_seed = camera.stream_seed("sensor_read")
         low = high = 0
+        hot_sites = dead_sites = overlapping_sites = 0
         for start in range(0, source.shape[0], strip_rows):
             block = source[start : start + strip_rows]
             if not np.isfinite(block).all() or np.any(block < 0):
@@ -147,11 +148,15 @@ class BayerSensor:
                     electrons *= np.maximum(body(0, y).normal(1, effects.prnu_sigma, width), 0)
                 if effects.dead_pixel_fraction:
                     dead = body(6, y).random(width) < effects.dead_pixel_fraction
+                    dead_sites += int(np.count_nonzero(dead))
                     electrons[dead] = 0
                 else:
                     dead = None
                 if effects.hot_pixel_fraction:
                     hot = body(5, y).random(width) < effects.hot_pixel_fraction
+                    hot_sites += int(np.count_nonzero(hot))
+                    if dead is not None:
+                        overlapping_sites += int(np.count_nonzero(hot & dead))
                     electrons[hot] += effects.hot_pixel_e_per_s * camera.shutter_s
                 electrons += dark_mean
                 if dead is not None:
@@ -184,6 +189,17 @@ class BayerSensor:
                 "parameters": asdict(effects),
                 "states": effects.states(),
                 "dark_expectation_e": dark_mean,
+                "defect_occupancy": {
+                    "photosites": int(source.shape[0] * width),
+                    "hot_selected": hot_sites,
+                    "dead_selected": dead_sites,
+                    "hot_and_dead": overlapping_sites,
+                    "hot_surviving_dead_override": hot_sites - overlapping_sites,
+                    "semantics": (
+                        "Realized synthetic selections, not detected defects or necessarily changed ADC codes; "
+                        "dead overrides hot charge, read/offset electronics remain; no defect mask exported"
+                    ),
+                },
                 "nonlinearity_model": "q_out = q / (1 + k*q/full_well_e); after shot, before read; k in [0,1]",
                 "body_seed": camera.stream_seed("sensor_body"),
                 "order": "CFA, PRNU, defects and dark expectations, shot, charge compression, read, DSNU/FPN, ADC",

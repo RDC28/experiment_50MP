@@ -98,7 +98,9 @@ def test_paired_roundtrip_records_body_effect_and_adc(tmp_path):
     source = tmp_path / "source.png"
     Image.fromarray(np.zeros((32, 32, 3), dtype=np.uint8)).save(source)
     camera = CameraHypothesis(shutter_s=1, shot_noise=False, read_noise=False)
-    effects = SensorEffects(dark_current_e_per_s=100, nonlinearity_compression=0.5)
+    effects = SensorEffects(
+        dark_current_e_per_s=100, nonlinearity_compression=0.5, hot_pixel_fraction=1, hot_pixel_e_per_s=0
+    )
     config = AnalyticRunConfig(
         camera=camera, sensor_effects=effects, target_megapixels=0.001024, assume_unprofiled_srgb=True
     )
@@ -111,6 +113,9 @@ def test_paired_roundtrip_records_body_effect_and_adc(tmp_path):
             )
         manifest = json.loads((child / "manifest.json").read_text())
         assert manifest["stages"]["sensor"]["body_effects"]["dark_expectation_e"] == 100
+        occupancy = manifest["stages"]["sensor"]["body_effects"]["defect_occupancy"]
+        assert occupancy["hot_selected"] == occupancy["photosites"] == 1024
+        assert occupancy["dead_selected"] == occupancy["hot_and_dead"] == 0
         assert manifest["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
         replay = AnalyticRunConfig.from_json((child / "config.json").read_text())
         assert replay.sensor_effects == effects
@@ -144,3 +149,27 @@ def test_charge_compression_after_shot_before_read(tmp_path):
 def test_invalid_charge_compression(value):
     with pytest.raises(ValueError):
         SensorEffects(nonlinearity_compression=value)
+
+
+@pytest.mark.parametrize("hot_fraction,dead_fraction", [(0, 0), (1, 1), (0.4, 0.3)])
+def test_realized_defect_occupancy_matches_seeded_maps(tmp_path, hot_fraction, dead_fraction):
+    camera = CameraHypothesis(shot_noise=False, read_noise=False)
+    effects = SensorEffects(hot_pixel_fraction=hot_fraction, dead_pixel_fraction=dead_fraction)
+    a, report = simulate(tmp_path, effects, camera=camera, strip_rows=1)
+    b, other = simulate(tmp_path, effects, camera=camera, strip_rows=7)
+    np.testing.assert_array_equal(a, b)
+    occupancy = report["body_effects"]["defect_occupancy"]
+    assert occupancy == other["body_effects"]["defect_occupancy"]
+    seed = camera.stream_seed("sensor_body")
+    hot = np.array(
+        [np.random.default_rng(np.random.SeedSequence([seed, 5, row])).random(32) < hot_fraction for row in range(24)]
+    )
+    dead = np.array(
+        [np.random.default_rng(np.random.SeedSequence([seed, 6, row])).random(32) < dead_fraction for row in range(24)]
+    )
+    assert occupancy["photosites"] == 24 * 32
+    assert occupancy["hot_selected"] == np.count_nonzero(hot)
+    assert occupancy["dead_selected"] == np.count_nonzero(dead)
+    assert occupancy["hot_and_dead"] == np.count_nonzero(hot & dead)
+    assert occupancy["hot_surviving_dead_override"] == np.count_nonzero(hot & ~dead)
+    np.testing.assert_array_equal(a[dead], camera.black_level)

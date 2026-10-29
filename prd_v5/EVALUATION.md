@@ -1086,3 +1086,22 @@ roundtrip with nonzero compression. Repository-wide `python -m ruff check .`
 passes. No notebook, model, full-scale processing or background service ran.
 Dual conversion gain, remaining optics/metadata work and real-response/full-scale
 Colab validation remain unresolved. No commits were made.
+
+## Full sensor increment: realized defect occupancy evidence
+
+Sensor-stage manifests now record total photosites, realized hot/dead selections,
+hot/dead overlaps and hot selections surviving the dead override. Counts use the
+existing row-bounded seeded maps without allocating full-frame masks or changing
+ADC behavior. They describe synthetic selections, not detected defects or proof
+of changed codes: zero hot-current rates, rounding and saturation can leave selected
+sites unchanged. Dead sites still retain read/offset electronics. Counts do not
+replace the still-pending defect-mask artifacts or physical calibration.
+
+Validation: all 375 lightweight v5 tests pass under the shared resource lock.
+Independent seeded-map reconstruction covers zero, complete and partial occupancy,
+dead precedence and strip invariance. Tiny paired DNG/independent-LibRaw/TIFF
+execution retains counts in both manifests, including hot selections with zero
+hot-current contribution. Repository-wide ruff and diff whitespace checks pass.
+No models, notebooks, downloads, full-scale jobs, background services or commits
+were started. Dual conversion gain, defect-mask export, optics/final metadata and
+full-scale/scientific Colab validation remain unresolved.
