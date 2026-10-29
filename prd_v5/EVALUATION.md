@@ -359,3 +359,22 @@ cleanup. Repository-wide ruff and changed Python formatting pass. No notebook,
 model, full-frame job, full suite or background service ran. Complete MVP
 configuration/registry and the notebook remain pending before fidelity. Later
 phases and Colab-only scientific/full-scale acceptance remain unresolved.
+
+## Implementation evidence: fourteenth MVP increment
+
+`registry.analytic_registry` extends the executed bundle's field records to source
+hash/header observations, explicit decoding policy, supplied analytic ISP values,
+geometry requests and derived sensor transforms/crops. Each record includes units,
+mode, provenance, method and validation limits. Synthetic assumptions are distinct
+from observations and arithmetic derivations; confidence/posterior remain null.
+Added records exclude source paths and private EXIF. Existing camera and user-only
+identity records retain their semantics. The runner and HTML now carry this richer
+partial registry without changing rendering or sensor defaults.
+
+Validation: 119 lightweight v5 tests pass under the heavy-test lock, including
+nondefault ISP/gain/geometry consistency, detached records, JSON serialization,
+privacy defaults and actual tiny source-to-independent-TIFF manifest evidence.
+Repository-wide ruff and changed Python formatting pass. No full suite, notebook,
+model, full-frame processing or background service ran. Complete configuration,
+remaining registry fields and the notebook remain MVP work before fidelity;
+later phases and Colab-only scientific/full-scale validation remain unresolved.

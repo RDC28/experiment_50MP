@@ -17,6 +17,7 @@ from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraHypothesis
 from prd_v5.inputs import InputInspector
 from prd_v5.raster import rasterize
+from prd_v5.registry import analytic_registry
 from prd_v5.report import render_report
 from prd_v5.roundtrip import develop_roundtrip
 from prd_v5.sensor import BayerSensor
@@ -132,7 +133,7 @@ def run_analytic(
         "source": source.to_dict(),
         "geometry": geometry.to_dict(),
         "camera": asdict(camera),
-        "registry": camera.registry(),
+        "registry": analytic_registry(camera, source, geometry, isp),
         "isp": asdict(isp),
         "stages": stages,
         "artifacts": artifacts,

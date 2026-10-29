@@ -44,6 +44,18 @@ def test_complete_bundle(tmp_path):
     assert "passed" in page
     assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
     assert report["registry"]["gps"]["value"] is None
+    registry = report["registry"]
+    assert registry["source.sha256"]["value"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert registry["source.width"]["provenance"] == "OBSERVED"
+    assert registry["source.colour_policy"]["provenance"] == "SYNTHETIC"
+    assert registry["isp.camera_to_srgb"]["provenance"] == "SYNTHETIC"
+    assert registry["geometry.width"]["value"] == report["geometry"]["width"]
+    assert registry["geometry.width"]["provenance"] == "DERIVED"
+    for record in registry.values():
+        assert record["confidence"] is None
+        assert record["posterior"] is None
+        assert record["method"] and record["validation"]
+    assert "source.path" not in registry
     with pytest.raises(FileExistsError):
         run_analytic(source, output, CameraHypothesis(), target_megapixels=0.001024)
 

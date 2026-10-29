@@ -142,3 +142,11 @@ not measured, separate from file roundtrip success. The manifest hashes the
 report; the report lists the image/mask artifacts rather than its own hash.
 Report export must succeed before the completion manifest is written. Further
 uncertainty masks, complete configuration/registry and the notebook remain pending.
+
+The analytic registry now also records observed source hashes/header dimensions,
+explicit source colour policy, supplied inverse-ISP hypotheses and derived sensor
+geometry in the same field schema as camera values. Namespaces `source.`, `isp.`
+and `geometry.` prevent collisions. Confidence/posteriors stay null; synthetic
+colour/exposure assumptions are not inferred capture truth. Source paths and
+private EXIF values are excluded from these added field records. This remains a
+partial registry, not the complete PRD field-mode configuration.
