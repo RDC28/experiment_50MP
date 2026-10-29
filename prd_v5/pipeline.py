@@ -21,6 +21,7 @@ from prd_v5.raster import rasterize
 from prd_v5.registry import analytic_registry
 from prd_v5.report import render_report
 from prd_v5.roundtrip import develop_roundtrip
+from prd_v5.runtime import runtime_record
 from prd_v5.sensor import BayerSensor
 
 
@@ -155,6 +156,7 @@ def run_analytic(
     report = {
         "schema_version": 1,
         "pipeline": "analytic MVP with explicit bilinear resampling; no learned inference",
+        "runtime": runtime_record(),
         "source": source.to_dict(),
         "geometry": geometry.to_dict(),
         "camera": asdict(camera),

@@ -62,6 +62,13 @@ or a precision-preserving 16-bit source decoder.
 
 ## Pending
 
+Successful analytic bundles record loaded Python, NumPy, Pillow, LittleCMS,
+tifffile, rawpy and native LibRaw versions in `manifest.json` and `report.html`.
+Only OS family and machine architecture are included, without host identity,
+paths or environment variables. Missing optional LittleCMS support is null.
+This runtime evidence helps diagnose replay differences; it does not pin an
+environment or establish cross-runtime bitwise reproducibility.
+
 The remaining MVP config, complete registry and new Colab notebook are not
 implemented yet. Fidelity, learned RAW, full sensor, full optics and final
 metadata follow MVP in that order. No HAT, HDR model or learned RAW checkpoint is

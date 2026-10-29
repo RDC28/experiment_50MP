@@ -43,6 +43,9 @@ def test_complete_bundle(tmp_path):
     assert report["artifacts"]["capture.dng"]["sha256"] in page
     assert "source_clipped.npy" in page
     assert "passed" in page
+    assert report["runtime"]["libraries"]["numpy"] == np.__version__
+    assert report["runtime"]["libraries"]["libraw"] in page
+    assert "Runtime and replay limits" in page
     assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
     assert report["registry"]["gps"]["value"] is None
     registry = report["registry"]

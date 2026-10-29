@@ -459,3 +459,21 @@ bitwise reproducibility or calibrated camera truth. Complete MVP configuration,
 registry and notebook remain pending before the later ordered phases. Colab-only
 full-scale/scientific validation remains unresolved. No model, notebook, full-frame
 job, full repository suite, commit or background service ran.
+
+## Implementation evidence: nineteenth MVP increment
+
+Analytic completion manifests and offline reports now retain loaded Python,
+NumPy, Pillow, LittleCMS, tifffile, rawpy and native LibRaw versions. OS family
+and machine architecture provide portable runtime context without hostname,
+user identity, paths or environment variables. Optional missing LittleCMS is
+null. These records support diagnosis of replay differences without claiming
+dependency pinning or cross-runtime reproducibility.
+
+Validation: all 166 lightweight v5 tests pass under the shared test lock.
+Tests cover actual tiny source-to-independent-TIFF runtime serialization and
+HTML evidence, native library version reporting, absent optional codec support,
+detached records and escaped runtime metadata. Repository-wide ruff and changed
+Python formatting checks pass. No model, notebook, full-frame job, full repository
+suite, commit or background service ran. Complete MVP configuration/registry and
+the notebook remain pending before later ordered phases. Full-scale Colab,
+cross-runtime replay and scientific acceptance remain unresolved.

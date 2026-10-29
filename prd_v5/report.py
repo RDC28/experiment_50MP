@@ -56,7 +56,8 @@ def render_report(report: dict) -> str:
         "<th scope='col'>Bytes</th><th scope='col'>SHA-256</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
         f"<h2>Stage evidence</h2>{stages}<h2>Mask semantics</h2>{masks}"
-        "<h2>Shared hypotheses and provenance</h2>"
+        + (detail("Runtime and replay limits", report["runtime"]) if "runtime" in report else "")
+        + "<h2>Shared hypotheses and provenance</h2>"
         + "".join(detail(name, report[name]) for name in ("source", "geometry", "camera", "isp", "registry", "limits"))
         + f"<h2>Pending work</h2><ul>{pending}</ul></body></html>"
     )

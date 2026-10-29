@@ -27,6 +27,7 @@ def test_report_escapes_untrusted_metadata_and_keeps_evidence():
         "pending": [payload, "Colab full-scale validation"],
         "masks": {"source_clipped": {"limitations": payload}},
         "stages": {"roundtrip": {"independent_validation": "passed tiny fixture"}},
+        "runtime": {"reproducibility": payload},
         **{name: {"value": payload} for name in ("source", "geometry", "camera", "isp", "registry", "limits")},
     }
     page = render_report(report)
