@@ -939,3 +939,21 @@ unexecuted cells and crop argument dispatch. Repository-wide ruff, changed Pytho
 formatting and diff whitespace checks pass. No notebook execution, heavy work,
 background process or commit started. HDR/profile selection, later ordered phases
 and full-scale/scientific Colab validation remain unresolved.
+# Explicit D65 profile selection evidence (iteration 44)
+
+`profile.resolve_d65_profile` converts an explicit user XYZ-to-camera D65 matrix
+into the analytic camera-to-linear-sRGB convention and resolves it as USER_SET
+evidence. The returned immutable ISP and selection records use the existing
+runner contracts. Singular, nonfinite and ill-conditioned matrices fail before
+execution. WB, exposure and tone remain unchanged. This selects a supplied
+hypothesis, not an inferred or verified camera calibration. Auxiliary DNG
+transforms, chromatic adaptation, dual-illuminant interpolation and notebook
+catalogue dispatch remain unsupported; DNG reports retain virtual-profile wording.
+
+Validation: 62 targeted lightweight profile, colour, DNG and field tests pass
+under the shared lock. Independent matrix arithmetic verifies actual tiny
+inverse-ISP pixel changes, forward consistency, selection provenance and matching
+derived DNG matrices under both D65 illuminants. Repository-wide ruff passes.
+No full-scale job, notebook, model, background service or commit was started.
+HDR, benchmark adapters, later ordered phases and Colab scientific validation
+remain unresolved.

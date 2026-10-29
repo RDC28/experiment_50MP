@@ -454,3 +454,13 @@ include these metrics in the printed pair result and saved pair manifest.
 The default `None` retains whole-raster metrics only. Coordinates refer to the
 developed TIFF including sensor margins, not source-image or DNG DefaultCrop
 coordinates. Selecting the same coordinates does not establish scene registration.
+# Explicit D65 profile hypothesis
+
+`profile.resolve_d65_profile(base_isp, xyz_to_camera, label="User profile")`
+converts a user-supplied D65 XYZ-to-camera matrix into the executable analytic
+camera-to-linear-sRGB transform. Pass the returned ISP in the run configuration
+and its records as ISP selections to retain USER_SET provenance. White balance,
+tone and exposure stay independent. Only a precomposed single D65 matrix is
+supported; calibration accuracy, chromatic adaptation and dual-illuminant
+interpolation are not established. The DNG writer retains its virtual synthetic
+profile designation. Notebook catalogue dispatch remains pending.
