@@ -146,3 +146,28 @@ explicit assumptions, no pixel decode and private EXIF omission.
 Repository-wide ruff passed. Python formatting is checked separately from the
 immutable PRD. Source decode/diagnostics and full-scale Colab validation remain
 pending, along with the rest of the MVP and later phases.
+
+## Implementation evidence: MVP bounded analytic unprocessing
+
+`prd_v5/analytic.py` adds an executable strip-based clean camera-RGB stage with
+piecewise sRGB inverse transfer, optional inverse smoothstep tone, inverse colour
+matrix, white-balance removal and exposure-gain removal. Parameters are immutable
+synthetic/user hypotheses; the identity default is virtual sRGB, never Sony
+calibration. Output is a caller-owned float32 memmap, flushed after processing;
+intermediates scale with strip height rather than frame height. Input may also
+be disk-backed. Invalid/nonfinite pixels, ill-conditioned matrices, invalid gains
+and overlapping buffers are rejected. A failure may leave partial output, which
+the caller must discard. Reports count clipped-source pixels and floored negative
+camera samples, explicitly leaving highlight recovery and radiance accuracy
+unmeasured. This API requires explicitly sRGB-encoded normalized pixels; it does
+not implement source decoding, ICC conversion, exposure inference or HDR.
+
+Validation: 13 new lightweight tests cover exact transfer anchors, a nontrivial
+matrix/WB/exposure/tone forward-inverse roundtrip, strip-size invariance, immutable
+parameters, clipping/gamut reports and invalid parameter/pixel/buffer contracts.
+All 69 v5 tests pass, repository-wide ruff passes and new Python files are
+formatted. NumPy was added only to the external lightweight dev environment.
+No full suite, full-frame processing, notebook, model or background service ran.
+Remaining MVP work includes source decode/ICC, geometry rasterization, CFA-first
+sensor/ADC, independent DNG/TIFF roundtrip, configuration, reports and notebook.
+All subsequent phases and Colab-only scientific validation remain pending.

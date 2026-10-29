@@ -31,6 +31,14 @@ transform and malformed ICC is blocked. Alpha and unsupported pixel modes are
 rejected. EXIF presence is recorded without copying private identity. This is
 not pixel decoding, clipping diagnostics, or source integrity certification.
 
+`analytic.py` adds strip-based sRGB inverse transfer, optional inverse smoothstep,
+inverse colour matrix, white-balance and exposure removal into a float32 memmap.
+It accepts normalized sRGB arrays, including disk-backed inputs, and reports
+clipped-source uncertainty and floored negative camera samples. Its identity
+profile is virtual sRGB, not Sony calibration; it performs no highlight recovery,
+source decoding or ICC conversion. Caller-owned partial output must be discarded
+if processing fails.
+
 ## Pending
 
 The remaining MVP config, complete registry, source decoding/diagnostics/ICC transforms, bounded
@@ -49,7 +57,7 @@ python -m pytest prd_v5/tests -q
 python -m ruff check .
 ```
 
-These tests use tiny source fixtures and camera/geometry arithmetic, with no model downloads. Run any full suite
+These tests use tiny source fixtures, analytic transforms and camera/geometry arithmetic, with no model downloads. Run any full suite
 only through `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
 ## Colab execution
