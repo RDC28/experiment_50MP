@@ -24,6 +24,7 @@ def test_complete_bundle(tmp_path):
         "developed.tiff",
         "source_support.npy",
         "source_clipped.npy",
+        "sensor_defects.npy",
         "manifest.json",
         "config.json",
         "report.html",
@@ -227,3 +228,52 @@ def test_duplicate_and_mismatched_isp_selections_rejected_before_io(tmp_path):
         with pytest.raises(ValueError):
             run_analytic(tmp_path / "missing.png", tmp_path / "out", CameraHypothesis(), isp_selections=records)
     assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("hot_fraction,dead_fraction", [(0, 0), (1, 1), (0.4, 0.3)])
+def test_bundle_defect_mask_matches_seeded_sensor_and_replay(tmp_path, hot_fraction, dead_fraction):
+    from dataclasses import replace
+
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.sensor import SensorEffects
+
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((32, 32, 3), 128, dtype=np.uint8)).save(source)
+    config = AnalyticRunConfig(
+        sensor_effects=SensorEffects(hot_pixel_fraction=hot_fraction, dead_pixel_fraction=dead_fraction),
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+        strip_rows=1,
+    )
+    first = config.run(source, tmp_path / "first")
+    second = replace(config, strip_rows=7).run(source, tmp_path / "second")
+    import rawpy
+    import tifffile
+
+    assert first["artifacts"]["sensor_defects.npy"] == second["artifacts"]["sensor_defects.npy"]
+    with rawpy.imread(str(tmp_path / "first/capture.dng")) as a:
+        with rawpy.imread(str(tmp_path / "second/capture.dng")) as b:
+            np.testing.assert_array_equal(a.raw_image, b.raw_image)
+    np.testing.assert_array_equal(
+        tifffile.imread(tmp_path / "first/developed.tiff"), tifffile.imread(tmp_path / "second/developed.tiff")
+    )
+    seed = config.camera.stream_seed("sensor_body")
+    mask = np.load(tmp_path / "first/sensor_defects.npy", mmap_mode="r", allow_pickle=False)
+    try:
+        assert mask.dtype == np.uint8 and mask.shape == (32, 32)
+        for y in range(32):
+            hot = np.random.default_rng(np.random.SeedSequence([seed, 5, y])).random(32) < hot_fraction
+            dead = np.random.default_rng(np.random.SeedSequence([seed, 6, y])).random(32) < dead_fraction
+            np.testing.assert_array_equal(mask[y], hot.astype(np.uint8) | (dead.astype(np.uint8) << 1))
+        evidence = first["masks"]["sensor_defects"]
+        assert evidence["occupancy"]["hot_selected"] == np.count_nonzero(mask & 1)
+        assert evidence["occupancy"]["dead_selected"] == np.count_nonzero(mask & 2)
+        assert evidence["occupancy"]["hot_and_dead"] == np.count_nonzero(mask == 3)
+    finally:
+        mask._mmap.close()
+    assert first["stages"]["sensor"]["body_effects"]["defect_mask"]["written"] is True
+    saved = json.loads((tmp_path / "first/manifest.json").read_text())
+    assert saved["masks"]["sensor_defects"] == first["masks"]["sensor_defects"]
+    path = tmp_path / "first/sensor_defects.npy"
+    assert first["artifacts"][path.name]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert "sensor_defects.npy" in (tmp_path / "first/report.html").read_text()

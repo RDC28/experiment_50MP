@@ -1127,3 +1127,26 @@ artifact export and notebook wiring remain pending. Dual conversion gain,
 optics/final metadata and full-scale/scientific Colab validation also remain
 unresolved. No notebook, model, download, full-scale job, background service or
 commit was started.
+
+## Full sensor increment: packaged defect-selection artifacts
+
+The single-run pipeline and sequential paired/Colab runner now export
+`sensor_defects.npy` from the exact sensor API flags after the independent
+DNG/TIFF image gate. Both the working mask and packaged uint8 NPY are disk-backed;
+copying uses bounded row strips. Temporary mappings close on success/failure.
+Manifest hashes, shape, full-sensor coordinates, bit meanings, occupancy counts
+and scientific limits survive JSON and offline HTML reporting. Zero priors emit
+all-zero masks without changing ADC behavior or seeds. The additional disk budget
+is one byte per photosite for each working and packaged mask. No new panel switch
+is required: masks follow the existing unconditional mask-output behavior.
+
+Validation: tiny actual PNG-to-DNG-to-independent-LibRaw/TIFF runs cover zero,
+complete and partial defect fractions, independently reconstructed seeded flags,
+overlap counts, persisted hashes, JSON/HTML evidence, strip-invariant decoded
+RAW/TIFF pixels and identical mask bytes. DNG strip layout changes container
+bytes across strip heights, so pixel equality is the relevant invariant. Full-scale memory/I/O and scientific calibration remain
+Colab-only. Dual conversion gain, optics and final metadata remain unresolved.
+No notebook, model, download, heavy processing, background service or commit ran.
+
+All 382 lightweight v5 tests pass under the shared resource lock.
+Repository-wide ruff, changed Python formatting and diff whitespace checks pass.

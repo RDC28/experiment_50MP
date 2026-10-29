@@ -519,7 +519,7 @@ accept `ACCEPT_SENSOR_EXPERIMENT` for nonzero effects; disabled feature switches
 zero their corresponding amplitudes. Nonzero effects are uncalibrated experimental
 priors, not recovered sensor properties. Requested zero amplitudes report no-op.
 Dead sites retain read/offset electronics; dark/hot expectations scale with shutter.
-DNG NoiseProfile excludes these extended effects. Dual conversion gain and defect-mask exports are still pending.
+DNG NoiseProfile excludes these extended effects. Dual conversion gain remains pending. Run bundles export exact defect selections as described below.
 
 
 Experimental sensor nonlinearity: `SensorEffects(nonlinearity_compression=k)`
@@ -540,4 +540,9 @@ pass a separate writable `np.memmap` with dtype `uint8` and the final sensor's
 means hot selected, bit 1 dead selected; 3 preserves overlap. The caller owns
 buffer closure and must discard partial ADC/mask buffers after failure. These
 flags are uncalibrated selections, not detected defects. The run-bundle pipeline
-and Colab notebook do not yet export this optional mask.
+and the paired Colab runner now export these flags as `sensor_defects.npy` in each run bundle.
+The uint8 NPY is disk-backed, hashed in the manifest and described in the offline
+HTML report, including occupancy and overlap semantics. Export happens after
+the independent DNG/TIFF gate. It adds one byte per photosite on disk for the
+working mask and one for the artifact, with bounded strip copies. Zero defect
+fractions produce an all-zero artifact; ADC behavior and seeds are unchanged.
