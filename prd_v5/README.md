@@ -46,10 +46,15 @@ strip invariance at a shared final sensor geometry. Reports include clipping,
 zero-effect read noise and NumPy version. Synthetic flat/dark tests check noise
 variance; no measured camera calibration or full sensor effects are claimed.
 
+`raster.py` applies geometry with an explicit bilinear encoded-sRGB baseline,
+pixel-center coordinates and row-bounded float32 memmap output. A disk-backed
+boolean source-support mask distinguishes zero-signal sensor margins. Plans
+requiring unavailable outpainting fail before writing. This is not HAT or a
+silent SR fallback; learned fidelity and source decoding remain pending.
+
 ## Pending
 
-The remaining MVP config, complete registry, source decoding/diagnostics/ICC transforms, bounded
-pixel pipeline, DNG/rawpy/TIFF roundtrip, reports and new Colab notebook are not
+The remaining MVP config, complete registry, source decoding/diagnostics/ICC transforms, pipeline orchestration, DNG/rawpy/TIFF roundtrip, reports and new Colab notebook are not
 implemented yet. Fidelity, learned RAW, full sensor, full optics and final
 metadata follow MVP in that order. No HAT, HDR model or learned RAW checkpoint is
 executed by this foundation. Upstream checkpoint and scientific limitations in

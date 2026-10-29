@@ -193,3 +193,21 @@ quantization. All 84 v5 tests pass. These are synthetic self-consistency tests,
 not scientific calibration or a full-scale/Colab benchmark. Remaining MVP work
 includes source decoding/ICC, geometry rasterization, DNG/TIFF and independent
 rawpy validation, configuration, reports and the notebook.
+
+
+## Implementation evidence: sixth MVP increment
+
+`prd_v5/raster.py` applies the geometry affine transform with pixel-center
+bilinear sampling into float32 memmaps, using only row-sized working arrays.
+A boolean memmap marks source support; sensor margins have zero encoded signal
+and false support. Required outpainting raises before output writes. This
+explicit encoded-sRGB baseline neither executes nor substitutes for HAT.
+The input must already have an explicit normalized sRGB colour policy.
+
+Validation: seven additional cases cover identity, known interpolation values,
+margins, unavailable generation, buffer contracts and invalid pixels. A tiny
+raster-to-analytic-to-Bayer fixture checks ADC values independently against the
+sRGB transfer equation and Bayer phase. All 91 v5 tests pass. No full suite,
+notebook, inference or full-frame work ran. Source decoding/ICC, orchestration,
+DNG/TIFF roundtrip, config, reports and notebook remain MVP work; scientific
+fidelity and Colab-only validation remain unresolved.
