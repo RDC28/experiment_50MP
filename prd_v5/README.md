@@ -588,3 +588,17 @@ Defaults request vignetting with zero effect. Completion-gated evidence links
 the executed stage, and both sources use the same immutable configuration.
 The catalogue Vignetting field remains descriptive; use these explicit controls.
 Full-scale memory and physical validation remain Colab-only and unresolved.
+
+The next full-optics API is `prd_v5.optics.Distortion(k1=0, k2=0, p1=0, p2=0)`.
+Call `process(clean_linear_rgb, separate_float32_memmap,
+accept_experimental=True, strip_rows=64)` for nonzero coefficients. Each finite
+coefficient is bounded to [-0.25, 0.25]. This explicit Brown-Conrady backward
+sampling map uses half-diagonal-normalized pixel centers, bilinear interpolation
+and edge extension, preserving HDR without unit clipping. Positive k1 samples
+farther outward, producing a barrel appearance. Working arrays are row-bounded;
+the source may also be disk-backed. Zero defaults copy exactly in float32.
+Reports count changed pixels and coordinates outside the source footprint.
+This uncalibrated synthetic API is not yet wired into configuration, the runner
+or notebook. It does not estimate lenses, invert a measured projection, conserve
+flux via a Jacobian, or perform antialiasing. Full-scale memory/I/O and physical
+validation remain Colab-only work.

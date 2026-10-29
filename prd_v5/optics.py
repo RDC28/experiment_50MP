@@ -78,3 +78,98 @@ class Vignetting:
                 "Full-scale and physical validation pending."
             ),
         }
+
+
+@dataclass(frozen=True)
+class Distortion:
+    """Synthetic Brown-Conrady backward sampling map, not lens calibration.
+
+    Output pixel centers map to source coordinates with x/y normalized by half
+    the sensor diagonal. Positive k1 samples farther outward (barrel appearance).
+    Bilinear interpolation uses edge extension outside the source footprint.
+    """
+
+    k1: float = 0.0
+    k2: float = 0.0
+    p1: float = 0.0
+    p2: float = 0.0
+
+    def __post_init__(self):
+        for name, value in asdict(self).items():
+            if type(value) not in (int, float) or not np.isfinite(value) or abs(value) > 0.25:
+                raise ValueError(f"{name} must be finite in [-0.25, 0.25]")
+
+    def process(self, source, destination, *, strip_rows=64, accept_experimental=False):
+        """Warp clean RGB before CFA with row-bounded gathers and float32 storage.
+
+        This is an explicit output-to-input map, not numerical inversion of a
+        calibrated forward projection. Caller discards partial output on failure.
+        No flux/Jacobian correction, antialiasing or inferred geometry is claimed.
+        """
+        active = any(asdict(self).values())
+        if active and accept_experimental is not True:
+            raise ValueError("Explicit experimental acceptance is required")
+        if type(strip_rows) is not int or strip_rows < 1:
+            raise ValueError("strip_rows must be a positive integer")
+        if source.ndim != 3 or source.shape[-1] != 3 or min(source.shape) < 1 or source.dtype.kind != "f":
+            raise ValueError("source must be nonempty floating HxWx3 linear camera RGB")
+        if (
+            not isinstance(destination, np.memmap)
+            or destination.dtype != np.float32
+            or destination.shape != source.shape
+            or not destination.flags.writeable
+        ):
+            raise ValueError("destination must be writable float32 memmap matching source")
+        if np.may_share_memory(source, destination) or (
+            isinstance(source, np.memmap) and source.filename == destination.filename
+        ):
+            raise ValueError("source and destination must use separate nonoverlapping buffers")
+        height, width = source.shape[:2]
+        # Validate the entire domain, including pixels not visited by the warp.
+        for start in range(0, height, strip_rows):
+            block = source[start : start + strip_rows]
+            if not np.isfinite(block).all() or np.any(block < 0):
+                raise ValueError("source samples must be finite and nonnegative")
+        scale = np.hypot(width, height) / 2
+        x = (np.arange(width, dtype=np.float64) + 0.5 - width / 2) / scale
+        changed = outside = 0
+        for start in range(0, height, strip_rows):
+            stop = min(start + strip_rows, height)
+            block = source[start:stop]
+            if not active:
+                stored = block.astype(np.float32)
+            else:
+                y = (np.arange(start, stop, dtype=np.float64)[:, None] + 0.5 - height / 2) / scale
+                r2 = x**2 + y**2
+                radial = 1 + self.k1 * r2 + self.k2 * r2**2
+                sx = (x * radial + 2 * self.p1 * x * y + self.p2 * (r2 + 2 * x**2)) * scale
+                sy = (y * radial + self.p1 * (r2 + 2 * y**2) + 2 * self.p2 * x * y) * scale
+                sx += width / 2 - 0.5
+                sy += height / 2 - 0.5
+                outside += int(np.count_nonzero((sx < 0) | (sx > width - 1) | (sy < 0) | (sy > height - 1)))
+                sx = np.clip(sx, 0, width - 1)
+                sy = np.clip(sy, 0, height - 1)
+                x0, y0 = np.floor(sx).astype(np.intp), np.floor(sy).astype(np.intp)
+                x1, y1 = np.minimum(x0 + 1, width - 1), np.minimum(y0 + 1, height - 1)
+                wx, wy = (sx - x0)[..., None], (sy - y0)[..., None]
+                top = source[y0, x0] * (1 - wx) + source[y0, x1] * wx
+                bottom = source[y1, x0] * (1 - wx) + source[y1, x1] * wx
+                stored = ((1 - wy) * top + wy * bottom).astype(np.float32)
+            if not np.isfinite(stored).all():
+                raise ValueError("warped samples exceed float32 storage range")
+            destination[start:stop] = stored
+            changed += int(np.count_nonzero(np.any(stored != block, axis=-1)))
+        destination.flush()
+        return {
+            "method": "brown_conrady_backward_bilinear_edge_extension",
+            "parameters": asdict(self),
+            "status": "experimental" if active else "zero_effect",
+            "changed_pixels": changed,
+            "outside_source_pixels": outside,
+            "order": "clean linear camera RGB before CFA and electron-domain noise",
+            "limitations": (
+                "Uncalibrated synthetic backward map; no lens estimation or inverse projection solve. "
+                "Edge extension, no antialiasing or flux correction; may compound existing distortion. "
+                "Full-scale and physical validation pending."
+            ),
+        }

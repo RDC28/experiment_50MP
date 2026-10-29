@@ -1261,3 +1261,29 @@ All 416 v5 tests pass under the shared lock; repository-wide ruff passes.
 Distortion, CA, PSF, diffraction, defocus, motion and final metadata remain pending.
 Full-scale memory, GPU/model and physical validation remain unresolved Colab work.
 No notebook execution, model download, heavy processing or commit was performed.
+
+## Full optics increment: bounded radial and tangential distortion API (iteration 10)
+
+`optics.Distortion` now executes an immutable synthetic Brown-Conrady backward
+sampling map on clean linear RGB before CFA. Four explicit bounded coefficients
+(k1, k2, p1, p2) default to zero; nonzero use requires experimental acceptance.
+Pixel-center coordinates use half-diagonal normalization. Bilinear interpolation
+with edge extension gathers only row strips from an optionally disk-backed source
+into a separate float32 memmap. Entire source-domain validation includes unsampled
+pixels. HDR values survive without unit clipping; success flushes output and
+returns JSON-safe parameter, changed-pixel and out-of-footprint evidence.
+
+This is an explicit synthetic output-to-input map, not inversion of a calibrated
+forward projection or lens estimation. It has no antialiasing or flux/Jacobian
+correction and can compound distortion already present in rendered input. Pipeline,
+shared configuration/schema and notebook integration remain pending, followed by
+CA, PSF, diffraction, defocus, motion and final metadata. Physical calibration and
+full-scale memory/I/O remain unresolved Colab-only validation.
+
+Validation: 32 new tiny tests independently calculate scalar coordinates and
+four-neighbor interpolation, checking radial/tangential effects, edge extension,
+HDR, center retention, persisted output, strip invariance, zero identity,
+degenerate dimensions and rejection before writes. All 448 lightweight v5 tests
+pass under the shared resource lock. Repository-wide ruff, changed-file formatting
+and whitespace checks pass. No notebook, model, download, full-frame job,
+background service or commit was started.
