@@ -303,3 +303,12 @@ The resolved immutable camera and selection records are reused in both paired
 runs, with mode/provenance retained in each child manifest and HTML report.
 Pair selection validation occurs before creating output directories. This does
 not infer camera measurements or implement learned, sensor or optics models.
+
+The notebook also executes `AsShotNeutral` catalogue overrides through
+`panel.resolve_analytic_panel`: set its mode to `USER` and supply three positive
+values with green equal to 1 (for example `[0.5, 1, 0.25]`). Their reciprocals
+become analytic WB gains, affect camera RGB before CFA/noise, and drive the DNG
+neutral. Both paired manifests retain USER selection provenance. AUTO/FABRICATE
+without a value retain the explicit ISP hypothesis; ESTIMATE requires evidence
+and currently fails. ColourMatrix1/2 are DNG matrices, not camera-to-sRGB inputs;
+those catalogue overrides still fail rather than being incorrectly mapped.

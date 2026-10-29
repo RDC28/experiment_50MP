@@ -664,3 +664,19 @@ Tiny PNG-to-DNG-to-independent-LibRaw-TIFF integration verifies a panel ISO
 selection in both bundles; invalid pair evidence fails before output creation.
 No notebook or full-scale job was executed locally. Remaining ISP catalogue
 mapping, later roadmap phases and Colab scientific validation are unresolved.
+
+## Executable notebook white-balance panel evidence (iteration 30)
+
+The notebook now resolves AsShotNeutral with camera catalogue inputs before
+paired execution. USER neutral values must be positive, finite and green-normalized;
+their reciprocals become ISP white-balance gains. Selection records feed both
+bundles. AUTO/FABRICATE retain the explicit hypothesis; absent USER/ESTIMATE
+evidence fails. No illuminant estimator is claimed. DNG ColorMatrix1/2 cannot
+be equated to camera-to-sRGB inputs and remain unsupported catalogue edits.
+
+Tiny real PNG-to-paired-DNG-to-independent-LibRaw-TIFF tests verify expected
+red/blue signal scaling, unchanged green, decoded white balance and persisted
+selection provenance. Notebook format/syntax and panel wiring are statically
+validated without executing notebook cells. Full-scale Colab validation and the
+remaining ordered fidelity, learned RAW, sensor, optics and metadata work remain
+unresolved.

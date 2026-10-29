@@ -78,5 +78,6 @@ def test_notebook_covers_prd_parameter_tables():
 def test_notebook_routes_supported_panel_values_and_evidence():
     notebook, _ = assignments()
     execution = notebook.cells[-1].source
-    assert "resolve_camera_panel(camera, FIELD_REQUESTS, FIELD_MODE)" in execution
+    assert "resolve_analytic_panel(" in execution
+    assert "isp_selections=isp_selections" in execution
     assert "camera_selections=camera_selections" in execution
