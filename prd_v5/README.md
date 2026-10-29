@@ -441,3 +441,10 @@ sizes and explicit crop coordinates; metrics and saturation fractions use only
 crop pixels. Out-of-bounds/empty crops fail. An explicitly shared region can be
 measured on unequal rasters, but does not establish scene registration. The default
 whole-raster behavior is unchanged. Notebook/report crop selection remains pending.
+
+Paired runs also accept `comparison_region=(top, left, bottom, right)` in
+half-open LibRaw visible-raster coordinates. They retain whole-raster
+`comparison` and add `crop_comparison` with explicit native-pixel coordinates,
+metrics and the same registration/scientific limitations. Malformed bounds fail
+before source I/O; bounds outside either developed TIFF prevent pair completion
+while retaining completed child bundles. No crop is selected automatically.

@@ -112,3 +112,41 @@ def test_comparison_failure_cannot_publish_pair_completion(tmp_path, monkeypatch
     assert (output / "2k/manifest.json").exists()
     assert (output / "4k/manifest.json").exists()
     assert not (output / "pair_manifest.json").exists()
+
+
+def test_pair_retains_whole_raster_and_native_crop_metrics(tmp_path):
+    from prd_v5.comparison import compare_renders
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True, strip_rows=3)
+    output = tmp_path / "pair"
+    region = (2, 3, 10, 12)
+    report = run_analytic_pair(source, source, output, config, comparison_region=region)
+    assert report["comparison"]["samples"] == 32 * 32 * 3
+    crop = report["crop_comparison"]
+    assert crop["region"] == list(region)
+    assert crop["samples"] == 8 * 9 * 3
+    independent = compare_renders(output / "2k/developed.tiff", output / "4k/developed.tiff", region=region)
+    assert {key: value for key, value in crop.items() if key != "limitations"} == independent
+    assert json.loads((output / "pair_manifest.json").read_text()) == report
+
+
+@pytest.mark.parametrize("region", [(0, 0, 0, 2), [0, 0, 2, 2], (False, 0, 2, 2)])
+def test_pair_rejects_invalid_crop_before_source_io(tmp_path, region):
+    output = tmp_path / "pair"
+    with pytest.raises(ValueError, match="region must"):
+        run_analytic_pair("missing", "missing", output, AnalyticRunConfig(), comparison_region=region)
+    assert not output.exists()
+
+
+def test_out_of_bounds_crop_prevents_pair_completion(tmp_path):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    output = tmp_path / "pair"
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    with pytest.raises(ValueError, match="exceeds"):
+        run_analytic_pair(source, source, output, config, comparison_region=(0, 0, 33, 32))
+    assert (output / "2k/manifest.json").exists()
+    assert (output / "4k/manifest.json").exists()
+    assert not (output / "pair_manifest.json").exists()

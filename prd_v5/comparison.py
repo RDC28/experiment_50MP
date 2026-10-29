@@ -9,6 +9,17 @@ import numpy as np
 import tifffile
 
 
+def validate_region(region: tuple[int, int, int, int] | None) -> None:
+    """Validate optional crop syntax without opening or allocating image data."""
+    if region is not None and (
+        not isinstance(region, tuple)
+        or len(region) != 4
+        or any(type(value) is not int for value in region)
+        or not (0 <= region[0] < region[2] and 0 <= region[1] < region[3])
+    ):
+        raise ValueError("region must be (top, left, bottom, right) nonempty nonnegative integer bounds")
+
+
 def compare_renders(
     first: str | Path,
     second: str | Path,
@@ -27,13 +38,7 @@ def compare_renders(
     """
     if type(strip_rows) is not int or strip_rows <= 0:
         raise ValueError("strip_rows must be a positive integer")
-    if region is not None and (
-        not isinstance(region, tuple)
-        or len(region) != 4
-        or any(type(value) is not int for value in region)
-        or not (0 <= region[0] < region[2] and 0 <= region[1] < region[3])
-    ):
-        raise ValueError("region must be (top, left, bottom, right) nonempty nonnegative integer bounds")
+    validate_region(region)
     report = {
         "status": "not measured",
         "method": "Full-resolution unaligned uint16 sRGB render differences; normalized by 65535",

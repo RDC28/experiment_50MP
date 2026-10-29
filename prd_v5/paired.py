@@ -7,7 +7,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from prd_v5.comparison import compare_renders
+from prd_v5.comparison import compare_renders, validate_region
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.fidelity import SRCheckpoint
 from prd_v5.fields import validate_selections
@@ -23,16 +23,20 @@ def run_analytic_pair(
     camera_selections: tuple[CameraField, ...] = (),
     isp_selections: tuple[CameraField, ...] = (),
     sr_checkpoint: SRCheckpoint | None = None,
+    comparison_region: tuple[int, int, int, int] | None = None,
 ) -> dict:
     """Run caller-labelled variants sequentially using exactly the same config.
 
     Labels do not certify dimensions, registration or common scene content.
     Actual source dimensions/hashes and geometry remain in each child manifest.
     A failed child leaves diagnostic outputs but no pair completion manifest.
+    Optional comparison_region adds native-pixel crop metrics alongside the whole
+    visible raster comparison. Bounds must fit both developed TIFFs.
     Existing output directories are never reused. Full-scale work is Colab-only.
     """
     if not isinstance(config, AnalyticRunConfig):
         raise ValueError("Expected one validated AnalyticRunConfig")
+    validate_region(comparison_region)
     camera_selections = tuple(camera_selections)
     isp_selections = tuple(isp_selections)
     validate_selections(config.camera, camera_selections)
@@ -61,6 +65,16 @@ def run_analytic_pair(
     comparison = compare_renders(
         output / "2k/developed.tiff", output / "4k/developed.tiff", strip_rows=config.strip_rows
     )
+    crop_comparison = (
+        compare_renders(
+            output / "2k/developed.tiff",
+            output / "4k/developed.tiff",
+            strip_rows=config.strip_rows,
+            region=comparison_region,
+        )
+        if comparison_region is not None
+        else None
+    )
     report = {
         "schema_version": 1,
         "pipeline": (
@@ -86,5 +100,10 @@ def run_analytic_pair(
             ],
         },
     }
+    if crop_comparison is not None:
+        report["crop_comparison"] = {
+            **crop_comparison,
+            "limitations": report["comparison"]["limitations"],
+        }
     (output / "pair_manifest.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return report

@@ -911,3 +911,15 @@ and changed Python formatting pass. Notebook/report crop selection, HDR/profile
 selection and later ordered phases remain pending. Full-scale and scientific
 Colab validation remain unresolved. No notebook, model, heavy processing,
 background service or commit was started.
+
+## Paired native-resolution crop evidence (iteration 42)
+
+`run_analytic_pair(..., comparison_region=(top, left, bottom, right))` now
+publishes optional `crop_comparison` alongside unchanged whole-raster metrics.
+Coordinates, sample counts and scientific limitations survive JSON serialization.
+Syntax is checked before source I/O; bounds are checked against both developed
+TIFFs, and failure withholds pair completion while preserving child bundles.
+Tiny PNG-to-DNG-to-LibRaw-TIFF integration verifies crop counts and equivalence
+to independent direct comparison. Tests cover malformed and out-of-bounds regions.
+Notebook crop selection remains pending; no full-scale or scientific validation
+ran locally. Later ordered phases remain pending.
