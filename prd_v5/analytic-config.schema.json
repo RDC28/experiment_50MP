@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PRD v5 implemented analytic MVP configuration",
+  "description": "AnalyticRunConfig schema version 1, not the complete PRD panel. Omitted properties use Python defaults. Structural validation must be followed by AnalyticRunConfig.from_json: finite arithmetic, matrix conditioning, duplicate keys and runtime memory admission require executable checks. No learned inference is requested by this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "camera": {"$ref": "#/$defs/camera"},
+    "isp": {"$ref": "#/$defs/isp"},
+    "geometry_mode": {"enum": ["PRESERVE_SOURCE_ASPECT_50MP", "SONY_A1II_NATIVE"]},
+    "native_fit_policy": {"enum": ["LETTERBOX_SENSOR_MARGIN", "CROP_HORIZONTAL", "OUTPAINT_VERTICAL"]},
+    "target_megapixels": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+    "assume_unprofiled_srgb": {"type": "boolean"},
+    "strip_rows": {"$ref": "#/$defs/positiveInteger"},
+    "max_decode_bytes": {"$ref": "#/$defs/positiveInteger"},
+    "max_develop_bytes": {"$ref": "#/$defs/positiveInteger"}
+  },
+  "$defs": {
+    "positiveInteger": {"type": "integer", "minimum": 1},
+    "positiveNumber": {"type": "number", "exclusiveMinimum": 0},
+    "triple": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "adc_bits": {"type": "integer", "const": 14},
+        "black_level": {"type": "integer", "minimum": 0, "maximum": 16382},
+        "full_well_e": {"$ref": "#/$defs/positiveNumber"},
+        "read_noise_e": {"type": "number", "minimum": 0},
+        "iso": {"type": "integer", "minimum": 100, "maximum": 32000},
+        "shutter_s": {"$ref": "#/$defs/positiveNumber"},
+        "aperture": {"$ref": "#/$defs/positiveNumber"},
+        "cfa_pattern": {"enum": ["RGGB", "BGGR", "GRBG", "GBRG"]},
+        "shot_noise": {"type": "boolean"},
+        "read_noise": {"type": "boolean"}
+      }
+    },
+    "isp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "camera_to_srgb": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/triple"}},
+        "white_balance": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/positiveNumber"}},
+        "exposure_gain": {"$ref": "#/$defs/positiveNumber"},
+        "inverse_smoothstep": {"type": "boolean"}
+      }
+    }
+  }
+}

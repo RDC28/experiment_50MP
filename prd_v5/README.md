@@ -161,6 +161,18 @@ memory admission, so full-scale use requires explicit Colab budgets. This is not
 the full PRD settings panel: HAT, HYBRID, HDR, learned, full sensor/optics and
 field-mode orchestration remain pending rather than silently ignored switches.
 
+`analytic-config.schema.json` is a portable JSON Schema 2020-12 contract for
+this implemented subset, including nested camera/ISP settings and geometry
+domains. Omitted fields use `AnalyticRunConfig` defaults. Validate saved JSON
+with a standard schema validator, then always call `AnalyticRunConfig.from_json`
+before execution: structural validation cannot certify matrix conditioning,
+finite arithmetic, duplicate keys or runtime memory admission. JSON Schema also
+treats integral JSON numbers such as `1.0` as integers; the parser requires
+integer tokens for integer settings. Tests use `jsonschema` (also installed by
+the existing `nbformat` development dependency) and check schema field coverage
+against the actual dataclasses. This schema does not expose or claim unbuilt
+PRD features.
+
 The analytic JSON config and runner also accept `geometry_mode` with
 `PRESERVE_SOURCE_ASPECT_50MP` (unchanged default) or `SONY_A1II_NATIVE`, and
 `native_fit_policy` with `LETTERBOX_SENSOR_MARGIN` (default), `CROP_HORIZONTAL`

@@ -419,3 +419,25 @@ green. Repository-wide ruff and changed Python formatting pass. No notebook,
 model, full-frame processing, full repository suite or background service ran.
 Complete MVP panel/registry coverage and notebook remain pending; later ordered
 phases and full-scale Colab/scientific acceptance remain unresolved.
+
+## Implementation evidence: seventeenth MVP increment
+
+`analytic-config.schema.json` provides a portable JSON Schema 2020-12 contract
+for every currently implemented analytic configuration field, including nested
+camera/ISP values, privacy-preserving rejection of unknown identity fields and
+geometry domains. It explicitly describes subset scope and the required second
+validation step through `AnalyticRunConfig.from_json`. Matrix conditioning,
+finite arithmetic, duplicate-key detection and runtime resource admission remain
+executable gates, not claims made by structural schema validation. JSON Schema
+accepts integral numbers such as `1.0` for integer fields; the stricter parser
+requires integer tokens. Defaults and existing execution behavior are unchanged.
+
+Validation: 163 lightweight v5 tests pass under the shared lock, including schema
+meta-validation, exact dataclass field coverage, default/nondefault saved config
+validation, invalid domain/privacy cases and a singular matrix demonstrating the
+structural/semantic boundary. Repository-wide ruff and new Python formatting
+checks pass. `jsonschema` was installed only in the external lightweight dev
+environment; it is also a dependency of the existing nbformat dev requirement.
+No full repository suite, notebook, model, full-frame job, commit or background
+service ran. Complete MVP panel/registry coverage and notebook remain pending;
+later phases and Colab-only scientific acceptance remain unresolved.
