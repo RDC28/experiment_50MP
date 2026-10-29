@@ -309,3 +309,52 @@ def test_colour_panel_rejects_conflicting_evidence(change):
         resolve_analytic_panel(
             CameraHypothesis(), AnalyticISP(), requests, modes, colour_source=np.full((1, 1, 3), 0.5)
         )
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_colour_file_panel_decode_evidence_and_cleanup(tmp_path, monkeypatch, fail):
+    import tempfile
+
+    import numpy as np
+    from PIL import Image
+
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.panel import resolve_analytic_panel_from_source
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    source = tmp_path / "proxy.png"
+    Image.fromarray(np.full((4, 4, 3), [64, 128, 192], dtype=np.uint8)).save(source)
+    requests = [{"name": "AsShotNeutral", "mode": "AUTO", "value": None}]
+    kwargs = dict(colour_source_path=source, assume_unprofiled_srgb=True, strip_rows=1)
+    if fail:
+        with pytest.raises(ValueError, match="ESTIMATE"):
+            resolve_analytic_panel_from_source(
+                CameraHypothesis(), AnalyticISP(), requests, {"AsShotNeutral": "AUTO"}, **kwargs
+            )
+    else:
+        _, isp, _, records = resolve_analytic_panel_from_source(
+            CameraHypothesis(), AnalyticISP(), requests, {"AsShotNeutral": "ESTIMATE"}, **kwargs
+        )
+        means = ((np.array([64, 128, 192]) / 255 + 0.055) / 1.055) ** 2.4
+        assert np.allclose(isp.white_balance, means[1] / means)
+        evidence = next(r for r in records if r.name == "white_balance").posterior["decoded_colour_source"]
+        assert evidence["source"]["sha256"]
+        assert evidence["effective_colour_policy"] == "assumed_srgb"
+    assert list(tmp_path.iterdir()) == [source]
+
+
+def test_colour_file_panel_budget_and_null_path(tmp_path):
+    import numpy as np
+    from PIL import Image
+
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.panel import resolve_analytic_panel, resolve_analytic_panel_from_source
+
+    camera, isp = CameraHypothesis(), AnalyticISP()
+    assert resolve_analytic_panel_from_source(camera, isp, [], {}) == resolve_analytic_panel(camera, isp, [], {})
+    source = tmp_path / "proxy.png"
+    Image.fromarray(np.full((4, 4, 3), 128, dtype=np.uint8)).save(source)
+    with pytest.raises(ValueError, match="before scratch allocation"):
+        resolve_analytic_panel_from_source(
+            camera, isp, [], {}, colour_source_path=source, assume_unprofiled_srgb=True, max_decode_bytes=1
+        )

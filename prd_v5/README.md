@@ -421,3 +421,13 @@ both variants. Choose the proxy explicitly rather than estimating separately on
 each source. Conflicting modes, missing catalogue entries and degenerate evidence
 fail without fallback. This is a rendered-channel heuristic, not recovered WB.
 Notebook proxy decoding and dispatch remain pending.
+
+The notebook exposes optional `COLOUR_SOURCE_PATH` for this shared estimate.
+Set it to one JPEG/PNG proxy and set `FIELD_MODE["AsShotNeutral"] = "ESTIMATE"`
+without a catalogue value. Null preserves defaults. The file panel helper
+`resolve_analytic_panel_from_source` applies the configured ICC/sRGB policy and
+source decoder budget before estimation, then closes and removes scratch on
+success or failure. Source hash, decode policy and clipping diagnostics travel
+with the estimated WB evidence in both paired bundles. This remains a rendered
+sRGB gray-world hypothesis, not recovered capture WB. No notebook execution or
+full-scale validation has been performed locally.

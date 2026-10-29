@@ -111,3 +111,23 @@ def test_notebook_exposes_and_dispatches_explicit_joint_exposure_prior():
     )
     prior = next(keyword.value for keyword in call.keywords if keyword.arg == "exposure_prior")
     assert isinstance(prior, ast.Name) and prior.id == "EXPOSURE_PRIOR"
+
+
+def test_notebook_shared_colour_proxy_dispatch():
+    notebook, values = assignments()
+    assert values["COLOUR_SOURCE_PATH"] is None
+    tree = ast.parse(notebook.cells[-1].source)
+    call = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "resolve_analytic_panel"
+    )
+    kwargs = {keyword.arg: keyword.value for keyword in call.keywords}
+    for key, name in {
+        "colour_source_path": "COLOUR_SOURCE_PATH",
+        "assume_unprofiled_srgb": "ASSUME_UNPROFILED_SRGB",
+        "max_decode_bytes": "MAX_DECODE_BYTES",
+        "strip_rows": "STRIP_ROWS",
+    }.items():
+        assert isinstance(kwargs[key], ast.Name) and kwargs[key].id == name
+    assert "resolve_analytic_panel_from_source as resolve_analytic_panel" in notebook.cells[-1].source

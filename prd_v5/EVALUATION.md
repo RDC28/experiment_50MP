@@ -873,3 +873,21 @@ lightweight v5 tests pass under the shared test lock; repository-wide ruff,
 changed Python formatting and diff whitespace checks pass. No heavy execution,
 background process or commit was started. HDR/profile selection, later ordered
 phases and full-scale/scientific Colab validation remain unresolved.
+
+## Notebook shared colour source (iteration 40)
+
+The notebook now exposes optional `COLOUR_SOURCE_PATH` and dispatches it through
+`panel.resolve_analytic_panel_from_source` with the existing decoder budget,
+strip size and explicit unprofiled-sRGB policy. A null path preserves defaults.
+An explicit proxy requires AsShotNeutral ESTIMATE mode without a value. The
+helper decodes into temporary disk-backed float32 storage, resolves one immutable
+ISP for both paired runs, retains source hash and colour/decode evidence in the
+WB posterior, and closes/removes scratch on success or failure. Decoder admission
+precedes scratch allocation. No capture WB accuracy or learned estimator is claimed.
+
+Validation: tiny RGB PNG tests independently check selected gains, evidence,
+success/failure cleanup, memory admission and null-path compatibility. Static
+notebook/schema tests check panel wiring without notebook execution. All 294
+lightweight v5 tests pass under the shared test lock; repository-wide ruff passes.
+HDR/profile selection, later ordered phases and full-scale/scientific Colab
+validation remain unresolved. No heavy work, background process or commit started.

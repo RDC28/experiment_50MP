@@ -185,3 +185,69 @@ def resolve_sr_panel(backend: str, checkpoint: dict | None, *, allow_baseline: b
         "status": "explicit baseline accepted; inference not executed",
         "skip_reason": None if backend == "BILINEAR_BASELINE" else "No user checkpoint supplied",
     }
+
+
+def resolve_analytic_panel_from_source(
+    camera,
+    isp,
+    requests,
+    modes,
+    *,
+    colour_source_path=None,
+    assume_unprofiled_srgb=False,
+    max_decode_bytes=256 * 1024 * 1024,
+    strip_rows=64,
+    exposure_prior=None,
+):
+    """Resolve one optional decoded colour proxy, releasing scratch on all exits.
+
+    The same immutable result is shared across paired runs. A null path preserves
+    panel defaults. Decoder admission precedes disk allocation; source hashes and
+    colour policy are retained in the estimated white-balance selection evidence.
+    """
+    from dataclasses import replace
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    import numpy as np
+
+    from prd_v5.decode import decode_source
+    from prd_v5.inputs import InputInspector
+
+    if colour_source_path is None:
+        return resolve_analytic_panel(camera, isp, requests, modes, exposure_prior=exposure_prior)
+    record = InputInspector().inspect(colour_source_path, assume_unprofiled_srgb=assume_unprofiled_srgb)
+    if type(max_decode_bytes) is not int or max_decode_bytes <= 0:
+        raise ValueError("max_decode_bytes must be a positive integer")
+    if record.width * record.height * 8 > max_decode_bytes:
+        raise ValueError("Source decoder memory budget exceeded before scratch allocation")
+    with TemporaryDirectory(prefix="v5-colour-") as scratch:
+        pixels = np.memmap(
+            Path(scratch) / "colour.f32", mode="w+", dtype=np.float32, shape=(record.height, record.width, 3)
+        )
+        try:
+            decoded = decode_source(
+                colour_source_path,
+                pixels,
+                assume_unprofiled_srgb=assume_unprofiled_srgb,
+                max_decode_bytes=max_decode_bytes,
+                strip_rows=strip_rows,
+            )
+            selected_camera, selected_isp, camera_records, isp_records = resolve_analytic_panel(
+                camera,
+                isp,
+                requests,
+                modes,
+                exposure_prior=exposure_prior,
+                colour_source=pixels,
+                colour_strip_rows=strip_rows,
+            )
+            isp_records = tuple(
+                replace(item, posterior={**item.posterior, "decoded_colour_source": decoded})
+                if item.name == "white_balance"
+                else item
+                for item in isp_records
+            )
+            return selected_camera, selected_isp, camera_records, isp_records
+        finally:
+            pixels._mmap.close()
