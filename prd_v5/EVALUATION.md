@@ -2,6 +2,26 @@
 
 Evaluated 2026-10-29 before implementation. `PRD_v5.md` is the supplied document copied byte for byte. This evaluation does not rewrite it. The deliverable is one new Colab notebook under `prd_v5/notebooks/`, backed by composable, tested Python. No notebook, model download, full-frame inference, or training is permitted on the 8 GB development Mac. Full-suite tests must use `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
+## Implementation evidence: twenty-fourth MVP increment
+
+`fields.resolve_field` now executes all four PRD field modes against supplied
+`CameraField` evidence. AUTO uses a declared precedence, ESTIMATE excludes priors,
+FABRICATE selects declared prior/synthetic candidates, and USER selects only user
+input. Unavailable evidence yields null/UNSPECIFIED without invented confidence.
+Identity fields require USER mode; fields declared unobservable metadata require
+the explicit fabrication gate for synthetic/prior values, including in AUTO.
+Duplicate provenance and mismatched candidates fail rather than depend on order.
+Returned nested values are detached. Candidates still require domain validation;
+this API does not estimate, sample, or alter the current runner/config defaults.
+Panel wiring and complete field catalogue remain pending MVP work.
+
+Validation: all 189 lightweight v5 tests pass under the shared lock, including
+resolved ISO driving actual gain/saturation, missing estimates, privacy gates,
+metadata fabrication policy and detached uncertainty records. Repository-wide
+ruff and changed Python formatting pass. Later ordered phases and full-scale
+Colab/scientific validation remain unresolved. No model, notebook, full-frame
+job, commit or background service ran.
+
 ## Implementation evidence: twenty-third MVP increment
 
 `paired.run_analytic_pair` executes caller-labelled 2K and 4K sources sequentially

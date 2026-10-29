@@ -238,3 +238,15 @@ registration or exact resolution. Shared seeds do not imply identical noise for
 different pixel signals. Pair comparison metrics remain unimplemented. Full-size
 paired processing requires Colab and explicit resource budgets; never run it on
 the development Mac.
+
+For explicit field-mode selection, `fields.resolve_field(name, units, mode,
+candidates)` selects from supplied `CameraField` records and returns a detached
+record retaining the requested mode. AUTO prefers USER_SET, OBSERVED, DERIVED,
+ESTIMATED, PRIOR_SAMPLED, then SYNTHETIC. ESTIMATE excludes synthetic/prior
+fallbacks; FABRICATE accepts only priors/synthetic values; USER accepts only
+USER_SET. Missing evidence returns null/UNSPECIFIED. Candidate values must still
+pass the camera/ISP domain checks before execution. No estimator runs implicitly.
+Identity fields require USER mode. For other unobservable metadata, callers must
+set `unobservable_metadata=True`; synthetic/prior values then require
+`fabricate_unobservable_metadata=True` (default false), even in AUTO. This API
+is not yet wired into the analytic JSON configuration or a notebook panel.
