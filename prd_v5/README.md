@@ -431,3 +431,13 @@ success or failure. Source hash, decode policy and clipping diagnostics travel
 with the estimated WB evidence in both paired bundles. This remains a rendered
 sRGB gray-world hypothesis, not recovered capture WB. No notebook execution or
 full-scale validation has been performed locally.
+
+For native-resolution validation crops, call
+`comparison.compare_renders(first_tiff, second_tiff, region=(top, left, bottom, right))`.
+Bounds are half-open integer coordinates in the LibRaw visible raster, including
+sensor margins. The same region is compared in both TIFFs with bounded row strips,
+without resizing, alignment or exposure fitting. Reports retain original raster
+sizes and explicit crop coordinates; metrics and saturation fractions use only
+crop pixels. Out-of-bounds/empty crops fail. An explicitly shared region can be
+measured on unequal rasters, but does not establish scene registration. The default
+whole-raster behavior is unchanged. Notebook/report crop selection remains pending.

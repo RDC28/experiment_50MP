@@ -72,3 +72,50 @@ def test_invalid_dtype_releases_mapping(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="uint16 RGB"):
         compare_renders(a, a)
     assert opened[0]._mmap.closed
+
+
+def test_native_pixel_region_metrics_exclude_outside_changes(tmp_path):
+    left = np.zeros((6, 8, 3), dtype=np.uint16)
+    right = left.copy()
+    left[0, 0] = 65535  # Outside the requested validation crop.
+    left[2, 3, 0] = 65535
+    right[3, 4, 1] = 65535
+    a = write(tmp_path / "a.tiff", left)
+    b = write(tmp_path / "b.tiff", right)
+    report = compare_renders(a, b, region=(2, 3, 4, 5), strip_rows=1)
+    assert report == compare_renders(a, b, region=(2, 3, 4, 5), strip_rows=7)
+    assert report["region"] == [2, 3, 4, 5]
+    assert report["shapes"] == [[6, 8, 3], [6, 8, 3]]
+    assert report["samples"] == 12
+    assert report["mae"] == pytest.approx(2 / 12)
+    assert report["rmse"] == pytest.approx(np.sqrt(2 / 12))
+    assert report["channel_bias_first_minus_second"] == pytest.approx([0.25, -0.25, 0])
+    assert report["saturated_pixel_fraction"] == [0.25, 0.25]
+    json.dumps(report, allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    "region", [(0, 0, 0, 1), (-1, 0, 1, 1), (0, 2, 1, 1), (0, 0, True, 1), (0, 0, 1.5, 2), (0, 0, 1), [0, 0, 1, 1]]
+)
+def test_invalid_region_before_io(region):
+    with pytest.raises(ValueError, match="region"):
+        compare_renders("missing", "missing", region=region)
+
+
+def test_region_on_unequal_rasters_and_bounds_cleanup(tmp_path, monkeypatch):
+    a = write(tmp_path / "a.tiff", np.zeros((2, 3, 3), dtype=np.uint16))
+    b = write(tmp_path / "b.tiff", np.zeros((4, 5, 3), dtype=np.uint16))
+    assert compare_renders(a, b, region=(0, 0, 2, 3))["identical"]
+    original = tifffile.memmap
+    opened = []
+
+    def track(*args, **kwargs):
+        array = original(*args, **kwargs)
+        opened.append(array)
+        return array
+
+    monkeypatch.setattr(tifffile, "memmap", track)
+    with pytest.raises(ValueError, match="exceeds"):
+        compare_renders(a, b, region=(0, 0, 3, 3))
+    assert len(opened) == 2
+    assert all(array._mmap.closed for array in opened)

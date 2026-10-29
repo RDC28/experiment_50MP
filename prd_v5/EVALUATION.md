@@ -891,3 +891,23 @@ notebook/schema tests check panel wiring without notebook execution. All 294
 lightweight v5 tests pass under the shared test lock; repository-wide ruff passes.
 HDR/profile selection, later ordered phases and full-scale/scientific Colab
 validation remain unresolved. No heavy work, background process or commit started.
+
+## Native-resolution validation crop metrics (iteration 41)
+
+`comparison.compare_renders` accepts an optional explicit half-open
+`(top, left, bottom, right)` visible-raster region. Both uint16 TIFFs are sliced
+at identical native pixel coordinates before bounded strip metrics, retaining
+original raster shapes and selected coordinates in strict JSON evidence. No
+resampling, registration, exposure fitting or DefaultCrop application occurs.
+Explicit regions can compare common coordinates on unequal rasters; this does
+not imply scene correspondence. Empty, noninteger, negative and out-of-raster
+regions fail, with both mappings closed. Whole-raster defaults remain unchanged.
+
+Validation: independently calculated sparse differences verify crop-only MAE,
+RMSE, channel bias, saturation and strip invariance while excluding an external
+changed pixel. Unequal-raster common regions and failed-bounds cleanup are tested.
+All 303 lightweight v5 tests pass under the shared lock; repository-wide ruff
+and changed Python formatting pass. Notebook/report crop selection, HDR/profile
+selection and later ordered phases remain pending. Full-scale and scientific
+Colab validation remain unresolved. No notebook, model, heavy processing,
+background service or commit was started.

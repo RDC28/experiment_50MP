@@ -9,15 +9,31 @@ import numpy as np
 import tifffile
 
 
-def compare_renders(first: str | Path, second: str | Path, *, strip_rows: int = 64) -> dict:
+def compare_renders(
+    first: str | Path,
+    second: str | Path,
+    *,
+    strip_rows: int = 64,
+    region: tuple[int, int, int, int] | None = None,
+) -> dict:
     """Compare uint16 RGB TIFFs in their existing coordinates using row strips.
 
     Only uncompressed memory-mappable files are accepted. No alignment, resizing,
     downsampling or exposure fitting hides differences. The entire visible raster
-    includes sensor margins. Neither image is a ground-truth reference.
+    includes sensor margins. An optional (top, left, bottom, right) region uses
+    half-open visible-raster coordinates at native pixel resolution, identically
+    in both files. It does not establish registration or apply DNG DefaultCrop.
+    Neither image is a ground-truth reference.
     """
     if type(strip_rows) is not int or strip_rows <= 0:
         raise ValueError("strip_rows must be a positive integer")
+    if region is not None and (
+        not isinstance(region, tuple)
+        or len(region) != 4
+        or any(type(value) is not int for value in region)
+        or not (0 <= region[0] < region[2] and 0 <= region[1] < region[3])
+    ):
+        raise ValueError("region must be (top, left, bottom, right) nonempty nonnegative integer bounds")
     report = {
         "status": "not measured",
         "method": "Full-resolution unaligned uint16 sRGB render differences; normalized by 65535",
@@ -35,6 +51,14 @@ def compare_renders(first: str | Path, second: str | Path, *, strip_rows: int = 
             arrays.append(array)
         left, right = arrays
         report["shapes"] = [list(array.shape) for array in arrays]
+        if region is not None:
+            top, x0, bottom, x1 = region
+            if any(bottom > array.shape[0] or x1 > array.shape[1] for array in arrays):
+                raise ValueError("region exceeds a visible raster")
+            arrays = [array[top:bottom, x0:x1] for array in arrays]
+            left, right = arrays
+            report["region"] = list(region)
+            report["domain"] = "Explicit native-pixel visible-raster region; DefaultCrop not applied"
         if left.shape != right.shape:
             return {**report, "reason": "Unequal raster shapes; no implicit resampling or alignment"}
         count = left.size
