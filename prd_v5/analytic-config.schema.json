@@ -47,6 +47,22 @@
     },
     "sensor_effects": {
       "$ref": "#/$defs/sensor_effects"
+    },
+    "vignetting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "corner_strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0
+        }
+      }
+    },
+    "accept_experimental_optics": {
+      "type": "boolean",
+      "default": false
     }
   },
   "$defs": {

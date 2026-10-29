@@ -16,8 +16,8 @@ All 409 lightweight v5 tests pass under the shared resource lock. Tiny tests
 independently calculate every output pixel, verifying center/corner behavior,
 symmetry, HDR retention, strip invariance, persisted output, zero defaults and
 invalid-buffer/acceptance/domain rejection. Repository-wide ruff passes.
-Pipeline, shared config, schema and notebook integration remain pending; the
-default runner does not yet apply optics. Distortion, CA, spatial PSF, diffraction,
+Pipeline, shared config and schema integration are implemented below. Paired-run
+and notebook field integration remain pending. Distortion, CA, spatial PSF, diffraction,
 defocus and motion remain next optics work before final metadata. Full-scale
 memory and physical validation remain unresolved Colab-only work. No notebook,
 model, download, full-frame job, background service or commit was started.
@@ -1219,3 +1219,27 @@ Repository-wide ruff and changed Python formatting checks pass. Full optics and
 final metadata remain next ordered phases. Full-scale and physical calibration
 validation remain Colab-only. No notebook, model, download, full-scale job,
 background service or commit was started.
+
+
+## Full optics integration: replayable single-run attenuation
+
+`run_analytic` and `AnalyticRunConfig` now execute `Vignetting` after the
+analytic/learned clean RGB stage and before CFA sampling and electron noise.
+A separate float32 disk-backed working raster adds 12 bytes per photosite of
+scratch disk; processing remains row-bounded and mappings close on failure.
+Default zero strength preserves sensor input values and existing random streams.
+Nonzero strength requires boolean `accept_experimental_optics=True` before output
+creation. Config JSON and its strict schema retain both settings for replay.
+Stage evidence and a synthetic registry record appear in JSON and offline HTML,
+including changed pixels, minimum transmission, zero-effect/experimental status
+and explicit physical limits. This forward prior can compound shading already
+in rendered input; it does not infer a lens or undo source shading.
+
+Validation: tiny constant PNG -> DNG -> independent LibRaw/TIFF runs independently
+bound attenuation arithmetic in ADC space to one code, verify observable corner
+darkening, zero/default status, persisted replay and JSON/HTML evidence. Config
+schema coverage includes nonzero settings and invalid fields. All 414 lightweight
+v5 tests pass under the shared lock; repository-wide ruff, changed Python format
+and diff whitespace checks pass. Paired-run/notebook controls, other optical
+effects, full-scale memory/I/O and scientific calibration remain pending. No
+notebook, inference, download, full-scale job, service or commit ran.

@@ -20,6 +20,7 @@ from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.inputs import InputInspector
 from prd_v5.learned import ResidualAdapter, apply_residual, resolve_mode
+from prd_v5.optics import Vignetting
 from prd_v5.raster import rasterize
 from prd_v5.registry import analytic_registry
 from prd_v5.report import render_report
@@ -35,6 +36,8 @@ def run_analytic(
     isp: AnalyticISP | None = None,
     *,
     sensor_effects: SensorEffects | None = None,
+    vignetting: Vignetting | None = None,
+    accept_experimental_optics: bool = False,
     target_megapixels: float = 50.0,
     geometry_mode: str = "PRESERVE_SOURCE_ASPECT_50MP",
     native_fit_policy: str = "LETTERBOX_SENSOR_MARGIN",
@@ -62,6 +65,8 @@ def run_analytic(
     """
     if sensor_effects is None:
         sensor_effects = SensorEffects()
+    if vignetting is None:
+        vignetting = Vignetting()
     resolve_mode(inverse_mode, residual_adapter, camera)
     if isp is None:
         isp = AnalyticISP()
@@ -70,6 +75,8 @@ def run_analytic(
     config = AnalyticRunConfig(
         camera=camera,
         sensor_effects=sensor_effects,
+        vignetting=vignetting,
+        accept_experimental_optics=accept_experimental_optics,
         isp=isp,
         target_megapixels=target_megapixels,
         geometry_mode=geometry_mode,
@@ -139,10 +146,14 @@ def run_analytic(
             clean = allocate("clean", np.float32, (*shape, 3))
             stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows)
             stages["learned_raw"] = apply_residual(rgb, clean, camera, residual_adapter, mode=inverse_mode)
+            optical = allocate("optical", np.float32, (*shape, 3))
+            stages["optics"] = vignetting.process(
+                clean, optical, strip_rows=strip_rows, accept_experimental=accept_experimental_optics
+            )
             adc = allocate("adc", np.uint16, shape)
             defects = allocate("defects", np.uint8, shape)
             stages["sensor"] = BayerSensor(camera, sensor_effects).process(
-                clean, adc, strip_rows=strip_rows, defect_mask=defects
+                optical, adc, strip_rows=strip_rows, defect_mask=defects
             )
             stages["dng"] = write_dng(output / "capture.dng", adc, camera, geometry, isp, strip_rows=strip_rows)
             stages["roundtrip"] = develop_roundtrip(
@@ -206,6 +217,21 @@ def run_analytic(
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(block)
         artifacts[name] = {"sha256": digest.hexdigest(), "size_bytes": path.stat().st_size}
+    optics_registry = {
+        "optics.vignetting.corner_strength": asdict(
+            CameraField(
+                "optics.vignetting.corner_strength",
+                vignetting.corner_strength,
+                None,
+                "USER",
+                "SYNTHETIC",
+                None,
+                None,
+                "Explicit centered radial attenuation prior",
+                stages["optics"]["status"] + "; uncalibrated; full-scale validation pending",
+            )
+        )
+    }
     report = {
         "schema_version": 1,
         "pipeline": "experimental learned residual over analytic baseline"
@@ -218,6 +244,7 @@ def run_analytic(
         "replay": {
             "config_scope": "analytic settings only",
             "additional_checkpoint_required": sr_checkpoint is not None or residual_adapter is not None,
+            "optics": "Vignetting settings and acceptance retained in config.json",
             "inverse_isp": stages["learned_raw"],
             "residual_replay": "Requires same caller-loaded adapter; config stores analytic baseline only",
             "checkpoint_evidence": "stages.super_resolution.checkpoint" if sr_checkpoint is not None else None,
@@ -226,7 +253,12 @@ def run_analytic(
         "source": source.to_dict(),
         "geometry": geometry.to_dict(),
         "camera": asdict(camera),
-        "registry": {**analytic_registry(camera, source, geometry, isp), **sensor_effects.registry(), **selections},
+        "registry": {
+            **analytic_registry(camera, source, geometry, isp),
+            **sensor_effects.registry(),
+            **optics_registry,
+            **selections,
+        },
         "isp": asdict(isp),
         "stages": stages,
         "artifacts": artifacts,

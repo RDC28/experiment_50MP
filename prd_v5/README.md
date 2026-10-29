@@ -572,3 +572,13 @@ with a null value keeps default electronics. Selection follows resolved ISO and
 rejects a simultaneous explicit Full-well capacity value. Execution evidence is
 written after paired completion; per-run registry records retain both regimes,
 selection and zero-effect evidence. No measured Sony profile is bundled.
+
+
+Single-run experimental vignetting is available through
+`AnalyticRunConfig(vignetting=Vignetting(corner_strength=0.4),
+accept_experimental_optics=True)` with `Vignetting` imported from `prd_v5.optics`.
+The saved config replays the effect before CFA and noise. Zero is the default.
+This uncalibrated forward shading prior does not remove shading in the source.
+JSON/HTML evidence reports actual attenuation and scientific limits. The extra
+working float32 RGB mapping requires 12 bytes per target photosite of scratch disk.
+Paired-run and notebook field integration remain pending.

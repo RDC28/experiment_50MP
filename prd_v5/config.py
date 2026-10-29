@@ -12,6 +12,7 @@ from prd_v5.fidelity import SRCheckpoint
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.learned import ResidualAdapter
+from prd_v5.optics import Vignetting
 from prd_v5.sensor import SensorEffects
 
 
@@ -34,8 +35,16 @@ class AnalyticRunConfig:
     strip_rows: int = 64
     max_decode_bytes: int = 256 * 1024 * 1024
     max_develop_bytes: int = 512 * 1024 * 1024
+    vignetting: Vignetting = field(default_factory=Vignetting)
+    accept_experimental_optics: bool = False
 
     def __post_init__(self):
+        if not isinstance(self.vignetting, Vignetting):
+            raise ValueError("Expected validated Vignetting")
+        if type(self.accept_experimental_optics) is not bool:
+            raise ValueError("accept_experimental_optics must be boolean")
+        if self.vignetting.corner_strength and not self.accept_experimental_optics:
+            raise ValueError("Explicit experimental acceptance is required for optics")
         if not isinstance(self.sensor_effects, SensorEffects):
             raise ValueError("Expected validated SensorEffects")
         if type(self.schema_version) is not int or self.schema_version != 1:
@@ -89,6 +98,7 @@ class AnalyticRunConfig:
                 ("camera", CameraHypothesis),
                 ("isp", AnalyticISP),
                 ("sensor_effects", SensorEffects),
+                ("vignetting", Vignetting),
             ):
                 if name in values:
                     if not isinstance(values[name], dict):
@@ -118,6 +128,8 @@ class AnalyticRunConfig:
             self.camera,
             self.isp,
             sensor_effects=self.sensor_effects,
+            vignetting=self.vignetting,
+            accept_experimental_optics=self.accept_experimental_optics,
             camera_selections=camera_selections,
             isp_selections=isp_selections,
             sr_checkpoint=sr_checkpoint,
