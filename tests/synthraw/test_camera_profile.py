@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from synthraw.camera_profile import PROFILE_NAMES, SENSOR_PRIOR_DISCLAIMER, CameraProfileManager
+from synthraw.camera_profile import (
+    ILCE1M2_SAMPLE_DISCLAIMER,
+    ILCE1M2_XYZ_TO_CAMERA_D65,
+    PROFILE_NAMES,
+    SENSOR_PRIOR_DISCLAIMER,
+    CameraProfileManager,
+)
 from synthraw.provenance import FieldRecord, Provenance
 
 
@@ -46,10 +52,34 @@ def test_sensor_priors_are_fabricated_and_disclaimed(name):
     for field in ("full_well_electrons", "read_noise_electrons", "prnu_sigma", "dsnu_sigma_dn"):
         record, interval = sensor[field], sensor[f"{field}_range"]
         assert interval.value[0] <= record.value <= interval.value[1]
-        for item in (record, interval):
+        # The Sony-like read noise is a single-frame bound from the ILCE-1M2 sample, not a pure prior.
+        sampled = name == "SONY_A1II_LIKE" and field == "read_noise_electrons"
+        for item in (interval,) if sampled else (record, interval):
             assert item.provenance == Provenance.FABRICATED
             assert item.confidence is None
             assert item.disclaimer == SENSOR_PRIOR_DISCLAIMER
+        if sampled:
+            assert record.provenance == Provenance.INFERRED
+            assert record.disclaimer == ILCE1M2_SAMPLE_DISCLAIMER
+
+
+def test_sony_like_profile_carries_the_measured_ilce1m2_sample():
+    profile = CameraProfileManager().build("SONY_A1II_LIKE")
+    camera, sensor = profile.camera, profile.sensor
+    assert camera["xyz_to_camera_d65"].value == ILCE1M2_XYZ_TO_CAMERA_D65
+    neutral = camera["reference_as_shot_neutral"].value
+    assert neutral[0] < 1 and neutral[2] < 1
+    for record in (camera["xyz_to_camera_d65"], sensor["conversion_gain_e_per_dn"]):
+        assert record.provenance == Provenance.MEASURED
+        assert record.disclaimer == ILCE1M2_SAMPLE_DISCLAIMER
+    # Full well lands at the ADC ceiling with the measured conversion gain.
+    span = sensor["WhiteLevel"].value - sensor["BlackLevel"].value
+    assert sensor["full_well_electrons"].value == pytest.approx(
+        span * sensor["conversion_gain_e_per_dn"].value, rel=0.01
+    )
+    assert camera["lens_distortion_k1"].value > 0
+    virtual = CameraProfileManager().build("CINEMA_50MP_VIRTUAL")
+    assert "xyz_to_camera_d65" not in virtual.camera
 
 
 def test_sidecars_round_trip_and_fresh_profiles(tmp_path):
@@ -81,6 +111,7 @@ def test_reference_raw_real_decoder_round_trip(tmp_path, phase):
 
     geometry = replace(
         TargetGeometryPlanner().plan(64, 48),
+        outpaint_bands=(),  # The bare test sensor has no planned outpaint bands.
         width=64,
         height=48,
         active_area=(0, 0, 48, 64),
@@ -102,7 +133,7 @@ def test_reference_raw_real_decoder_round_trip(tmp_path, phase):
     assert profile.camera["profile_source"].value == "REFERENCE_RAW"
     assert "libraw_rgb_xyz_matrix" not in profile.camera
     assert profile.camera["Make"].value == "Synthetic"
-    assert profile.sensor["read_noise_electrons"].provenance == Provenance.FABRICATED
+    assert profile.sensor["read_noise_electrons"].provenance != Provenance.MEASURED
     for field in ("camera_whitebalance", "reference_as_shot_neutral", "libraw_color_matrix"):
         record = profile.camera[field]
         assert record.provenance == Provenance.MEASURED

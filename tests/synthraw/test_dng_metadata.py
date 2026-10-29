@@ -13,8 +13,16 @@ from synthraw.provenance import Provenance
 @pytest.fixture
 def geometry():
     plan = TargetGeometryPlanner().plan(64, 48)
+    # A bare 64 x 48 sensor: the planned 50 MP content box and outpaint bands do not apply to it.
     return replace(
-        plan, width=64, height=48, active_area=(0, 0, 48, 64), default_crop_origin=(0, 0), default_crop_size=(64, 48)
+        plan,
+        width=64,
+        height=48,
+        content_box=(0.0, 0.0, 64.0, 48.0),
+        outpaint_bands=(),
+        active_area=(0, 0, 48, 64),
+        default_crop_origin=(0, 0),
+        default_crop_size=(64, 48),
     )
 
 
@@ -273,3 +281,23 @@ def test_without_synthetic_exif_only_user_capture_fields_are_accepted(geometry):
     fields = DNGMetadataBuilder().build(geometry, config, exposure=user)
     assert fields["ExposureTime"].user_override and fields["ShutterSpeedValue"].value == 7
     assert DNGMetadataBuilder().build(geometry, exposure=inferred)["ExposureTime"].value == 1 / 128
+
+
+def test_outpaint_content_box_is_the_default_user_crop():
+    """Regression: 36% of an outpainted frame was invented bands with nothing in the DNG saying so."""
+    config = ExperimentConfig(OUTPUT_GEOMETRY="SONY_A1II_NATIVE", SENSOR_FIT_MODE="OUTPAINT_VERTICAL")
+    geometry = TargetGeometryPlanner().plan(6336, 2688, config)
+    assert geometry.outpaint_bands and geometry.default_crop_size == (8640, 5760)
+    fields = DNGMetadataBuilder().build(geometry, config)
+    top, left, bottom, right = fields["DefaultUserCrop"].value
+    # The 8640 x 3665.45 content box, rounded inward to whole Bayer tiles.
+    assert (left, right) == (0, 1)
+    assert top * 5760 == pytest.approx(1048) and bottom * 5760 == pytest.approx(4712)
+    assert geometry.content_box[1] <= top * 5760 and bottom * 5760 <= geometry.content_box[3]
+
+
+@pytest.mark.parametrize("mode", ["CROP_HORIZONTAL", "FIT_WITH_SENSOR_MARGINS"])
+def test_frames_without_outpaint_bands_have_no_user_crop(mode):
+    config = ExperimentConfig(OUTPUT_GEOMETRY="SONY_A1II_NATIVE", SENSOR_FIT_MODE=mode)
+    geometry = TargetGeometryPlanner().plan(6336, 2688, config)
+    assert "DefaultUserCrop" not in DNGMetadataBuilder().build(geometry, config)

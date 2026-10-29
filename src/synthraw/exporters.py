@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import struct
 from pathlib import Path
 
@@ -54,10 +55,24 @@ def adobe_rgb_icc() -> bytes:
 class TIFFWriter:
     """Develop a synthetic DNG via LibRaw into a tagged, stripped 16-bit master."""
 
-    def write(self, path: str | Path, dng_path: str | Path, *, rows_per_strip: int = 64) -> Path:
-        """Use camera WB and Adobe RGB with an explicitly matched pure gamma TRC."""
+    def write(
+        self,
+        path: str | Path,
+        dng_path: str | Path,
+        *,
+        rows_per_strip: int = 64,
+        baseline_exposure_ev: float = 0.0,
+    ) -> Path:
+        """Use camera WB and Adobe RGB with an explicitly matched pure gamma TRC.
+
+        ``baseline_exposure_ev`` is the DNG BaselineExposure push, applied linearly through LibRaw's
+        exp_shift (clamped to its -2..+3 EV span) exactly as a DNG developer would honour the tag.
+        """
         if isinstance(rows_per_strip, bool) or not isinstance(rows_per_strip, int) or rows_per_strip < 1:
             raise ValueError("rows_per_strip must be a positive integer")
+        if not math.isfinite(baseline_exposure_ev):
+            raise ValueError("baseline_exposure_ev must be finite")
+        shift = float(2.0 ** min(3.0, max(-2.0, baseline_exposure_ev)))
         path = Path(path)
         if path.resolve() == Path(dng_path).resolve():
             raise ValueError("TIFF destination must differ from the source DNG")
@@ -72,6 +87,8 @@ class TIFFWriter:
                     use_camera_wb=True,
                     no_auto_bright=True,
                     user_flip=0,
+                    exp_shift=shift,
+                    exp_preserve_highlights=0.0,
                 )
         except Exception as exc:
             raise HardValidationError(f"Independent RAW development failed: {exc}") from exc

@@ -45,6 +45,12 @@ class ValidationThresholds:
     wb_max_clipped_increase: float = 0.05
 
 
+# The noise gates fit the simulator's own mosaic against the NoiseProfile it wrote: they prove the
+# DNG describes the noise that was applied, not that the noise looks like a real sensor's. Realism
+# against a real reference raw is measured separately (synthraw.realism) and labelled as such.
+NOISE_SELF_CONSISTENCY = "Noise self-consistency"
+
+
 @dataclass
 class ValidationCheck:
     """One row of the validation table: hard gate, QA target or report-only metric."""
@@ -411,7 +417,7 @@ class NoiseValidator:
         if noise_profile is None:
             profile_check = ValidationCheck(
                 "noise_profile_agreement",
-                "Noise",
+                NOISE_SELF_CONSISTENCY,
                 None,
                 measured={"fitted_S": fit.slope, "fitted_O": fit.offset},
                 detail="NoiseProfile omitted because shot noise is disabled; nothing to compare",
@@ -423,7 +429,7 @@ class NoiseValidator:
             offset_error = abs(fit.offset - offset) / offset if offset > 0 else abs(fit.offset)
             profile_check = ValidationCheck(
                 "noise_profile_agreement",
-                "Noise",
+                NOISE_SELF_CONSISTENCY,
                 bool(slope_error <= tol and offset_error <= tol),
                 hard=True,
                 measured={
@@ -434,11 +440,11 @@ class NoiseValidator:
                     "S_relative_error": slope_error,
                     "O_relative_error": offset_error,
                 },
-                target=f"S and O within {tol:.0%} of NoiseProfile",
+                target=f"S and O within {tol:.0%} of NoiseProfile (simulator against its own model)",
             )
         r2_check = ValidationCheck(
             "noise_fit_r2",
-            "Noise",
+            NOISE_SELF_CONSISTENCY,
             bool(math.isfinite(fit.r2) and fit.r2 >= self.thresholds.noise_fit_r2),
             measured={"r2": fit.r2, "levels": len(fit.levels)},
             target=f"R^2 >= {self.thresholds.noise_fit_r2}",
@@ -804,6 +810,8 @@ class RoundTripValidator:
         rendered = _smoothstep(aligned_scene) if undo_tone else np.clip(aligned_scene, 0, 1)
         aligned, aligned_lab, delta = metrics(rendered)
         thresholds = self.thresholds
+        # Grey-axis gain of the alignment: near 1 when exposure and BaselineExposure are consistent.
+        alignment_gain = float(np.mean(matrix @ np.ones(3)))
         common = {
             "analysis_factor": factor,
             "analysed_shape": list(master.shape[:2]),
@@ -838,6 +846,7 @@ class RoundTripValidator:
                     "median_delta_e00": aligned["median_delta_e00_supported"],
                     "p95_delta_e00": aligned["p95_delta_e00_supported"],
                     "alignment_matrix": matrix,
+                    "alignment_gain": alignment_gain,
                     **common,
                 },
                 target=f"median <= {thresholds.median_delta_e00} on source-supported pixels after global alignment",
@@ -847,7 +856,12 @@ class RoundTripValidator:
                 "roundtrip_unaligned",
                 "Round trip",
                 None,
-                measured={"unaligned": unaligned, "colour_alignment_only": colour_only, **common},
+                measured={
+                    "unaligned": unaligned,
+                    "colour_alignment_only": colour_only,
+                    "alignment_gain": alignment_gain,
+                    **common,
+                },
                 target="report only",
                 detail="Colour-managed comparison without alignment, and with colour-only alignment and no tone",
             ),

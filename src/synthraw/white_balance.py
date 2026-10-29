@@ -11,13 +11,18 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from synthraw.camera_colour import CameraColourModel
 from synthraw.camera_profile import CameraProfile
 from synthraw.provenance import FieldRecord, Provenance
 
 
 @dataclass
 class WhiteBalanceResult:
-    """Illuminant metadata and reciprocal, green-normalized RGB gains."""
+    """Illuminant metadata and green-normalised camera-channel gains for the inverse ISP.
+
+    AsShotNeutral in ``records`` is the camera-native neutral the DNG carries; dividing the
+    camera response of a unit linear-sRGB grey by ``gains`` reproduces it.
+    """
 
     records: dict[str, FieldRecord]
     gains: tuple[float, float, float]
@@ -61,12 +66,15 @@ class WhiteBalanceEstimator:
         method: str = "COMBINED",
         manual_cct: float | None = None,
         manual_tint: float = 0.0,
+        colour_model: CameraColourModel | None = None,
     ) -> WhiteBalanceResult:
-        """Return CCT, log-green tint, neutral and EXIF LightSource candidate.
+        """Return CCT, log-green tint, neutrals and EXIF LightSource candidate.
 
         Tint is log(G/sqrt(R*B)) relative to the fitted Planckian illuminant.
         Manual settings are fabricated hypotheses with user_override recorded.
         Inferred CCT is clamped to the profile envelope; manual CCT must fit it.
+        ``illuminant_neutral_srgb`` is the illuminant colour in linear sRGB; ``AsShotNeutral`` is
+        its camera-native response through ``colour_model`` (identity camera when omitted).
         """
         low, high = profile.camera["colour_temperature_range"].value
         if not 1667 <= low < high <= 25000:
@@ -118,7 +126,7 @@ class WhiteBalanceEstimator:
         provenance = Provenance.FABRICATED if manual else Provenance.INFERRED
         # EXIF candidates: tungsten, daylight, cloudy. These are hypotheses, never measured light sources.
         light_source = 3 if cct < 4000 else (10 if cct > 6500 else 1)
-        values = {"CCT": cct, "tint": tint, "AsShotNeutral": neutral.tolist(), "LightSource": light_source}
+        values = {"CCT": cct, "tint": tint, "illuminant_neutral_srgb": neutral.tolist(), "LightSource": light_source}
         records = {
             key: FieldRecord(
                 key,
@@ -133,4 +141,21 @@ class WhiteBalanceEstimator:
             )
             for key, value in values.items()
         }
-        return WhiteBalanceResult(records, tuple(float(value) for value in 1 / neutral))
+        model = colour_model or CameraColourModel()
+        camera_neutral = model.camera_neutral(neutral)
+        # The inverse ISP divides the camera response of a unit grey by these gains, so the written
+        # neutral equals the illuminant's camera response rather than the sRGB neutral inverted.
+        gains = model.camera_neutral(np.ones(3)) / camera_neutral
+        gains = gains / gains[1]
+        # The camera neutral inherits the hypothesis' provenance: it is that hypothesis seen by the camera.
+        records["AsShotNeutral"] = FieldRecord(
+            "AsShotNeutral",
+            camera_neutral.tolist(),
+            provenance,
+            f"{description}; camera-native response through the camera colour model",
+            confidence=confidence,
+            user_override=manual,
+            dependencies=["illuminant_neutral_srgb", model.source.field],
+            disclaimer="Camera-space neutral of an approximate illuminant hypothesis.",
+        )
+        return WhiteBalanceResult(records, tuple(float(value) for value in gains))

@@ -20,6 +20,7 @@ from synthraw.report import (
     answer,
     format_measured,
     mask_percentages,
+    near_threshold,
     validate_and_report,
 )
 from synthraw.validation import ValidationCheck, ValidationThresholds
@@ -118,7 +119,7 @@ def test_mask_percentages_match_the_confidence_masks(run_root):
 def test_answers_and_formatting():
     hard_fail = ValidationCheck("cfa_phase", "CFA", False, hard=True)
     qa_miss = ValidationCheck("roundtrip_whole_ssim", "Round trip", False, target=">= 0.93")
-    ok = ValidationCheck("noise_fit_r2", "Noise", True, target="R^2 >= 0.95")
+    ok = ValidationCheck("noise_fit_r2", "Noise self-consistency", True, target="R^2 >= 0.95")
     unmeasured = ValidationCheck("roundtrip_supported_ssim", "Round trip", None)
     assert answer([hard_fail, qa_miss]).startswith("No - hard gate failed: cfa_phase")
     assert answer([qa_miss, ok]).startswith("Partially")
@@ -127,3 +128,57 @@ def test_answers_and_formatting():
     assert format_measured({"a": 0.123456, "b": {"c": [1, 2, 3, 4, 5, 6, 7]}, "d": None}) == (
         "a=0.1235; b={c=[1, 2, 3, 4, 5, 6, ...]}; d=None"
     )
+
+
+def _glance(text):
+    return text.split("Read this first", 1)[1].split("</div>", 1)[0]
+
+
+def test_report_leads_with_unaligned_numbers_alignment_gain_and_skipped_features(reported):
+    """Regression: the report showed only aligned round-trip scores and hid skipped features."""
+    run, path = reported
+    glance = _glance(path.read_text())
+    unaligned = next(c for c in run.checks if c.name == "roundtrip_unaligned").measured["unaligned"]
+    gain = next(c for c in run.checks if c.name == "colour_delta_e00").measured["alignment_gain"]
+    assert f"alignment gain {gain:.4g}" in glance
+    assert format_measured(unaligned["median_delta_e00_supported"]) in glance
+    # C2PA is requested by default but cannot sign in the test environment, so it is listed as skipped.
+    assert "C2PA unavailable: " in glance
+    assert "Realism against a real reference raw" in path.read_text()
+    assert "self-consistency" in path.read_text()
+
+
+def test_near_threshold_lists_thin_passes_only():
+    thresholds = {"median_delta_e00": 2.5, "roundtrip_supported_ssim": 0.5}
+    checks = [
+        ValidationCheck("colour_delta_e00", "Colour", True, measured={"median_delta_e00": 2.474}),
+        ValidationCheck("roundtrip_supported_ssim", "Round trip", True, measured={"ssim": 0.99}),
+    ]
+    rows = near_threshold(checks, thresholds)
+    assert [row["check"] for row in rows] == ["colour_delta_e00"]
+    assert rows[0]["margin"] == pytest.approx(0.0104)
+    failed = [ValidationCheck("colour_delta_e00", "Colour", False, measured={"median_delta_e00": 2.6})]
+    assert near_threshold(failed, thresholds) == []
+
+
+def test_reference_raw_adds_a_realism_section(reported, tmp_path):
+    run, _ = reported
+    root = shutil.copytree(run.root, tmp_path / "realism")
+    # The run's own DNG stands in for a camera raw here: every ratio is then exactly 1.
+    reference = tmp_path / "reference.dng"
+    shutil.copy(root / "raw" / "synthetic_50mp.dng", reference)
+    _, path = validate_and_report(root, reference_raw=reference)
+    document = json.loads((root / "validation" / "realism_comparison.json").read_text())
+    assert document["label"].startswith("Realism")
+    ratios = [row["ratio"] for row in document["rows"] if row["ratio"] is not None]
+    assert ratios and all(ratio == pytest.approx(1) for ratio in ratios)
+    text = path.read_text()
+    section = text.split("Realism against a real reference raw", 1)[1]
+    assert "reference.dng" in section and "Dark positive tail" in section
+    assert "Realism: reference raw against the synthetic DNG" in section
+    assert not list(root.rglob("reference.dng"))  # the reference is read in place, never copied in
+
+    (tmp_path / "broken.arw").write_bytes(b"not a raw")
+    result, path = validate_and_report(root, reference_raw=tmp_path / "broken.arw")
+    assert result.status == "PASSED"
+    assert "Realism comparison unavailable" in path.read_text()

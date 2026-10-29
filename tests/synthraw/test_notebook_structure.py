@@ -64,6 +64,10 @@ def _run_install_cell(source, monkeypatch, *, ref=None, failing_refs=(), colab=F
 
     def fake_call(command):
         assert command[:4] == [sys.executable, "-m", "pip", "install"]
+        if command[4:] == ["-q", "c2pa-python>=0.38,<0.39"]:
+            # Optional C2PA signing support on Colab; recorded under its own name.
+            calls.append("c2pa-python")
+            return 0
         url, target = command[4].rsplit("@", 1)
         # The sr extra is what installs spandrel, without which SwinIR and Real-ESRGAN cannot load.
         assert url == "synthetic-raw-50mp-lab[sr] @ git+https://github.com/RDC28/experiment_50MP.git"
@@ -125,7 +129,7 @@ def test_install_cell_skips_exiftool_outside_colab(install_source, monkeypatch, 
 def test_install_cell_installs_the_pinned_exiftool_on_colab(install_source, monkeypatch, exiftool_installs):
     namespace, calls = _run_install_cell(install_source, monkeypatch, colab=True)
     assert exiftool_installs == ["/content/exiftool"]
-    assert calls == ["main"] and namespace["INSTALLED_REF"] == "main"
+    assert calls == ["main", "c2pa-python"] and namespace["INSTALLED_REF"] == "main"
 
 
 @pytest.mark.parametrize("missing", ["torch", "spandrel"])

@@ -80,8 +80,22 @@ SUPPORT_MASKS = (
     ("sr_source_supported_mask.npy", "SR geometric source support"),
     ("highlight_fabricated_mask.npy", "Highlight radiance fabricated"),
     ("shadow_fabricated_mask.npy", "Shadow radiance fabricated"),
-    ("generated_detail_mask.npy", "Generated SR detail"),
+    ("outpaint_mask.npy", "Outpaint bands (invented edge extension)"),
+    ("generated_detail_mask.npy", "Learned SR detail (model-synthesised)"),
 )
+# Numeric gates and targets checked for a thin margin: (check, measured key, threshold field, higher is better).
+MARGIN_RULES: tuple[tuple[str, str, str, bool], ...] = (
+    ("roundtrip_supported_ssim", "ssim", "roundtrip_supported_ssim", True),
+    ("roundtrip_whole_ssim", "ssim", "roundtrip_whole_ssim", True),
+    ("colour_delta_e00", "median_delta_e00", "median_delta_e00", False),
+    ("sr_seam_ratio", "ratio", "seam_ratio", False),
+    ("noise_profile_agreement", "S_relative_error", "noise_profile_rel_tol", False),
+    ("noise_profile_agreement", "O_relative_error", "noise_profile_rel_tol", False),
+    ("noise_fit_r2", "r2", "noise_fit_r2", True),
+    ("white_balance_response", "clipped_increase", "wb_max_clipped_increase", False),
+)
+# A passing value closer than this fraction of its threshold is reported as marginal.
+NEAR_THRESHOLD_FRACTION = 0.10
 _CSS = """
 body{font:14px/1.45 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:0 auto;max-width:1100px;
 padding:24px;color:#1d1d1f;background:#fff}
@@ -98,6 +112,8 @@ th{background:#f4f4f6}td.num{text-align:right;font-variant-numeric:tabular-nums}
 .answer{font-weight:600}figure{margin:10px 0}figure img{max-width:100%;height:auto;border:1px solid #eee}
 figcaption{color:#555;font-size:12px}code{font-size:12px}
 img.preview{width:min(100%,1024px);image-rendering:pixelated}
+.glance{border:1px solid #c9c9d1;border-radius:6px;padding:4px 16px 10px;margin:12px 0}
+.glance h2{border:0;margin-top:12px}.warn{color:#8a5300;font-weight:600}
 """
 
 
@@ -197,6 +213,31 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text()) if path.is_file() else {}
 
 
+def near_threshold(checks: Iterable[ValidationCheck], thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Gates and QA targets that passed by less than NEAR_THRESHOLD_FRACTION of their threshold."""
+    by_name = {check.name: check for check in checks}
+    rows = []
+    for name, key, threshold_name, higher in MARGIN_RULES:
+        check = by_name.get(name)
+        value = None if check is None else check.measured.get(key)
+        threshold = thresholds.get(threshold_name)
+        if check is None or not check.passed or not isinstance(value, (int, float)) or not threshold:
+            continue
+        margin = (value - threshold) / threshold if higher else (threshold - value) / threshold
+        if 0 <= margin < NEAR_THRESHOLD_FRACTION:
+            rows.append(
+                {
+                    "check": name,
+                    "metric": key,
+                    "value": float(value),
+                    "threshold": float(threshold),
+                    "margin": float(margin),
+                    "hard": check.hard,
+                }
+            )
+    return rows
+
+
 class ReportGenerator:
     """Write ``validation/validation_report.html`` for a finished ``ValidationRun``."""
 
@@ -250,6 +291,7 @@ class ReportGenerator:
             f"{esc(SYNTHETIC_CAPTURE_DISCLOSURE)}<br><strong>Scientific boundary.</strong> "
             f"{esc(SCIENTIFIC_BOUNDARY)}</div>",
         ]
+        parts += self._at_a_glance(run, provenance, thresholds)
         parts += self._run_facts(run, provenance)
         parts.append("<h2>The four validation questions</h2>")
         parts.append("<table><tr><th style='width:40%'>Question</th><th>Answer</th></tr>")
@@ -279,6 +321,7 @@ class ReportGenerator:
                     parts.append(self._figure(_embed_png(Path(figures[name])), name))
                 else:
                     parts.append(f"<p class='info'>{esc(name)} not written for this run.</p>")
+        parts += self._realism(root, figures)
         parts.append("<h2>Thresholds (configuration)</h2>")
         parts.append(
             "<p class='info'>SSIM and deltaE00 limits are project QA targets, not claims about published model "
@@ -294,6 +337,112 @@ class ReportGenerator:
         caption = html.escape(caption)
         css = ' class="preview"' if preview else ""
         return f'<figure><img{css} src="{src}" alt="{caption}"><figcaption>{caption}</figcaption></figure>'
+
+    @staticmethod
+    def _at_a_glance(run: ValidationRun, provenance: Mapping[str, Any], thresholds: Mapping[str, Any]) -> list[str]:
+        """What a pass hides: unaligned round-trip numbers, the alignment gain, thin margins, skipped features."""
+        esc = html.escape
+        checks = {check.name: check for check in run.checks}
+        parts = ["<div class='glance'><h2>Read this first</h2>"]
+        unaligned_check = checks.get("roundtrip_unaligned")
+        colour = checks.get("colour_delta_e00")
+        if unaligned_check is not None and colour is not None:
+            unaligned = unaligned_check.measured.get("unaligned", {})
+            aligned = {
+                "supported_ssim": checks["roundtrip_supported_ssim"].measured.get("ssim"),
+                "whole_ssim": checks["roundtrip_whole_ssim"].measured.get("ssim"),
+                "median_delta_e00_supported": colour.measured.get("median_delta_e00"),
+            }
+            gain = colour.measured.get("alignment_gain")
+            gain_text = "n/a"
+            if isinstance(gain, (int, float)) and gain > 0:
+                gain_text = f"{gain:.4g} ({math.log2(gain):+.2f} EV)"
+            parts.append(
+                "<p>The round-trip gates are scored after a global 3x3 colour alignment. The same comparison "
+                f"without it, and the grey-axis gain the alignment applied (near 1 when exposure and "
+                f"BaselineExposure are consistent): <strong>alignment gain {esc(gain_text)}</strong>.</p>"
+                "<table class='kv'><tr><th>Round trip</th><th>Unaligned</th><th>Aligned (gated)</th></tr>"
+            )
+            for key, label in (
+                ("supported_ssim", "SSIM, source-supported pixels"),
+                ("whole_ssim", "SSIM, whole frame"),
+                ("median_delta_e00_supported", "Median deltaE00, source-supported"),
+            ):
+                parts.append(
+                    f"<tr><td>{esc(label)}</td><td class='num'>{esc(format_measured(unaligned.get(key)))}</td>"
+                    f"<td class='num'>{esc(format_measured(aligned[key]))}</td></tr>"
+                )
+            parts.append("</table>")
+        marginal = near_threshold(run.checks, thresholds)
+        if marginal:
+            parts.append(
+                f"<p class='warn'>Passed within {NEAR_THRESHOLD_FRACTION:.0%} of the threshold "
+                "(a small change in content or seed could fail them):</p>"
+                "<table class='kv'><tr><th>Check</th><th>Measured</th><th>Threshold</th><th>Margin</th></tr>"
+            )
+            parts += [
+                f"<tr><td>{esc(row['check'])} ({esc(row['metric'])}{', hard gate' if row['hard'] else ''})</td>"
+                f"<td class='num'>{row['value']:.4g}</td><td class='num'>{row['threshold']:.4g}</td>"
+                f"<td class='num'>{100 * row['margin']:.1f}%</td></tr>"
+                for row in marginal
+            ]
+            parts.append("</table>")
+        else:
+            parts.append(f"<p>No gate or target passed within {NEAR_THRESHOLD_FRACTION:.0%} of its threshold.</p>")
+        skipped = [str(reason) for reason in provenance.get("fallbacks", [])]
+        skipped += [
+            f"{check.name}: {check.detail or 'not measured'}"
+            for check in run.checks
+            if check.passed is None and _kind(check) != "report only"
+        ]
+        if skipped:
+            parts.append("<p class='warn'>Skipped, fallen back or no-op features in this run:</p><ul>")
+            parts += [f"<li>{esc(reason)}</li>" for reason in skipped]
+            parts.append("</ul>")
+        else:
+            parts.append("<p>No feature was skipped, fell back or ran as a no-op.</p>")
+        parts.append("</div>")
+        return parts
+
+    @staticmethod
+    def _realism(root: Path, figures: Mapping[str, Path]) -> list[str]:
+        """Side-by-side realism metrics against a real reference raw, when one was supplied."""
+        from synthraw.realism import REALISM_FIGURE, REALISM_JSON
+
+        esc = html.escape
+        document = _read_json(root / "validation" / REALISM_JSON)
+        parts = ["<h2>Realism against a real reference raw</h2>"]
+        if not document:
+            parts.append(
+                "<p class='info'>No reference raw was supplied, so realism was not measured. The noise gates "
+                "above check the simulator against its own NoiseProfile (self-consistency), not against a real "
+                "sensor. Set REFERENCE_RAW in the notebook validation cell to compare.</p>"
+            )
+            return parts
+        if document.get("error"):
+            parts.append(f"<p class='fail'>Realism comparison unavailable: {esc(str(document['error']))}</p>")
+            return parts
+        reference = document.get("reference", {})
+        parts.append(
+            f"<p class='info'>{esc(document.get('label', ''))}. Reference "
+            f"<code>{esc(str(reference.get('file')))}</code>. {esc(document.get('caveat', ''))}</p>"
+            "<table><tr><th style='width:34%'>Metric</th><th style='width:7%'>Plane</th><th>Unit</th>"
+            "<th>Reference</th><th>Synthetic</th><th>Synthetic / reference</th></tr>"
+        )
+        for row in document.get("rows", []):
+            parts.append(
+                f"<tr><td>{esc(row['metric'])}</td><td>{esc(row['plane'])}</td><td>{esc(row['unit'])}</td>"
+                f"<td class='num'>{esc(format_measured(row['reference']))}</td>"
+                f"<td class='num'>{esc(format_measured(row['synthetic']))}</td>"
+                f"<td class='num'>{esc(format_measured(row['ratio']))}</td></tr>"
+            )
+        parts.append("</table>")
+        figure = figures.get(REALISM_FIGURE) or root / "validation" / REALISM_FIGURE
+        if Path(figure).is_file():
+            parts.append(
+                ReportGenerator._figure(_embed_png(Path(figure)), "Realism: reference raw against the synthetic DNG")
+            )
+        return parts
 
     @staticmethod
     def _run_facts(run: ValidationRun, provenance: Mapping[str, Any]) -> list[str]:
@@ -392,9 +541,26 @@ def validate_and_report(
     figure_writer: ValidationFigureWriter | None = None,
     report: ReportGenerator | None = None,
     reference_run: str | Path | None = None,
+    reference_raw: str | Path | None = None,
     log: Callable[[str], None] | None = None,
 ) -> tuple[ValidationRun, Path]:
-    """Run the validation sequence, write the figures and the HTML report; returns the run and report path."""
+    """Run the validation sequence, write the figures and the HTML report; returns the run and report path.
+
+    ``reference_raw`` is a real camera raw (ARW, DNG, ...) measured side by side with the run's DNG
+    for the report's realism section. It is read in place, never copied into the run tree, and a
+    file LibRaw cannot measure is reported in that section rather than failing validation.
+    """
     run = (runner or ValidationRunner()).run(root, reference_run=reference_run, log=log)
+    if reference_raw is not None:
+        from synthraw.realism import REALISM_JSON, write_realism
+
+        try:
+            write_realism(root, reference_raw)
+        except Exception as error:  # noqa: BLE001 - a bad reference must not hide the validation result
+            out = Path(root) / "validation"
+            out.mkdir(parents=True, exist_ok=True)
+            (out / REALISM_JSON).write_text(json.dumps({"error": f"{type(error).__name__}: {error}"}) + "\n")
+            if log:
+                log(f"Realism comparison unavailable: {error}")
     figures = (figure_writer or ValidationFigureWriter()).write(run)
     return run, (report or ReportGenerator()).generate(run, figures)

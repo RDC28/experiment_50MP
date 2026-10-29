@@ -2,6 +2,7 @@ import hashlib
 import json
 import sys
 import types
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -65,6 +66,7 @@ PRD_TREE = {
         f"confidence/{name}.npy"
         for name in (
             "generated_detail_mask",
+            "outpaint_mask",
             "source_supported_mask",
             "highlight_fabricated_mask",
             "shadow_fabricated_mask",
@@ -338,22 +340,26 @@ def _records(path):
 
 
 def test_hdr_highlight_headroom_is_not_clipped_in_the_dng(source_png, tmp_path):
-    """Regression: exposure scale 1 put HDR radiance above 1 at or past full well, so the DNG clipped it."""
+    """Regression: a fixed exposure scale put HDR radiance at or past full well, so the DNG clipped it."""
     from synthraw.cfa import CFAMosaicer
 
-    config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="LANCZOS")
     result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS")
     root = result.root
     sensor = _records(root / "metadata/sensor_profile.json")
+    # Exposure is placed from the reconstructed HDR peak actually used, with a 0.5 EV margin.
+    peak = sensor["applied_hdr_peak"]["value"]
+    placement = np.log2(peak) + 0.5
+    assert sensor["applied_baseline_exposure_ev"]["value"] == pytest.approx(placement)
     assert sensor["applied_exposure_scale"]["value"] == pytest.approx(
-        2.0**-config.HDR_HIGHLIGHT_EV / sensor["applied_analogue_gain"]["value"]
+        2.0**-placement / sensor["applied_analogue_gain"]["value"]
     )
     optical = CFAMosaicer(sensor["applied_cfa_phase"]["value"]).mosaic(
         np.load(root / "intermediates/06_optical_sensor_rgb.npy")
     )
     mosaic = np.load(root / "raw/sensor_mosaic_uint16.npy")
     white = sensor["applied_adc_white_level"]["value"]
-    headroom = (optical > 1.0) & (optical < 0.8 * 2.0**config.HDR_HIGHLIGHT_EV)
+    # The top stop of reconstructed radiance, the region a fixed exposure scale used to clip.
+    headroom = optical > 0.5 * peak
     assert headroom.sum() > 0
     assert mosaic[headroom].max() < white
     # Brighter reconstructed radiance stays brighter in the stored codes.
@@ -407,6 +413,7 @@ def test_reference_raw_profile_runs_end_to_end(source_png, tmp_path):
 
     geometry = replace(
         TargetGeometryPlanner().plan(64, 48),
+        outpaint_bands=(),  # The bare test sensor has no planned outpaint bands.
         width=64,
         height=48,
         active_area=(0, 0, 48, 64),
@@ -709,3 +716,26 @@ def test_without_synthetic_exif_capture_settings_stay_out_of_the_dng_and_sidecar
     )
     with tifffile.TiffFile(manual.dng_path) as dng:
         assert dng.pages[0].tags[34855].value == 400  # Explicit user exposure is still written.
+
+
+def test_skipped_c2pa_and_noop_distortion_are_reported_not_silent(source_png, tmp_path, monkeypatch):
+    """Regression: C2PA was skipped and DISTORTION ran with k1 = k2 = 0 without a word in the run report."""
+    from synthraw.camera_profile import CameraProfileManager
+
+    build = CameraProfileManager.build
+
+    def zero_distortion(self, *args, **kwargs):
+        profile = build(self, *args, **kwargs)
+        for name in ("lens_distortion_k1", "lens_distortion_k2"):
+            profile.camera[name] = replace(profile.camera[name], value=0.0)
+        return profile
+
+    result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS", DISTORTION=True)
+    report = json.loads((result.root / "validation/run_report.json").read_text())
+    assert any(reason.startswith("C2PA unavailable: ") for reason in report["fallbacks"])
+    assert not any("DISTORTION" in reason for reason in report["fallbacks"])
+
+    monkeypatch.setattr(CameraProfileManager, "build", zero_distortion)
+    result = run_tiny(source_png, tmp_path / "zero", SR_BACKEND="LANCZOS", DISTORTION=True)
+    report = json.loads((result.root / "validation/run_report.json").read_text())
+    assert "Optics DISTORTION is enabled but k1 = k2 = 0, so no distortion was applied" in report["fallbacks"]

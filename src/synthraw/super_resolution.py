@@ -144,7 +144,12 @@ class SuperResolutionEngine:
             height=content_height,
             source_box=tuple(value * scale_plan.scale for value in crop_box),
         )
-        canvas = place_sensor_canvas(np.load(content_path, mmap_mode="r"), geometry_plan, directory)
+        canvas = place_sensor_canvas(
+            np.load(content_path, mmap_mode="r"),
+            geometry_plan,
+            directory,
+            learned_detail=tiled.backend != "LANCZOS",
+        )
         sr_input_size = (source_rgb.shape[1], source_rgb.shape[0])
         return SRRunResult(tiled, scale_plan, canvas, content_path, seams, seam_reason, fidelity, sr_input_size)
 

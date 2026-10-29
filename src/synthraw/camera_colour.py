@@ -1,7 +1,8 @@
 """Matrix camera colour and physics unprocessing for PRD_v3's camera milestone.
 
 Matrices approximate colour response; they do not recover spectral sensitivities.
-The default identity camera-to-working transform is a virtual prior, not Sony calibration.
+The default identity camera-to-working transform is a virtual prior, not Sony calibration;
+``CameraColourModel.from_xyz_to_camera`` builds the model from a measured XYZ-to-camera matrix instead.
 """
 
 from __future__ import annotations
@@ -47,6 +48,41 @@ class CameraColourModel:
         # Snapshot the record to keep metadata consistent if the caller edits its record.
         self.source = FieldRecord.from_dict(camera_to_working.to_dict())
         self.source.value = self.camera_to_working.tolist()
+
+    @classmethod
+    def from_xyz_to_camera(cls, xyz_to_camera: FieldRecord) -> CameraColourModel:
+        """Build the model from a D65 XYZ-to-camera matrix (LibRaw ``rgb_xyz_matrix`` convention).
+
+        camera_to_working is the inverse of XYZ-to-camera composed with linear sRGB-to-XYZ, so
+        ``metadata()`` reproduces the supplied matrix, up to the DNG white normalisation, as ColorMatrix2.
+        Provenance, method,
+        confidence and disclaimer follow the supplied record.
+        """
+        xyz_to_camera.validate()
+        matrix = _matrix(xyz_to_camera.value)
+        # DNG normalisation: D65 white maps to a camera response whose largest channel is 1, so a unit
+        # linear-sRGB white never exceeds unit camera signal (developers ignore the matrix scale).
+        working_to_camera = matrix @ _SRGB_TO_XYZ
+        working_to_camera = working_to_camera / np.max(working_to_camera @ np.ones(3))
+        record = FieldRecord(
+            "camera_to_working",
+            np.linalg.inv(working_to_camera).tolist(),
+            xyz_to_camera.provenance,
+            f"Inverse of {xyz_to_camera.field} composed with linear sRGB to XYZ, scaled so D65 white peaks at 1; "
+            f"{xyz_to_camera.method}",
+            confidence=xyz_to_camera.confidence,
+            dependencies=[xyz_to_camera.field],
+            user_override=xyz_to_camera.user_override,
+            disclaimer=xyz_to_camera.disclaimer,
+        )
+        return cls(record)
+
+    def camera_neutral(self, working_neutral) -> np.ndarray:
+        """Green-normalised camera-native response to a linear sRGB illuminant colour."""
+        neutral = self.working_to_camera @ np.asarray(working_neutral, dtype=float)
+        if neutral.shape != (3,) or not np.isfinite(neutral).all() or np.any(neutral <= 0):
+            raise ValueError("Illuminant colour maps outside the positive camera response")
+        return neutral / neutral[1]
 
     def metadata(self) -> dict[str, FieldRecord]:
         """Generate DNG XYZ-to-camera matrices using Bradford white adaptation.
@@ -104,8 +140,13 @@ class InverseISPEngine:
         digital_gain: float = 1.0,
         use_raw_flow: bool = False,
         use_spiraldiff: bool = False,
+        user_override: bool = False,
     ) -> InverseISPResult:
         """Unprocess linear sRGB; WB gains must be in camera channel coordinates.
+
+        AsShotNeutral is the green-normalised camera response of a unit linear-sRGB grey after the
+        inverse gains, so it stays consistent with the written mosaic for any camera matrix.
+        ``user_override`` marks the gains as deliberately chosen by the user rather than inferred.
 
         Signed out-of-gamut values and HDR headroom are preserved. The downstream
         electron simulator must explicitly handle negative sensor expectations.
@@ -127,18 +168,23 @@ class InverseISPEngine:
         if not np.isfinite(camera).all():
             raise ValueError("Inverse ISP overflowed")
         records = model.metadata()
+        neutral = (model.working_to_camera @ np.ones(3)) / gains
         for name, value in {
-            "AsShotNeutral": (gains[1] / gains).tolist(),
+            "AsShotNeutral": (neutral / neutral[1]).tolist(),
             "inverse_isp_white_balance_gains": gains.tolist(),
             "inverse_isp_digital_gain": float(digital_gain),
         }.items():
+            deterministic = name == "AsShotNeutral"
             records[name] = FieldRecord(
                 name,
                 value,
-                Provenance.DETERMINISTIC if name == "AsShotNeutral" else Provenance.FABRICATED,
-                "Supplied camera-channel gain hypothesis; neutral normalized to green",
-                dependencies=["inverse_isp_white_balance_gains"] if name == "AsShotNeutral" else [],
-                user_override=name != "AsShotNeutral",
+                Provenance.DETERMINISTIC if deterministic else Provenance.FABRICATED,
+                "Camera response of a unit grey after the inverse gains; neutral normalised to green"
+                if deterministic
+                else "Supplied camera-channel gain hypothesis",
+                dependencies=["inverse_isp_white_balance_gains", "camera_to_working"] if deterministic else [],
+                user_override=user_override and not deterministic,
+                disclaimer=None if deterministic else "Gain hypothesis; not a recovered in-camera setting.",
             )
         requested = [name for name, enabled in (("RAW_FLOW", use_raw_flow), ("SPIRALDIFF", use_spiraldiff)) if enabled]
         selection = {
@@ -146,7 +192,11 @@ class InverseISPEngine:
             "inverse_isp_requested_priors": requested,
             "inverse_isp_fallback_reason": " ".join(request_experimental(name).fallback_reason for name in requested)
             or None,
-            "inverse_isp_camera_domain": CAMERA_DOMAIN if requested else "virtual matrix camera",
+            "inverse_isp_camera_domain": CAMERA_DOMAIN
+            if requested
+            else (
+                "measured matrix camera" if model.source.provenance == Provenance.MEASURED else "virtual matrix camera"
+            ),
         }
         for name, value in selection.items():
             records[name] = FieldRecord(

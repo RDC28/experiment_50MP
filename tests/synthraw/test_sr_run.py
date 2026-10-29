@@ -27,6 +27,9 @@ def test_run_lanczos_all_sensor_fit_modes(tmp_path, mode):
     canvas = np.load(result.canvas.path, mmap_mode="r")
     support = np.load(result.canvas.source_supported_mask)
     generated = np.load(result.canvas.generated_detail_mask)
+    outpaint = np.load(result.canvas.outpaint_mask)
+    # Lanczos interpolates; it synthesises no detail, and outpaint bands are never SR detail.
+    assert np.all(generated == 0)
     assert canvas.shape == (geometry.height, geometry.width, 3)
     assert result.tiled.backend == "LANCZOS"
     assert result.tiled.fallback_reasons == ()
@@ -54,15 +57,15 @@ def test_run_lanczos_all_sensor_fit_modes(tmp_path, mode):
     )
     np.testing.assert_array_equal(canvas[top:bottom, left:right], np.load(expected))
     if mode == "OUTPAINT_VERTICAL":
-        np.testing.assert_array_equal(generated, 1 - support)
+        np.testing.assert_array_equal(outpaint, 1 - support)
         np.testing.assert_array_equal(canvas[0], canvas[top])
         assert result.canvas.provenance.to_dict()["provenance"] == "F"
     elif mode == "FIT_WITH_SENSOR_MARGINS":
         assert np.all(canvas[support == 0] == 0)
-        assert np.all(generated == 0)
+        assert np.all(outpaint == 0)
     else:
         assert np.all(support == 1)
-        assert np.all(generated == 0)
+        assert np.all(outpaint == 0)
         assert geometry.crop_box[0] > 0
 
 

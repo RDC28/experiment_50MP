@@ -19,12 +19,15 @@ class SensorCanvasResult:
     generated_detail_mask: Path
     source_supported_mask: Path
     provenance: FieldRecord
+    outpaint_mask: Path | None = None
 
 
 def place_sensor_canvas(
     content: np.ndarray,
     plan: GeometryPlan,
     workdir: str | Path,
+    *,
+    learned_detail: bool = False,
 ) -> SensorCanvasResult:
     """Place exact-resized visible content, extending outpaint with edge pixels.
 
@@ -33,6 +36,10 @@ def place_sensor_canvas(
     or stretches. Margins are neutral black. Source support describes geometry,
     not certainty that SR detail was present in the original capture.
     Only one RGB row and scalar mask row are materialised at a time.
+
+    The outpaint mask marks the invented edge-extension bands. The generated-detail mask marks
+    only content whose fine detail a learned SR model synthesised (``learned_detail``); Lanczos
+    interpolation adds no detail, and outpaint bands are never counted as SR detail.
     """
     left, top, right, bottom = (round(value) for value in plan.content_box)
     if not (0 <= left < right <= plan.width and 0 <= top < bottom <= plan.height):
@@ -46,6 +53,7 @@ def place_sensor_canvas(
         directory / "intermediates/02_sr_rgb.npy",
         directory / "confidence/generated_detail_mask.npy",
         directory / "confidence/sr_source_supported_mask.npy",
+        directory / "confidence/outpaint_mask.npy",
     )
     if any(path.exists() for path in paths):
         raise FileExistsError("canvas products must be new")
@@ -57,7 +65,7 @@ def place_sensor_canvas(
             shape = (plan.height, plan.width, 3) if index == 0 else (plan.height, plan.width)
             arrays.append(np.lib.format.open_memmap(path, mode="w+", dtype=np.float32, shape=shape))
             created.append(path)
-        canvas, generated, supported = arrays
+        canvas, generated, supported, outpaint = arrays
         columns = np.clip(np.arange(plan.width) - left, 0, right - left - 1)
         for y in range(plan.height):
             row = np.asarray(content[min(max(y - top, 0), bottom - top - 1)], dtype=np.float32)
@@ -68,7 +76,8 @@ def place_sensor_canvas(
             if top <= y < bottom:
                 canvas[y, left:right] = row
             supported[y] = support
-            generated[y] = ~support if plan.outpaint_bands else 0
+            generated[y] = support if learned_detail else 0
+            outpaint[y] = ~support if plan.outpaint_bands else 0
         for array in arrays:
             array.flush()
     except BaseException:
@@ -79,9 +88,15 @@ def place_sensor_canvas(
         arrays.clear()
     record = FieldRecord(
         field="sensor_canvas_fill",
-        value={"outpaint": "edge extension", "margins": "neutral black", "generated_detail_mask": str(paths[1])},
+        value={
+            "outpaint": "edge extension",
+            "margins": "neutral black",
+            "outpaint_mask": str(paths[3]),
+            "generated_detail_mask": str(paths[1]),
+            "learned_detail": learned_detail,
+        },
         provenance=Provenance.FABRICATED,
         method="Deterministic edge extension for outpaint; zero-valued sensor margins",
         disclaimer="Extended pixels are invented; source support is geometric support, not recovered-detail confidence",
     )
-    return SensorCanvasResult(*paths, provenance=record)
+    return SensorCanvasResult(*paths[:3], provenance=record, outpaint_mask=paths[3])

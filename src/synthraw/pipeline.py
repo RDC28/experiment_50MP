@@ -27,7 +27,7 @@ from synthraw.config import ExperimentConfig
 from synthraw.environment import EnvironmentInspector, EnvironmentReport
 from synthraw.geometry import TargetGeometryPlanner
 from synthraw.libraw_validator import HardValidationError
-from synthraw.provenance import FieldRecord, Provenance, ProvenanceWriter, write_c2pa
+from synthraw.provenance import FieldRecord, Provenance, ProvenanceWriter, c2pa_fallback, write_c2pa
 from synthraw.run_layout import RunLayout
 
 T = TypeVar("T")
@@ -68,6 +68,17 @@ class PipelineResult:
     fallbacks: tuple[str, ...] = field(default_factory=tuple)
     # Further noise realisations (N_SENSOR_REALISATIONS > 1), each LibRaw-validated like dng_path.
     realisation_dngs: tuple[Path, ...] = field(default_factory=tuple)
+
+
+# Applied noise parameter -> sensor profile record it comes from (ILCE-1M2 sample or labelled prior).
+_PROFILE_NOISE_SOURCES = {
+    "row_fpn_e": "row_fpn_electrons",
+    "column_fpn_e": "column_fpn_electrons",
+    "dark_current_e_per_s": "dark_current_e_per_s",
+    "hot_pixel_fraction": "hot_pixel_fraction",
+    "dead_pixel_fraction": "dead_pixel_fraction",
+    "hot_pixel_e_per_s": "hot_pixel_e_per_s",
+}
 
 
 def is_out_of_memory(error: BaseException) -> bool:
@@ -386,6 +397,7 @@ class PipelineRun:
         self.logger.warning(message)
 
     def camera_exposure(self) -> None:
+        from synthraw.camera_colour import CameraColourModel
         from synthraw.camera_geometry import CameraGeometryEstimator
         from synthraw.camera_profile import CameraProfileManager
         from synthraw.exposure import ExposurePosteriorEstimator
@@ -394,10 +406,19 @@ class PipelineRun:
         self.camera_profile = CameraProfileManager().build(
             config=self.config, geometry=self.geometry_plan, reference_raw=self.config.REFERENCE_RAW_PATH
         )
+        # A measured XYZ-to-camera matrix (the ILCE-1M2 sample, or a reference RAW) replaces the virtual
+        # sRGB camera, so AsShotNeutral and the mosaic carry a real camera's channel balance.
+        xyz_to_camera = self.camera_profile.camera.get("xyz_to_camera_d65")
+        self.colour_model = (
+            CameraColourModel.from_xyz_to_camera(xyz_to_camera) if xyz_to_camera else CameraColourModel()
+        )
         radiance = np.load(self.path("intermediates", "04_hdr_radiance.npy"), mmap_mode="r")
         step = max(1, int(np.ceil(max(radiance.shape[:2]) / 256)))
         self.white_balance = WhiteBalanceEstimator().estimate(
-            radiance[::step, ::step], self.camera_profile, **(self.options["manual_wb"] or {})
+            radiance[::step, ::step],
+            self.camera_profile,
+            colour_model=self.colour_model,
+            **(self.options["manual_wb"] or {}),
         )
         self.exposure = ExposurePosteriorEstimator().estimate(
             self.camera_profile,
@@ -419,10 +440,9 @@ class PipelineRun:
             ProvenanceWriter().write(self.groups[name], self.path("metadata", f"{name}.json"))
 
     def inverse_isp(self) -> None:
-        from synthraw.camera_colour import CameraColourModel, InverseISPEngine
+        from synthraw.camera_colour import InverseISPEngine
         from synthraw.experimental import spectral_inference_records
 
-        self.colour_model = CameraColourModel()
         engine = InverseISPEngine()
         radiance = np.load(self.path("intermediates", "04_hdr_radiance.npy"), mmap_mode="r")
         output = _new_memmap(self.path("intermediates", "05_camera_native_rgb.npy"), np.float32, radiance.shape)
@@ -433,10 +453,12 @@ class PipelineRun:
                 white_balance_gains=self.white_balance.gains,
                 use_raw_flow=self.config.USE_RAW_FLOW,
                 use_spiraldiff=self.config.USE_SPIRALDIFF,
+                user_override=bool(self.options["manual_wb"]),
             )
             output[start : start + self.strip_rows] = result.camera_rgb
         output.flush()
         self.inverse_isp_backend = result.records["inverse_isp_backend"].value
+        self.as_shot_neutral = tuple(result.records["AsShotNeutral"].value)
         self.groups["inverse_isp"] = list(result.records.values())
         spectral = spectral_inference_records(
             self.config.INFER_SPECTRAL_RESPONSE_FROM_AI_IMAGE, accept_licence=self.options["accept_licence"]
@@ -451,8 +473,15 @@ class PipelineRun:
         ProvenanceWriter().write(self.groups["inverse_isp"], self.path("metadata", "inverse_isp.json"))
 
     def optics(self) -> None:
-        from synthraw.optics import LensSimulator, OpticalBlurParameters
+        from synthraw.optics import LensSimulator, OpticalBlurParameters, OpticalDistortionParameters
 
+        distortion = OpticalDistortionParameters(
+            k1=self.camera_profile.camera["lens_distortion_k1"].value,
+            k2=self.camera_profile.camera["lens_distortion_k2"].value,
+        )
+        if self.config.DISTORTION and distortion.k1 == distortion.k2 == 0:
+            # An enabled feature that changes nothing must say so, not pass silently.
+            self.fallbacks.append("Optics DISTORTION is enabled but k1 = k2 = 0, so no distortion was applied")
         camera_rgb = np.load(self.path("intermediates", "05_camera_native_rgb.npy"), mmap_mode="r")
         output = _new_memmap(
             self.path("intermediates", "06_optical_sensor_rgb.npy"), camera_rgb.dtype, camera_rgb.shape
@@ -468,6 +497,7 @@ class PipelineRun:
                 f_number=self.exposure.records["FNumber"].value,
                 pixel_pitch_um=self.camera_profile.camera["sensor_width_mm"].value * 1000 / self.geometry_plan.width,
             ),
+            distortion=distortion,
         )
         output.flush()
         self.optical_records = records
@@ -492,22 +522,35 @@ class PipelineRun:
             )
         self.conversion_gain = sensor["conversion_gain_e_per_dn"].value
         exposure = self.exposure.records
-        gain_records = exposure_and_gain(self.config, exposure, self.camera_profile.camera)
+        optical = np.load(self.path("intermediates", "06_optical_sensor_rgb.npy"), mmap_mode="r")
+        # Expose for the headroom the reconstruction actually used, not the headroom it was allowed.
+        peak = max(
+            float(np.max(optical[start : start + self.strip_rows])) for start in range(0, len(optical), self.strip_rows)
+        )
+        gain_records = exposure_and_gain(
+            self.config, exposure, self.camera_profile.camera, hdr_peak=peak if peak > 0 else None
+        )
         sensor.update(gain_records)
         self.analogue_gain = gain_records["applied_analogue_gain"].value
+        # The DNG BaselineExposure is the push that undoes this placement; the posterior record follows it.
+        self.baseline_exposure_ev = round(gain_records["applied_baseline_exposure_ev"].value, 4)
+        exposure["BaselineExposure"] = FieldRecord(
+            "BaselineExposure",
+            self.baseline_exposure_ev,
+            Provenance.DETERMINISTIC,
+            "applied_baseline_exposure_ev rounded to 1e-4 EV: returns SDR white to display white",
+            unit="EV",
+            dependencies=["applied_baseline_exposure_ev"],
+        )
+        self.groups["exposure_posterior"] = list(exposure.values())
+        ProvenanceWriter().write(self.groups["exposure_posterior"], self.path("metadata", "exposure_posterior.json"))
         self.noise_parameters = {
             "read_noise_e": sensor["read_noise_electrons"].value,
             "exposure_time_s": exposure["ExposureTime"].value,
             "prnu_sigma": sensor["prnu_sigma"].value,
             "dsnu_e": sensor["dsnu_sigma_dn"].value * self.conversion_gain,
-            "row_fpn_e": 0.5,
-            "column_fpn_e": 0.5,
-            "dark_current_e_per_s": 0.1,
-            "hot_pixel_fraction": 0.00001,
-            "dead_pixel_fraction": 0.00001,
-            "hot_pixel_e_per_s": 1000.0,
+            **{name: sensor[source].value for name, source in _PROFILE_NOISE_SOURCES.items()},
         }
-        optical = np.load(self.path("intermediates", "06_optical_sensor_rgb.npy"), mmap_mode="r")
         expected = _new_memmap(self.path("intermediates", "07_expected_electrons.npy"), np.float64, optical.shape)
         ElectronSignalSimulator().simulate(
             optical,
@@ -536,20 +579,8 @@ class PipelineRun:
             unit="electrons",
             dependencies=["dsnu_sigma_dn", "conversion_gain_e_per_dn"],
         )
-        for name in (
-            "row_fpn_e",
-            "column_fpn_e",
-            "dark_current_e_per_s",
-            "hot_pixel_fraction",
-            "dead_pixel_fraction",
-            "hot_pixel_e_per_s",
-        ):
-            sensor[f"applied_{name}"] = FieldRecord(
-                f"applied_{name}",
-                self.noise_parameters[name],
-                Provenance.FABRICATED,
-                "Hypothetical sensor simulation prior; not measured from a Sony sensor",
-            )
+        for name, source in _PROFILE_NOISE_SOURCES.items():
+            sensor[f"applied_{name}"] = replace(sensor[source], field=f"applied_{name}", dependencies=[source])
         toggles = (
             "SENSOR_BODY_SEED",
             "SENSOR_NOISE_SEED",
@@ -672,10 +703,11 @@ class PipelineRun:
             white_level=self.adc_result.applied_parameters["white_level"],
             color_matrix1=colour["ColorMatrix1"].value,
             color_matrix2=colour["ColorMatrix2"].value,
-            as_shot_neutral=tuple(1.0 / gain for gain in self.white_balance.gains),
+            as_shot_neutral=self.as_shot_neutral,
             noise_profile=self.adc_result.noise_profile,
             software_version=SOFTWARE_VERSION,
-            # BaselineExposure stays a DNG profile prior; the posterior copy is kept in metadata.json.
+            # The push that undoes the exposure placement, so a DNG developer shows SDR white at white.
+            baseline_exposure=self.baseline_exposure_ev,
             exposure=capture_exif(
                 {name: record for name, record in self.exposure.records.items() if name in EXPOSURE_FIELDS}
             ),
@@ -836,7 +868,10 @@ class PipelineRun:
         if self.config.WRITE_TIFF16:
             # Developed by LibRaw from the published DNG, not from any pre-sensor RGB stage.
             self.tiff_path = TIFFWriter().write(
-                self.path("masters", "developed_50mp_16bit.tif"), self.dng_path, rows_per_strip=self.strip_rows
+                self.path("masters", "developed_50mp_16bit.tif"),
+                self.dng_path,
+                rows_per_strip=self.strip_rows,
+                baseline_exposure_ev=self.baseline_exposure_ev,
             )
 
     def exr_preview(self) -> None:
@@ -869,6 +904,9 @@ class PipelineRun:
             c2pa_signer=self.options["c2pa_signer"],
         )
         self.log(f"C2PA: {self.c2pa['status']}")
+        if message := c2pa_fallback(self.c2pa):
+            # WRITE_C2PA asked for signed masters; their absence belongs in the run report, not only a log line.
+            self.fallbacks.append(message)
 
 
 def _close_handlers(logger: logging.Logger) -> None:
@@ -934,6 +972,7 @@ def write_run_provenance(
         learned_models=learned_models,
         version=SOFTWARE_VERSION,
     )
+    fallbacks = [*fallbacks, *filter(None, [c2pa_fallback(c2pa)])]
     outputs = sorted(
         path
         for directory in ("source", "raw", "masters", "metadata")
