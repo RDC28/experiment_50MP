@@ -99,8 +99,8 @@ learned checkpoints or enable unavailable integrations.
 Open `notebooks/synthetic_50mp_v5.ipynb` in Colab with a matching checkout at
 `/content/experiment_50MP`. Supply both source paths and a fresh output path.
 The notebook inspects hardware, saves requests and effective states, and exposes
-all PRD parameter-table entries as an editable request catalogue. Catalogue
-overrides are not executable yet and are rejected. Supported camera/ISP values
+all PRD parameter-table entries as an editable request catalogue. Supported camera catalogue overrides execute through field-mode resolution;
+unsupported overrides are rejected. Supported camera/ISP values
 are editable separately. Maximum defaults request HAT, HYBRID, HDR, learned RAW
 and extended sensor/optics; these integrations are visibly skipped.
 Set `ALLOW_ANALYTIC_BASELINE=True` explicitly to execute the existing sequential
@@ -292,3 +292,14 @@ fields. This retains caller-supplied claims, not independently verified estimate
 `config.json` still stores effective hypotheses only: replaying it alone does
 not recreate selection provenance. Retain the manifest for that evidence.
 JSON field-mode requests and the notebook panel remain pending.
+
+
+The notebook catalogue now executes CFA pattern, ADC depth, black level,
+full-well capacity, ISO, shutter time, aperture and seed selections through
+`panel.resolve_camera_panel`. Explicit values require USER mode. AUTO and
+FABRICATE without values use declared synthetic camera hypotheses; ESTIMATE
+fails without evidence. Other catalogue overrides remain unsupported and fail.
+The resolved immutable camera and selection records are reused in both paired
+runs, with mode/provenance retained in each child manifest and HTML report.
+Pair selection validation occurs before creating output directories. This does
+not infer camera measurements or implement learned, sensor or optics models.

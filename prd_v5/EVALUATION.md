@@ -651,3 +651,16 @@ unresolved.
 ## Implementation scheduling checkpoint
 
 Parent review after iteration 26: the analytic path already executes through independent DNG/TIFF development. Prioritize the remaining direct deliverable now: create the single Colab notebook with setup, hardware inspection, every PRD setting and maximum-scale defaults, then advance fidelity, learned RAW dispatch, full sensor, full optics and complete metadata in order. Do not spend the remaining iteration budget on additional small analytic-only schema, report or provenance polish while those phases have not been attempted. Each next increment should close a substantial remaining roadmap requirement end to end, reusing existing tested synthraw implementations where appropriate. Finish with one locked full-suite run and lint, and replace accumulated increment history with a concise final implemented/deferred matrix. Unsupported research checkpoints may be deferred with evidence; available analytic/sensor/optics functionality and the notebook itself should be implemented rather than deferred.
+
+
+## Executable notebook camera panel evidence
+
+The single Colab notebook now routes eight supported catalogue fields (CFA,
+ADC depth, black level, full well, ISO, shutter, aperture, seed) through validated
+field-mode resolution into the actual paired pipeline. Explicit values require
+USER mode; missing estimates and unsupported edits fail before image work.
+Both child bundles preserve the same selected hypotheses and mode/provenance.
+Tiny PNG-to-DNG-to-independent-LibRaw-TIFF integration verifies a panel ISO
+selection in both bundles; invalid pair evidence fails before output creation.
+No notebook or full-scale job was executed locally. Remaining ISP catalogue
+mapping, later roadmap phases and Colab scientific validation are unresolved.

@@ -8,6 +8,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from prd_v5.config import AnalyticRunConfig
+from prd_v5.fields import validate_selections
+from prd_v5.hypothesis import CameraField
 
 
 def run_analytic_pair(
@@ -15,6 +17,9 @@ def run_analytic_pair(
     source_4k: str | Path,
     output_dir: str | Path,
     config: AnalyticRunConfig,
+    *,
+    camera_selections: tuple[CameraField, ...] = (),
+    isp_selections: tuple[CameraField, ...] = (),
 ) -> dict:
     """Run caller-labelled variants sequentially using exactly the same config.
 
@@ -25,12 +30,16 @@ def run_analytic_pair(
     """
     if not isinstance(config, AnalyticRunConfig):
         raise ValueError("Expected one validated AnalyticRunConfig")
+    camera_selections = tuple(camera_selections)
+    isp_selections = tuple(isp_selections)
+    validate_selections(config.camera, camera_selections)
+    validate_selections(config.isp, isp_selections, isp=True)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=False)
     runs = {}
     # Each call closes disk-backed working arrays before the next call starts.
     for label, source in (("2k", source_2k), ("4k", source_4k)):
-        child = config.run(source, output / label)
+        child = config.run(source, output / label, camera_selections=camera_selections, isp_selections=isp_selections)
         manifest = output / label / "manifest.json"
         runs[label] = {
             "manifest": f"{label}/manifest.json",

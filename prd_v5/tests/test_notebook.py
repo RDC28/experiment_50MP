@@ -73,3 +73,10 @@ def test_notebook_covers_prd_parameter_tables():
         if line.startswith("| ") and line.split("|")[1].strip() not in {"Parameter", "Field"}
     }
     assert expected == {field["name"] for field in values["FIELD_REQUESTS"]}
+
+
+def test_notebook_routes_supported_panel_values_and_evidence():
+    notebook, _ = assignments()
+    execution = notebook.cells[-1].source
+    assert "resolve_camera_panel(camera, FIELD_REQUESTS, FIELD_MODE)" in execution
+    assert "camera_selections=camera_selections" in execution
