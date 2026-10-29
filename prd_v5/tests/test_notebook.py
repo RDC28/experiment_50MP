@@ -81,3 +81,20 @@ def test_notebook_routes_supported_panel_values_and_evidence():
     assert "resolve_analytic_panel(" in execution
     assert "isp_selections=isp_selections" in execution
     assert "camera_selections=camera_selections" in execution
+
+
+def test_notebook_dispatches_verified_sr_and_records_only_completed_execution():
+    notebook, values = assignments()
+    assert values["SR_CHECKPOINT"] is None
+    preflight = notebook.cells[9].source
+    execution = notebook.cells[-1].source
+    assert "resolve_sr_panel(" in preflight
+    assert 'states["SR_BACKEND"] = sr_state' in preflight
+    tree = ast.parse(execution)
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    paired = next(node for node in calls if isinstance(node.func, ast.Name) and node.func.id == "run_analytic_pair")
+    sr = next(keyword.value for keyword in paired.keywords if keyword.arg == "sr_checkpoint")
+    assert isinstance(sr, ast.Name) and sr.id == "sr_checkpoint"
+    assert execution.index("result = run_analytic_pair(") < execution.index('"status": "executed;')
+    assert '"[sr]"' in execution
+    assert "(SR_TILE, SR_OVERLAP) != (512, 64)" in execution

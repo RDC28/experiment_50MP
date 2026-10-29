@@ -135,3 +135,45 @@ def test_panel_neutral_rejects_value_without_user_mode():
             [{"name": "AsShotNeutral", "mode": "AUTO", "value": [1, 1, 1]}],
             {"AsShotNeutral": "AUTO"},
         )
+
+
+def test_sr_panel_verified_selection_and_fail_closed(tmp_path):
+    import hashlib
+
+    from prd_v5.panel import resolve_sr_panel
+
+    path = tmp_path / "weights.pth"
+    path.write_bytes(b"model double, never loaded")
+    checkpoint = {
+        "path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "backend": "HAT",
+        "repository_revision": "a" * 40,
+        "source": "user test fixture",
+        "licence": "test only",
+        "licence_accepted": True,
+    }
+    spec, state = resolve_sr_panel("HAT", checkpoint, allow_baseline=False)
+    assert spec.path == str(path)
+    assert state["planned"] == "HAT" and state["effective"] is None
+    assert state["checkpoint"]["integrity"] == "verified"
+    with pytest.raises(ValueError, match="differs"):
+        resolve_sr_panel("REAL_ESRGAN", checkpoint, allow_baseline=True)
+    path.write_bytes(b"corrupted")
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        resolve_sr_panel("HAT", checkpoint, allow_baseline=True)
+
+
+def test_sr_panel_missing_weights_require_explicit_baseline():
+    from prd_v5.panel import resolve_sr_panel
+
+    with pytest.raises(ValueError, match="opt-in"):
+        resolve_sr_panel("HAT", None, allow_baseline=False)
+    spec, state = resolve_sr_panel("HAT", None, allow_baseline=True)
+    assert spec is None
+    assert state["requested"] == "HAT" and state["planned"] == "BILINEAR_BASELINE"
+    assert state["effective"] is None and state["skip_reason"]
+    with pytest.raises(ValueError, match="Unsupported"):
+        resolve_sr_panel("unknown", None, allow_baseline=True)
+    with pytest.raises(ValueError, match="cannot accept"):
+        resolve_sr_panel("BILINEAR_BASELINE", {}, allow_baseline=True)

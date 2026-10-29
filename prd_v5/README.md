@@ -258,7 +258,7 @@ manifest retains `shared_checkpoint` evidence and explicitly requires those
 checkpoint bytes in addition to the analytic config for replay. Each child
 verifies and loads the checkpoint independently; a failure never silently falls
 back or creates a pair completion marker. Real inference remains Colab-only.
-The notebook does not yet dispatch this option, and scientific fidelity is not
+The notebook now dispatches this option, and scientific fidelity is not
 established by successful output roundtrips.
 
 For explicit field-mode selection, `fields.resolve_field(name, units, mode,
@@ -333,7 +333,7 @@ NPY at x4 with 512/64 halo tiles. It verifies bytes and Spandrel architecture,
 scale and RGB channels before inference, uses safe tensor-only loading and
 reports any OOM tile reduction. There is no download or implicit fallback.
 Install the package's `sr` extra in Colab to supply torch/Spandrel. This API is
-not yet connected to notebook paired RAW execution. Actual checkpoint loading,
+connected to optional notebook paired RAW execution. Actual checkpoint loading,
 full-scale GPU execution, seam/fidelity acceptance and scientific metrics remain
 unvalidated; local tests use explicit model doubles only.
 
@@ -343,5 +343,18 @@ Its disk-backed x4 output feeds the normal geometry and analytic RAW stages.
 Failures stop execution without an analytic fallback. The manifest retains
 checkpoint evidence; `config.json` alone replays only analytic settings, so SR
 replay also needs the same checkpoint and explicit argument. Paired/notebook SR
-dispatch remains pending. Local tests use tiny model doubles only; real model
+dispatch is available with explicit checkpoint provenance. Local tests use tiny model doubles only; real model
 quality and full-scale execution are not validated.
+
+Notebook SR: set `SR_CHECKPOINT` to a dictionary containing all required
+`SRCheckpoint` fields and select matching `SR_BACKEND` (`HAT` or `REAL_ESRGAN`).
+Preflight verifies integrity and explicit licence acceptance without tensor loading.
+The execution cell installs the optional `[sr]` dependencies in Colab and passes
+one shared checkpoint to the sequential pair. `ALLOW_ANALYTIC_BASELINE=True` is
+still required because inverse ISP remains analytic. Missing weights require
+that explicit baseline opt-in; invalid supplied weights always fail. No model
+is downloaded and no backend is silently substituted. SR tile/overlap edits
+beyond 512/64 currently fail explicitly. Preflight records readiness rather than
+execution; only a completed pair updates SR effective state to executed. Actual
+checkpoint compatibility, memory use and scientific fidelity remain Colab-only
+unvalidated work.

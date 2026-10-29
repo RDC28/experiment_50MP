@@ -106,3 +106,39 @@ def resolve_analytic_panel(camera: CameraHypothesis, isp, requests: list[dict], 
             )
     isp, isp_records = resolve_isp(isp, isp_modes, candidates)
     return camera, isp, camera_records, isp_records
+
+
+def resolve_sr_panel(backend: str, checkpoint: dict | None, *, allow_baseline: bool):
+    """Preflight SR requests without importing tensors or running inference.
+
+    Missing weights may use the explicitly accepted analytic baseline. Supplied
+    invalid weights always fail; they never trigger a silent fallback. Readiness
+    is not execution evidence: child manifests record successful model execution.
+    """
+    from prd_v5.fidelity import SRCheckpoint
+
+    if backend not in {"HAT", "REAL_ESRGAN", "BILINEAR_BASELINE"}:
+        raise ValueError("Unsupported notebook SR backend")
+    if backend == "BILINEAR_BASELINE" and checkpoint is not None:
+        raise ValueError("Baseline SR cannot accept a checkpoint")
+    if checkpoint is not None:
+        spec = SRCheckpoint(**checkpoint)
+        if spec.backend != backend:
+            raise ValueError("Requested SR backend differs from checkpoint backend")
+        evidence = spec.verify()
+        return spec, {
+            "requested": backend,
+            "effective": None,
+            "planned": backend,
+            "status": "checkpoint verified; inference not executed",
+            "checkpoint": evidence,
+        }
+    if not allow_baseline:
+        raise ValueError("SR checkpoint unavailable; explicit analytic baseline opt-in required")
+    return None, {
+        "requested": backend,
+        "effective": None,
+        "planned": "BILINEAR_BASELINE",
+        "status": "explicit baseline accepted; inference not executed",
+        "skip_reason": None if backend == "BILINEAR_BASELINE" else "No user checkpoint supplied",
+    }

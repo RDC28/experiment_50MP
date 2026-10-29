@@ -744,3 +744,22 @@ Notebook SR dispatch, HDR, exposure/profile selection and comparison metrics
 remain fidelity work. Real checkpoint compatibility, scientific fidelity and
 full-scale memory/performance remain unresolved Colab-only validations. Later
 learned RAW, extended sensor, optics and final metadata phases remain pending.
+
+
+## Notebook checkpoint dispatch evidence (iteration 34)
+
+The single notebook now accepts a user-supplied `SR_CHECKPOINT` dictionary,
+preflights its hash/licence/backend through `panel.resolve_sr_panel`, installs
+optional SR dependencies only in its Colab execution cell and passes the shared
+specification into sequential paired RAW execution. No weights are downloaded.
+Missing checkpoints require explicit analytic-baseline acceptance; invalid
+supplied checkpoints fail even when baseline acceptance is enabled. Requested,
+planned and effective SR states distinguish preflight from completed execution.
+Tile/overlap edits outside the wired 512/64 defaults fail explicitly.
+
+Lightweight tests cover integrity failure, backend mismatch, absent-checkpoint
+opt-in and notebook AST dispatch/completion-state ordering. No notebook, real
+model, download or full-scale job ran locally. Real HAT/Real-ESRGAN compatibility,
+GPU memory and scientific fidelity remain unresolved Colab-only checks. HDR,
+exposure/profile selection and comparison metrics remain fidelity work before
+learned RAW, extended sensor, optics and final metadata phases.
