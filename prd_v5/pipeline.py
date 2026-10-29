@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -14,6 +14,7 @@ from prd_v5.analytic import AnalyticISP
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.decode import decode_source
 from prd_v5.dng import write_dng
+from prd_v5.fidelity import SRCheckpoint, reconstruct
 from prd_v5.fields import validate_selections
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField, CameraHypothesis
@@ -41,8 +42,13 @@ def run_analytic(
     max_develop_bytes: int = 512 * 1024 * 1024,
     camera_selections: tuple[CameraField, ...] = (),
     isp_selections: tuple[CameraField, ...] = (),
+    sr_checkpoint: SRCheckpoint | None = None,
 ) -> dict:
     """Run explicit bilinear/analytic MVP, never an implicit learned fallback.
+
+    An optional verified SR checkpoint reconstructs encoded sRGB before geometry
+    and analytic unprocessing. Saved config.json describes only the analytic
+    settings; replaying SR also requires the checkpoint in the stage evidence.
 
     Requires a new output directory to protect prior results. On failure partial
     deliverables remain for diagnosis without a completion manifest. Temporary
@@ -104,10 +110,24 @@ def run_analytic(
                 max_decode_bytes=max_decode_bytes,
                 strip_rows=strip_rows,
             )
+            raster_source = decoded
+            raster_plan = geometry
+            if sr_checkpoint is not None:
+                sr_path = Path(scratch) / "reconstructed.npy"
+                stages["super_resolution"] = reconstruct(decoded, sr_path, sr_checkpoint)
+                raster_source = np.load(sr_path, mmap_mode="r", allow_pickle=False)
+                arrays.append(raster_source)
+                raster_plan = replace(
+                    geometry,
+                    source_size=(source.width * sr_checkpoint.scale, source.height * sr_checkpoint.scale),
+                    scale=geometry.scale / sr_checkpoint.scale,
+                )
             shape = (geometry.height, geometry.width)
             rgb = allocate("raster", np.float32, (*shape, 3))
             support = allocate("support", np.bool_, shape)
-            stages["raster"] = rasterize(decoded, rgb, support, geometry)
+            stages["raster"] = rasterize(raster_source, rgb, support, raster_plan)
+            if sr_checkpoint is not None:
+                stages["raster"]["learned_super_resolution"] = sr_checkpoint.backend
             clean = allocate("clean", np.float32, (*shape, 3))
             stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows)
             adc = allocate("adc", np.uint16, shape)
@@ -160,7 +180,16 @@ def run_analytic(
         artifacts[name] = {"sha256": digest.hexdigest(), "size_bytes": path.stat().st_size}
     report = {
         "schema_version": 1,
-        "pipeline": "analytic MVP with explicit bilinear resampling; no learned inference",
+        "pipeline": (
+            "verified checkpoint SR with bilinear geometry and analytic inverse ISP"
+            if sr_checkpoint is not None
+            else "analytic MVP with explicit bilinear resampling; no learned inference"
+        ),
+        "replay": {
+            "config_scope": "analytic settings only",
+            "additional_checkpoint_required": sr_checkpoint is not None,
+            "checkpoint_evidence": "stages.super_resolution.checkpoint" if sr_checkpoint is not None else None,
+        },
         "runtime": runtime_record(),
         "source": source.to_dict(),
         "geometry": geometry.to_dict(),
@@ -180,7 +209,8 @@ def run_analytic(
                 "clipped_pixels": clipped_pixels,
                 "limitations": (
                     "Endpoint indicator after ICC and bilinear resampling, not recovered highlight truth; "
-                    "resampling can dilute source endpoints and below-endpoint clipping is undetected"
+                    "resampling can dilute source endpoints and below-endpoint clipping is undetected; "
+                    "with SR this describes reconstructed samples, not original endpoints"
                 ),
             },
             "source_support": {

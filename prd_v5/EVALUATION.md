@@ -697,3 +697,27 @@ Real checkpoint compatibility, full-scale GPU memory/performance and scientific
 fidelity remain Colab-only unresolved validations. Notebook/paired RAW wiring,
 HDR, exposure/profile selection and comparison metrics remain fidelity work;
 this standalone SR API does not claim completion of that phase.
+
+## Fidelity-to-RAW integration evidence (iteration 32)
+
+The single-run `pipeline.run_analytic` accepts an opt-in `sr_checkpoint`.
+Verified tiled x4 encoded-sRGB output feeds geometry resampling, analytic inverse
+ISP, CFA/electron noise, DNG export and independent LibRaw/TIFF validation.
+The original geometry and camera hypotheses are preserved; only the resampling
+source size and scale change. Checkpoint errors propagate without fallback or
+completion marker, and temporary reconstructed arrays close and disappear.
+Stage evidence retains checkpoint provenance and requested/effective backend.
+`config.json` remains the analytic subset; manifests explicitly require the
+separate checkpoint evidence for SR replay. Clipping masks describe reconstructed
+samples when SR is enabled, not original highlight endpoints.
+
+Tiny model-double integration verifies an independently calculated signal change
+in decoded DNG samples and successful independent TIFF roundtrip. This establishes
+wiring only. Real HAT/Real-ESRGAN quality, compatibility, peak memory and full-scale
+execution remain unvalidated and Colab-only. Pair/config/notebook SR dispatch,
+HDR and exposure/profile selection remain pending fidelity work.
+
+Validation: 244 lightweight v5 tests pass under the shared lock, repository-wide
+ruff and changed Python formatting pass, and `git diff --check` is clean. No
+notebook execution, downloads, real inference, full-frame processing, commits or
+background services were started.

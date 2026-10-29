@@ -87,7 +87,7 @@ def load_checkpoint(spec: SRCheckpoint):
 
 
 def reconstruct(source, output_path, spec: SRCheckpoint, *, tile=512, overlap=64) -> dict:
-    """Produce encoded-sRGB x4 NPY memmap; no geometry/RAW integration implied.
+    """Produce encoded-sRGB x4 NPY memmap for optional pipeline integration.
 
     Reuse the tested halo/blend engine and its visible one-time OOM tile retry.
     Load failures propagate before allocation. No substitute backend is selected.

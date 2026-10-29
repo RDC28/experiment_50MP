@@ -106,3 +106,80 @@ def test_loader_rejects_incompatible_descriptor(tmp_path, monkeypatch, architect
     with pytest.raises(ValueError, match="contract mismatch"):
         fidelity.load_checkpoint(checkpoint(tmp_path))
     assert loads == [{"map_location": "cpu", "weights_only": True}]
+
+
+def test_checkpoint_pixels_reach_independent_raw_roundtrip(tmp_path, monkeypatch):
+    import rawpy
+    from PIL import Image
+
+    from prd_v5.hypothesis import CameraHypothesis
+    from prd_v5.pipeline import run_analytic
+
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((16, 24, 3), 128, dtype=np.uint8)).save(source)
+    spec = checkpoint(tmp_path)
+
+    def infer(patch):
+        return np.repeat(np.repeat(patch * 0.5, 4, axis=0), 4, axis=1)
+
+    monkeypatch.setattr(fidelity, "load_checkpoint", lambda spec: (infer, spec.verify()))
+    camera = CameraHypothesis(shot_noise=False, read_noise=False)
+    baseline = run_analytic(
+        source, tmp_path / "baseline", camera, target_megapixels=0.001536, assume_unprofiled_srgb=True
+    )
+    report = run_analytic(
+        source,
+        tmp_path / "sr",
+        camera,
+        target_megapixels=0.001536,
+        assume_unprofiled_srgb=True,
+        sr_checkpoint=spec,
+    )
+    assert report["geometry"] == baseline["geometry"]
+    assert report["stages"]["super_resolution"]["checkpoint"]["sha256"] == spec.sha256
+    assert report["stages"]["raster"]["learned_super_resolution"] == "HAT"
+    assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+    assert report["replay"]["additional_checkpoint_required"] is True
+    assert report["scientific_acceptance"] == "not measured"
+    with rawpy.imread(str(tmp_path / "baseline/capture.dng")) as original:
+        before = original.raw_image.copy()
+    with rawpy.imread(str(tmp_path / "sr/capture.dng")) as reconstructed:
+        after = reconstructed.raw_image.copy()
+    # Independent sRGB inversion, not merely a changed stage label.
+    encoded = 128 / 255
+
+    def linear(x):
+        return ((x + 0.055) / 1.055) ** 2.4
+
+    expected_ratio = linear(encoded * 0.5) / linear(encoded)
+    np.testing.assert_allclose(
+        after.astype(float) - camera.black_level,
+        (before.astype(float) - camera.black_level) * expected_ratio,
+        atol=1,
+    )
+    assert not list((tmp_path / "sr").glob("working-*"))
+
+
+def test_pipeline_checkpoint_failure_never_falls_back(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from prd_v5.hypothesis import CameraHypothesis
+    from prd_v5.pipeline import run_analytic
+
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((16, 16, 3), 128, dtype=np.uint8)).save(source)
+
+    def fail(spec):
+        raise RuntimeError("checkpoint unavailable")
+
+    monkeypatch.setattr(fidelity, "load_checkpoint", fail)
+    with pytest.raises(RuntimeError, match="checkpoint unavailable"):
+        run_analytic(
+            source,
+            tmp_path / "out",
+            CameraHypothesis(),
+            target_megapixels=0.001024,
+            assume_unprofiled_srgb=True,
+            sr_checkpoint=checkpoint(tmp_path),
+        )
+    assert list((tmp_path / "out").iterdir()) == []

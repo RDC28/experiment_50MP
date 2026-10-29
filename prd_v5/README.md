@@ -324,3 +324,12 @@ Install the package's `sr` extra in Colab to supply torch/Spandrel. This API is
 not yet connected to notebook paired RAW execution. Actual checkpoint loading,
 full-scale GPU execution, seam/fidelity acceptance and scientific metrics remain
 unvalidated; local tests use explicit model doubles only.
+
+Opt-in single-run SR integration: pass `sr_checkpoint=SRCheckpoint(...)` to
+`prd_v5.pipeline.run_analytic` in Colab with a verified, accepted user checkpoint.
+Its disk-backed x4 output feeds the normal geometry and analytic RAW stages.
+Failures stop execution without an analytic fallback. The manifest retains
+checkpoint evidence; `config.json` alone replays only analytic settings, so SR
+replay also needs the same checkpoint and explicit argument. Paired/notebook SR
+dispatch remains pending. Local tests use tiny model doubles only; real model
+quality and full-scale execution are not validated.
