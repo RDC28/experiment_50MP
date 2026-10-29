@@ -2,6 +2,27 @@
 
 Evaluated 2026-10-29 before implementation. `PRD_v5.md` is the supplied document copied byte for byte. This evaluation does not rewrite it. The deliverable is one new Colab notebook under `prd_v5/notebooks/`, backed by composable, tested Python. No notebook, model download, full-frame inference, or training is permitted on the 8 GB development Mac. Full-suite tests must use `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
+## Implementation evidence: initial Colab deliverable (iteration 28)
+
+`notebooks/synthetic_50mp_v5.ipynb` is the single new v5 notebook. It contains
+Colab-only setup, hardware/RAM/disk inspection, saved requested/effective reports,
+the complete PRD boolean panel with full-scale defaults and all parameter-table
+entries with modes, priors and unresolved provenance. Supported camera/ISP inputs
+feed one immutable configuration into the executable sequential paired runner.
+The baseline requires explicit opt-in; strict learned mode fails. Unsupported
+catalogue overrides fail rather than silently alter or fail to alter pixels.
+
+This is an initial executable MVP notebook, not complete PRD implementation.
+HAT/HYBRID/learned HDR and extended sensor/optics requests remain explicitly
+skipped pending ordered integrations. Catalogue field modes beyond the supported
+hypotheses, source diagnostic plots, scientific comparison/editability metrics,
+EXR and final metadata coverage remain pending. Full-scale execution, peak memory,
+GPU compatibility and scientific acceptance require Colab validation. No notebook
+cells, inference, downloads or full-scale work ran locally. Static notebook format,
+Python syntax, defaults, parameter coverage and hypothesis contracts are tested;
+215 existing/new lightweight tests passed under the shared lock before the final
+parameter-coverage test was added. Repository-wide ruff passes.
+
 ## Implementation evidence: twenty-seventh MVP increment
 
 The analytic runner and `AnalyticRunConfig.run` now accept camera/ISP selection

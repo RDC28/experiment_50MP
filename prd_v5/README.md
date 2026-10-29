@@ -69,8 +69,8 @@ paths or environment variables. Missing optional LittleCMS support is null.
 This runtime evidence helps diagnose replay differences; it does not pin an
 environment or establish cross-runtime bitwise reproducibility.
 
-The remaining MVP config, complete registry and new Colab notebook are not
-implemented yet. Fidelity, learned RAW, full sensor, full optics and final
+Complete MVP configuration and executable field coverage remain pending.
+The initial Colab notebook is available as described below. Fidelity, learned RAW, full sensor, full optics and final
 metadata follow MVP in that order. No HAT, HDR model or learned RAW checkpoint is
 executed by this foundation. Upstream checkpoint and scientific limitations in
 `EVALUATION.md` still apply.
@@ -96,8 +96,18 @@ schema with
 it does not require a checkout-relative file path. Installation does not supply
 learned checkpoints or enable unavailable integrations.
 
-No v5 notebook is runnable yet. Full-scale validation must wait for the new
-notebook and execute in Colab, never on this 8 GB development Mac. No 50 MP,
+Open `notebooks/synthetic_50mp_v5.ipynb` in Colab with a matching checkout at
+`/content/experiment_50MP`. Supply both source paths and a fresh output path.
+The notebook inspects hardware, saves requests and effective states, and exposes
+all PRD parameter-table entries as an editable request catalogue. Catalogue
+overrides are not executable yet and are rejected. Supported camera/ISP values
+are editable separately. Maximum defaults request HAT, HYBRID, HDR, learned RAW
+and extended sensor/optics; these integrations are visibly skipped.
+Set `ALLOW_ANALYTIC_BASELINE=True` explicitly to execute the existing sequential
+50 MP analytic pair, after reviewing skips and resource budgets. Unprofiled
+inputs require explicit `ASSUME_UNPROFILED_SRGB=True`. Output is not a full-stack
+completion claim. Strict learned mode always fails until a backend exists.
+Full-scale validation must execute in Colab, never on this 8 GB development Mac. No 50 MP,
 checkpoint compatibility, full-scale RAW decoder, performance or scientific acceptance
 claim follows from the current arithmetic tests.
 
