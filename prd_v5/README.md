@@ -471,3 +471,15 @@ tags with D65 illuminants. The panel preserves USER_SET matrix provenance across
 both paired bundles and combines it with independent AsShotNeutral selection.
 AUTO/FABRICATE without a value retain the base ISP; USER/ESTIMATE without evidence
 fail. Dual-illuminant pairs and auxiliary transforms remain unsupported.
+
+Experimental analytic HDR: set `ACCEPT_ANALYTIC_HDR_EXPERIMENT = True` in the
+notebook while keeping `ENABLE_HDR = True`. `HDR_MAX_RADIANCE = 16.0` selects
+an explicit normalized inverse-Reinhard hypothesis, not learned reconstruction.
+Library usage is `AnalyticISP(hdr_max_radiance=16)`; default `1.0` disables it.
+Expansion occurs after inverse smoothstep and before camera colour/WB inversion.
+All expanded radiance is uncertain; existing endpoint masks identify only
+resampled clipping, not every uncertain expanded pixel. Expanded-pixel counts
+and parameters survive in both manifests and replay configs. No empty headroom
+is reserved: sensor saturation and the unchanged 14-bit ADC may clip expanded
+values. Learned HDR remains unavailable. Full-scale and visual validation are
+Colab-only and have not run.

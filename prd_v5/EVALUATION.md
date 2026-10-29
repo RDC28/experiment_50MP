@@ -976,3 +976,27 @@ ruff and changed Python formatting pass. No models, full-scale processing,
 notebook execution, background processes or commits were started. Automatic
 profile estimation, dual-illuminant interpolation, HDR and later ordered phases
 remain pending; full-scale and scientific Colab acceptance remain unresolved.
+
+## Integrated analytic HDR hypothesis (iteration 46)
+
+The single notebook, replay schema and executable paired pipeline now support
+an opt-in normalized inverse-Reinhard hypothesis via
+`AnalyticISP.hdr_max_radiance`. Default 1 disables expansion and preserves prior
+behavior; explicit M > 1 inverts y = r(1 + 1/M)/(1 + r), mapping normalized
+linear display values to [0, M]. It runs in bounded row strips after inverse
+smoothstep, before camera colour/WB inversion and CFA/electron sensor noise.
+The forward self-consistency diagnostic applies the matching compression.
+Reports retain experimental status, expanded-pixel counts, clipping uncertainty,
+no learned execution and unchanged sensor saturation without empty headroom.
+The notebook exposes M=16 with separate experimental acceptance false; requested
+HDR remains true. Effective execution is recorded only after pair completion.
+This is a supplied tone-curve hypothesis, not recovered highlight detail,
+calibrated HDR, or an available learned checkpoint. Endpoint masks retain their
+existing narrower semantics. Full-scale/visual/scientific checks remain Colab-only.
+
+Validation includes independent inverse/forward arithmetic, endpoints, strip
+invariance, invalid domains, replay configuration, static notebook dispatch and
+tiny real paired DNG/LibRaw/TIFF outputs with independently calculated ADC values.
+No notebook, download, real inference, heavy processing or background service ran.
+Learned RAW, full sensor/optics, final metadata and benchmark acceptance remain
+pending in roadmap order.

@@ -44,7 +44,8 @@
         "camera_to_srgb": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/triple"}},
         "white_balance": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/positiveNumber"}},
         "exposure_gain": {"$ref": "#/$defs/positiveNumber"},
-        "inverse_smoothstep": {"type": "boolean"}
+        "inverse_smoothstep": {"type": "boolean"},
+        "hdr_max_radiance": {"type": "number", "minimum": 1, "maximum": 65536}
       }
     }
   }
