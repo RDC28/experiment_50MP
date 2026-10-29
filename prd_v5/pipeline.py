@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 
 from prd_v5.analytic import AnalyticISP
+from prd_v5.config import AnalyticRunConfig
 from prd_v5.decode import decode_source
 from prd_v5.dng import write_dng
 from prd_v5.geometry import GeometryPlanner
@@ -47,6 +48,19 @@ def run_analytic(
     """
     if isp is None:
         isp = AnalyticISP()
+    # Save executable settings, including actual hypotheses rather than a seed
+    # alone. Paths remain caller-supplied so bundles can be replayed elsewhere.
+    config = AnalyticRunConfig(
+        camera=camera,
+        isp=isp,
+        target_megapixels=target_megapixels,
+        geometry_mode=geometry_mode,
+        native_fit_policy=native_fit_policy,
+        assume_unprofiled_srgb=assume_unprofiled_srgb,
+        strip_rows=strip_rows,
+        max_decode_bytes=max_decode_bytes,
+        max_develop_bytes=max_develop_bytes,
+    )
     for value in (strip_rows, max_decode_bytes, max_develop_bytes):
         if type(value) is not int or value <= 0:
             raise ValueError("Strip height and memory budgets must be positive integers")
@@ -129,8 +143,9 @@ def run_analytic(
         finally:
             for array in reversed(arrays):
                 array._mmap.close()
+    (output / "config.json").write_text(config.to_json(), encoding="utf-8")
     artifacts = {}
-    for name in ("capture.dng", "developed.tiff", "source_support.npy", "source_clipped.npy"):
+    for name in ("capture.dng", "developed.tiff", "source_support.npy", "source_clipped.npy", "config.json"):
         path = output / name
         digest = hashlib.sha256()
         with path.open("rb") as stream:

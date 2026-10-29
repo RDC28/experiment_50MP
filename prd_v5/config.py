@@ -10,7 +10,6 @@ from pathlib import Path
 from prd_v5.analytic import AnalyticISP
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraHypothesis
-from prd_v5.pipeline import run_analytic
 
 
 @dataclass(frozen=True)
@@ -91,6 +90,8 @@ class AnalyticRunConfig:
 
     def run(self, source_path: str | Path, output_dir: str | Path) -> dict:
         """Execute the bounded analytic pipeline with exactly these settings."""
+        from prd_v5.pipeline import run_analytic
+
         return run_analytic(
             source_path,
             output_dir,

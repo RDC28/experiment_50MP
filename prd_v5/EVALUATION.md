@@ -441,3 +441,21 @@ environment; it is also a dependency of the existing nbformat dev requirement.
 No full repository suite, notebook, model, full-frame job, commit or background
 service ran. Complete MVP panel/registry coverage and notebook remain pending;
 later phases and Colab-only scientific acceptance remain unresolved.
+
+## Implementation evidence: eighteenth MVP increment
+
+Successful analytic bundles now include `config.json`, parsed by the existing
+strict `AnalyticRunConfig` contract and hashed alongside image/mask artifacts in
+the manifest and offline report. It retains actual camera/ISP hypotheses, geometry,
+colour assumption and resource budgets; paths remain execution arguments. Direct
+runner settings are validated before allocation. Configuration export occurs
+before the completion marker, so a failed export cannot advertise completion.
+
+Validation: all 164 lightweight v5 tests pass under the shared test lock. A tiny
+nondefault PNG run saves/reloads its settings and reproduces identical DNG, TIFF,
+mask and configuration hashes in the same runtime. Repository-wide ruff and
+changed Python formatting pass. This proves local replay, not cross-runtime
+bitwise reproducibility or calibrated camera truth. Complete MVP configuration,
+registry and notebook remain pending before the later ordered phases. Colab-only
+full-scale/scientific validation remains unresolved. No model, notebook, full-frame
+job, full repository suite, commit or background service ran.

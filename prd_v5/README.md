@@ -183,3 +183,13 @@ An outpaint request that needs generated bands fails before output creation or
 frame allocation because no generator is integrated. An exact 3:2 input needs
 no generated bands. Native processing still requires an explicit Colab memory
 budget and has not been executed at full scale.
+
+Each successful analytic bundle now includes a hashed `config.json` containing
+all executed analytic settings, actual camera/ISP hypotheses and resource budgets.
+Replay with `AnalyticRunConfig.from_json(Path("bundle/config.json").read_text())`,
+then call `.run(source_path, new_output_dir)` with the original source. Source
+and output paths remain separate; check the source SHA-256 against the manifest.
+The offline HTML report lists the configuration artifact and digest. Tiny tests
+verify identical DNG, TIFF and mask hashes when replayed within the same runtime;
+this is not a cross-version or cross-platform bitwise reproducibility guarantee.
+The saved settings cover only the implemented analytic subset, not later models.

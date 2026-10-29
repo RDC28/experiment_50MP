@@ -25,6 +25,7 @@ def test_complete_bundle(tmp_path):
         "source_support.npy",
         "source_clipped.npy",
         "manifest.json",
+        "config.json",
         "report.html",
     }
     support = np.load(output / "source_support.npy", mmap_mode="r", allow_pickle=False)
@@ -131,3 +132,28 @@ def test_report_failure_has_no_completion_manifest(tmp_path, monkeypatch):
         run_analytic(source, output, CameraHypothesis(), target_megapixels=0.001024, assume_unprofiled_srgb=True)
     assert not (output / "manifest.json").exists()
     assert not list(output.glob("working-*"))
+
+
+def test_saved_configuration_replays_exact_adc(tmp_path):
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.config import AnalyticRunConfig
+
+    source = tmp_path / "source.png"
+    pixels = np.arange(32 * 32 * 3, dtype=np.uint8).reshape(32, 32, 3)
+    Image.fromarray(pixels).save(source)
+    config = AnalyticRunConfig(
+        camera=CameraHypothesis(seed=938, iso=400),
+        isp=AnalyticISP(exposure_gain=1.3),
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+        strip_rows=5,
+        max_decode_bytes=100_000,
+        max_develop_bytes=100_000,
+    )
+    first = config.run(source, tmp_path / "first")
+    saved = AnalyticRunConfig.from_json((tmp_path / "first/config.json").read_text())
+    assert saved == config
+    second = saved.run(source, tmp_path / "second")
+    for name in ("capture.dng", "developed.tiff", "source_support.npy", "source_clipped.npy", "config.json"):
+        assert first["artifacts"][name] == second["artifacts"][name]
+    assert "config.json" in (tmp_path / "first/report.html").read_text()
