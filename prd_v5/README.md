@@ -160,3 +160,14 @@ output paths are supplied separately. Defaults retain 50 MP and conservative
 memory admission, so full-scale use requires explicit Colab budgets. This is not
 the full PRD settings panel: HAT, HYBRID, HDR, learned, full sensor/optics and
 field-mode orchestration remain pending rather than silently ignored switches.
+
+The analytic JSON config and runner also accept `geometry_mode` with
+`PRESERVE_SOURCE_ASPECT_50MP` (unchanged default) or `SONY_A1II_NATIVE`, and
+`native_fit_policy` with `LETTERBOX_SENSOR_MARGIN` (default), `CROP_HORIZONTAL`
+or `OUTPAINT_VERTICAL`. Native mode fixes the raster at 8640x5760 regardless of
+`target_megapixels`; its effective policy, transform and crop appear in the
+manifest and registry. Aspect-preserving mode uses letterbox fitting as before.
+An outpaint request that needs generated bands fails before output creation or
+frame allocation because no generator is integrated. An exact 3:2 input needs
+no generated bands. Native processing still requires an explicit Colab memory
+budget and has not been executed at full scale.

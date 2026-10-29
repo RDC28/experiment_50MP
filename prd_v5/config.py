@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from prd_v5.analytic import AnalyticISP
+from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraHypothesis
 from prd_v5.pipeline import run_analytic
 
@@ -23,6 +24,8 @@ class AnalyticRunConfig:
     schema_version: int = 1
     camera: CameraHypothesis = field(default_factory=CameraHypothesis)
     isp: AnalyticISP = field(default_factory=AnalyticISP)
+    geometry_mode: str = "PRESERVE_SOURCE_ASPECT_50MP"
+    native_fit_policy: str = "LETTERBOX_SENSOR_MARGIN"
     target_megapixels: float = 50.0
     assume_unprofiled_srgb: bool = False
     strip_rows: int = 64
@@ -40,6 +43,14 @@ class AnalyticRunConfig:
             or self.target_megapixels <= 0
         ):
             raise ValueError("target_megapixels must be positive and finite")
+        # Reuse the allocation-free planner as the authoritative geometry domain.
+        GeometryPlanner().plan(
+            32,
+            32,
+            mode=self.geometry_mode,
+            native_fit_policy=self.native_fit_policy,
+            target_megapixels=self.target_megapixels,
+        )
         if type(self.assume_unprofiled_srgb) is not bool:
             raise ValueError("assume_unprofiled_srgb must be boolean")
         for name in ("strip_rows", "max_decode_bytes", "max_develop_bytes"):
@@ -86,6 +97,8 @@ class AnalyticRunConfig:
             self.camera,
             self.isp,
             target_megapixels=self.target_megapixels,
+            geometry_mode=self.geometry_mode,
+            native_fit_policy=self.native_fit_policy,
             assume_unprofiled_srgb=self.assume_unprofiled_srgb,
             strip_rows=self.strip_rows,
             max_decode_bytes=self.max_decode_bytes,

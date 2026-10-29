@@ -399,3 +399,23 @@ formatting checks pass. No notebook, model, full-frame job, background process
 or full repository test suite ran. Complete panel/schema coverage and notebook
 remain MVP work; subsequent ordered phases and scientific/Colab validation are
 still pending.
+
+## Implementation evidence: sixteenth MVP increment
+
+The analytic runner and strict JSON config now expose the existing geometry
+planner's aspect-preserving/native modes and all three native fit policies.
+Native geometry retains 8640x5760 independently of requested target MP; effective
+transforms/crops continue through rasterization, DNG tags and provenance. Defaults
+remain unchanged. Unsupported outpainting is rejected during preflight before
+output creation or any frame allocation, rather than after allocating native
+arrays. Configuration validation now shares the planner's geometry domains,
+including its 1000 MP upper bound; no extra full-frame validation work is needed.
+
+Validation: 146 lightweight v5 tests pass under the shared lock. New tests cover
+JSON roundtrip of every native fit policy, native full-size memory rejection even
+with a tiny target request, unavailable generation rejection before allocation,
+and invalid geometry settings. Existing tiny PNG-to-LibRaw-TIFF execution remains
+green. Repository-wide ruff and changed Python formatting pass. No notebook,
+model, full-frame processing, full repository suite or background service ran.
+Complete MVP panel/registry coverage and notebook remain pending; later ordered
+phases and full-scale Colab/scientific acceptance remain unresolved.

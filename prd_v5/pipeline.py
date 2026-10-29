@@ -30,6 +30,8 @@ def run_analytic(
     isp: AnalyticISP | None = None,
     *,
     target_megapixels: float = 50.0,
+    geometry_mode: str = "PRESERVE_SOURCE_ASPECT_50MP",
+    native_fit_policy: str = "LETTERBOX_SENSOR_MARGIN",
     assume_unprofiled_srgb: bool = False,
     strip_rows: int = 64,
     max_decode_bytes: int = 256 * 1024 * 1024,
@@ -49,7 +51,15 @@ def run_analytic(
         if type(value) is not int or value <= 0:
             raise ValueError("Strip height and memory budgets must be positive integers")
     source = InputInspector().inspect(source_path, assume_unprofiled_srgb=assume_unprofiled_srgb)
-    geometry = GeometryPlanner().plan(source.width, source.height, target_megapixels=target_megapixels)
+    geometry = GeometryPlanner().plan(
+        source.width,
+        source.height,
+        target_megapixels=target_megapixels,
+        mode=geometry_mode,
+        native_fit_policy=native_fit_policy,
+    )
+    if geometry.generated_bands:
+        raise ValueError("Geometry requires outpainting, but no generator is available")
     if source.width * source.height * 8 > max_decode_bytes:
         raise ValueError("Source decoder memory budget exceeded before allocation")
     if geometry.width * geometry.height * 64 > max_develop_bytes:
