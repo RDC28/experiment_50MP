@@ -88,3 +88,21 @@ Read-only lessons from `fm/exp50mp-prd2-realism-fixes:docs/reference-arw-compari
 4. Full sensor: CFA-domain PRNU/DSNU/body maps, row/column FPN, temperature/exposure dark current, defects, nonlinear response and dual conversion gain with coherent NoiseProfile limitations. Add flat/dark, code, defect, deterministic stream and gain-transition tests. Priors remain synthetic without calibration.
 5. Full optics: pre-CFA radial/tangential warps, vignetting, lateral/axial CA, spatial PSF, diffraction/defocus/motion with nonzero-coefficient reporting and bounded halo handling. Expose all coefficients and uncertainty; test observable effects and zero/no-op reporting.
 6. Final metadata: complete every registry field and standard-tag/manifest mapping, user-only identity, checkpoint/source/repro hashes, all deliverables and acceptance status with not-measured truth gates. Validate notebook JSON and Colab setup/config semantics, run ruff and full suite through the shared lock, review requested/effective feature coverage. Update this evaluation with actual implemented/deferred evidence before the committed handoff. No 50 MP run is claimed until a separate Colab execution supplies evidence.
+
+## Implementation evidence: first MVP increment
+
+`prd_v5/hypothesis.py` now provides a frozen camera hypothesis, local seeded
+electronics-prior sampling, independent stage seeds, and the initial JSON field
+schema. Conversion gain, ISO analogue gain, electron saturation and temporal DNG
+NoiseProfile derive from the same state. Shot-noise-off returns no NoiseProfile
+rather than inventing a positive slope. Unknown identity remains null/user-only.
+This registry is explicitly partial and does not yet implement field selection,
+exposure inference, or a complete notebook configuration.
+
+Validation: 26 lightweight tests in `prd_v5/tests/test_hypothesis.py` passed;
+repository-wide `python -m ruff check .` passed. Tests verify arithmetic variance
+against the Poisson/read/rounding equation, deterministic sampling without global
+RNG mutation, immutable shared state, JSON records and invalid parameter rejection.
+No full suite, image pipeline, decoder roundtrip, model, notebook or full-frame
+job ran. The remaining MVP and all subsequent phases remain pending; Colab-only
+validation and the unavailable research integrations above remain unresolved.
