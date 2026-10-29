@@ -171,3 +171,25 @@ No full suite, full-frame processing, notebook, model or background service ran.
 Remaining MVP work includes source decode/ICC, geometry rasterization, CFA-first
 sensor/ADC, independent DNG/TIFF roundtrip, configuration, reports and notebook.
 All subsequent phases and Colab-only scientific validation remain pending.
+
+### Iteration 5: MVP Bayer and temporal sensor
+
+`sensor.py` samples the selected Bayer phase before converting clean camera RGB
+into electrons, applying Poisson shot noise and independent Gaussian read noise,
+then analogue gain, ADC rounding, pedestal and clipping into a uint16 memmap.
+Unity clean signal denotes base-ISO full well; ISO gain changes saturation using
+the same immutable hypothesis that supplies NoiseProfile. Working memory is
+bounded by strip height and row width. Absolute sensor row/stage seeds make
+outputs independent of strip partitioning. Two source-resolution runs must use
+the same final geometry and hypothesis; differing Poisson means do not imply
+identical residuals. This is not a claim of calibrated spatial sensor maps.
+NumPy version is recorded for RNG reproducibility. Full sensor effects remain
+pending in their ordered phase. Caller discards partial output on failure.
+
+Validation: 15 additional lightweight cases cover all Bayer layouts on odd
+geometry, a tiny analytic-to-ADC path, strip invariance, gain/clipping, invalid
+buffers/pixels, zero-effect read noise and flat/dark variance including ADC
+quantization. All 84 v5 tests pass. These are synthetic self-consistency tests,
+not scientific calibration or a full-scale/Colab benchmark. Remaining MVP work
+includes source decoding/ICC, geometry rasterization, DNG/TIFF and independent
+rawpy validation, configuration, reports and the notebook.

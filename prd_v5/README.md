@@ -15,8 +15,8 @@ the runtime version and serialize the actual hypothesis for cross-runtime reuse.
 
 The initial registry is a subset, not full PRD parameter coverage. Null confidence
 and posterior mean no inferred confidence or exposure posterior was measured.
-Stream seeds alone do not yet establish spatially consistent full-frame noise;
-the future strip-based sensor implementation must preserve draw ordering.
+Sensor stage/row streams preserve temporal draw ordering across strip sizes.
+Fixed spatial sensor maps and full-scale consistency validation remain pending.
 
 `geometry.py` adds an allocation-free `GeometryPlanner`: aspect-preserving
 50 MP planning, fixed 8640x5760 native geometry, uniform source transforms,
@@ -38,6 +38,13 @@ clipped-source uncertainty and floored negative camera samples. Its identity
 profile is virtual sRGB, not Sony calibration; it performs no highlight recovery,
 source decoding or ICC conversion. Caller-owned partial output must be discarded
 if processing fails.
+
+`sensor.py` adds CFA-first electron-domain Poisson shot and Gaussian read noise,
+analogue gain, pedestal and rounded/clipped 14-bit codes in a uint16 memmap.
+All four Bayer patterns support odd dimensions. Stage/absolute-row seeds preserve
+strip invariance at a shared final sensor geometry. Reports include clipping,
+zero-effect read noise and NumPy version. Synthetic flat/dark tests check noise
+variance; no measured camera calibration or full sensor effects are claimed.
 
 ## Pending
 
