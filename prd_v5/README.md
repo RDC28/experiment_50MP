@@ -62,7 +62,7 @@ or a precision-preserving 16-bit source decoder.
 
 ## Pending
 
-The remaining MVP config, complete registry, pipeline orchestration, independent rawpy/TIFF roundtrip, reports and new Colab notebook are not
+The remaining MVP config, complete registry, pipeline orchestration, reports and new Colab notebook are not
 implemented yet. Fidelity, learned RAW, full sensor, full optics and final
 metadata follow MVP in that order. No HAT, HDR model or learned RAW checkpoint is
 executed by this foundation. Upstream checkpoint and scientific limitations in
@@ -84,7 +84,7 @@ only through `/Users/rohit/Projects/firstmate/data/exp50mp-heavy-lock.sh`.
 
 No v5 notebook is runnable yet. Full-scale validation must wait for the new
 notebook and execute in Colab, never on this 8 GB development Mac. No 50 MP,
-checkpoint compatibility, RAW decoder, performance or scientific acceptance
+checkpoint compatibility, full-scale RAW decoder, performance or scientific acceptance
 claim follows from the current arithmetic tests.
 
 ## MVP DNG export
@@ -97,6 +97,13 @@ the analytic camera-to-sRGB transform through a declared virtual D65 profile;
 white balance supplies AsShotNeutral. This is not calibrated Sony colour.
 Returned tag records use the legacy writer contract; the full v5 registry is
 still pending. Exact sample/tag checks with tifffile pass on tiny fixtures.
-Independent LibRaw decoding, TIFF development and Adobe conformance remain
-unmeasured, explicitly reported in the result. No successful independent RAW
-roundtrip is claimed by structural verification.
+The writer alone reports independent validation as not measured. Call
+`roundtrip.develop_roundtrip` separately to validate with rawpy/LibRaw and write
+an uncompressed 16-bit sRGB TIFF, checking exact TIFF samples in strips. Tiny
+fixtures pass for all four Bayer patterns and analytic-to-ADC output. The
+independent gate checks samples, dimensions, CFA, levels, WB, colour matrix and
+orientation. DefaultCrop stays DNG metadata; the TIFF uses LibRaw visible raster.
+LibRaw allocates whole-frame buffers: a configurable 64-byte/photosite admission
+estimate defaults to 512 MiB, rejecting 50 MP until explicitly raised in Colab.
+This is not a peak RSS guarantee. Adobe conformance, calibrated colour accuracy
+and full-size Colab validation remain unmeasured.

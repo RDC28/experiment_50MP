@@ -255,3 +255,27 @@ model, full-frame processing or background process ran. Independent LibRaw/TIFF
 roundtrip, config/orchestration/reporting and notebook remain MVP work before
 advancing to fidelity. Full-scale and independent developer checks remain
 Colab acceptance work.
+
+
+## Implementation evidence: ninth MVP increment
+
+`prd_v5/roundtrip.py` adds independent rawpy/LibRaw validation using the existing
+strict sample/CFA/levels/WB/colour-matrix/dimension gate, plus orientation checking
+and actual 16-bit sRGB TIFF development. TIFF samples reopen through tifffile
+memmap and compare exactly in strips. Rendering explicitly selects linear
+demosaicing, camera WB, sRGB transfer, no auto brightness and no rotation.
+DefaultCrop remains DNG metadata; TIFF uses the LibRaw visible raster rather
+than claiming application of the default crop. LibRaw buffers whole frames,
+so a 64-byte/photosite admission estimate with a 512 MiB default blocks 50 MP
+until a Colab caller explicitly supplies a larger budget. This estimate is not
+a measured peak RSS bound. Failed callers must discard partial outputs.
+
+Validation: five new tiny tests cover real LibRaw development for all four Bayer
+patterns, JSON reports, mismatched sample rejection, memory admission and path
+alias rejection. The analytic-to-ADC-to-DNG fixture also now develops and verifies
+a TIFF independently. All 111 v5 tests pass; repository-wide ruff and changed
+Python formatting pass. rawpy 0.27.1 was installed only in the external lightweight
+environment. No full suite, model, notebook or full-frame job ran. Full-scale
+Colab memory/decode checks, Adobe conformance and scientific colour accuracy
+remain unmeasured. Configuration, orchestration/reports and the notebook remain
+MVP work before fidelity.

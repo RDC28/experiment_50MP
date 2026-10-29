@@ -1,4 +1,4 @@
-"""Tiny real container exports, without independent decoder acceptance claims."""
+"""Tiny real container exports and an analytic-to-LibRaw integration fixture."""
 
 import json
 
@@ -74,6 +74,10 @@ def test_analytic_sensor_to_dng(tmp_path):
         isp.process(np.full(clean.shape, 0.5, dtype=np.float32), clean, strip_rows=3)
         BayerSensor(camera).process(clean, mosaic, strip_rows=3)
         report = write_dng(tmp_path / "analytic.dng", mosaic, camera, plan, isp, strip_rows=3)
+        from prd_v5.roundtrip import develop_roundtrip
+
+        developed = develop_roundtrip(report["path"], tmp_path / "analytic.tiff", mosaic, camera, plan, isp)
+        assert developed["tiff_roundtrip"].startswith("passed")
         linear = ((0.5 + 0.055) / 1.055) ** 2.4
         expected = round(camera.black_level + linear * (camera.white_level - camera.black_level))
         with tifffile.TiffFile(report["path"]) as container:
