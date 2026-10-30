@@ -7,7 +7,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from prd_v5.colour_metrics import calibrated_delta_e
+from prd_v5.colour_metrics import calibrated_delta_e, validate_colour_reference
 from prd_v5.comparison import compare_bayer, compare_renders, validate_region
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.delivery import digest, write_pair_html
@@ -62,10 +62,7 @@ def run_analytic_pair(
     if not isinstance(colour_references, dict) or set(colour_references) - {"2k", "4k"}:
         raise ValueError("colour_references must map only 2k/4k labels")
     for record in colour_references.values():
-        if not isinstance(record, dict) or set(record) != {"path", "calibration"}:
-            raise ValueError("Each colour reference requires exactly path and calibration")
-        if not isinstance(record["path"], (str, Path)) or not str(record["path"]).strip():
-            raise ValueError("Colour reference path must be nonempty")
+        validate_colour_reference(record)
     lpips_options = {} if lpips_options is None else dict(lpips_options)
     if set(lpips_options) - {"patch", "net", "device", "distance"}:
         raise ValueError("lpips_options allows only patch, net, device and distance")

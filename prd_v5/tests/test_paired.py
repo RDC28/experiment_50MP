@@ -487,3 +487,32 @@ def test_pair_lpips_uses_references_and_reports_missing_truth(tmp_path):
 def test_pair_rejects_unknown_lpips_options_before_io(tmp_path):
     with pytest.raises(ValueError, match="lpips_options"):
         run_analytic_pair("absent", "absent", tmp_path / "o", AnalyticRunConfig(), lpips_options={"x": 1})
+
+
+def _bad_reference(tmp_path, kind):
+    import numpy as np
+    import tifffile
+
+    if kind == "missing":
+        return tmp_path / "missing.tiff"
+    path = tmp_path / f"{kind}.tiff"
+    if kind == "garbage":
+        path.write_bytes(b"not a tiff")
+    elif kind == "uint8":
+        tifffile.imwrite(path, np.zeros((4, 4, 3), dtype=np.uint8), photometric="rgb")
+    else:
+        tifffile.imwrite(path, np.zeros((4, 4), dtype=np.uint16))
+    return path
+
+
+@pytest.mark.parametrize("kind", ["missing", "garbage", "uint8", "gray"])
+def test_unusable_colour_reference_fails_before_any_processing(tmp_path, kind):
+    reference = {"path": _bad_reference(tmp_path, kind), "calibration": None}
+    single = tmp_path / "single"
+    with pytest.raises(ValueError, match="[Cc]olour reference"):
+        AnalyticRunConfig().run("absent", single, colour_reference=reference)
+    assert not single.exists()
+    pair = tmp_path / "pair"
+    with pytest.raises(ValueError, match="[Cc]olour reference"):
+        run_analytic_pair("absent", "absent", pair, AnalyticRunConfig(), colour_references={"2k": reference})
+    assert not pair.exists()

@@ -10,6 +10,39 @@ from skimage.color import deltaE_ciede2000, rgb2lab
 from prd_v5.comparison import validate_region
 
 
+def validate_colour_reference(record) -> None:
+    """Fail before any processing unless the reference record is usable.
+
+    Checks the record shape, the calibration contract, that the file exists and
+    that it is a memory-mappable nonempty uint16 RGB TIFF.
+    """
+    if not isinstance(record, dict) or set(record) != {"path", "calibration"}:
+        raise ValueError("Colour reference requires exactly path and calibration")
+    path = record["path"]
+    if not isinstance(path, (str, Path)) or not str(path).strip():
+        raise ValueError("Colour reference path must be nonempty")
+    calibration = record["calibration"]
+    if calibration is not None:
+        required = {"camera_profile", "trusted_development", "alignment", "colour_space"}
+        if not isinstance(calibration, dict) or set(calibration) != required:
+            raise ValueError(f"Colour reference calibration requires exactly {sorted(required)}")
+        if any(not isinstance(value, str) or not value.strip() for value in calibration.values()):
+            raise ValueError("Colour reference calibration evidence must contain nonempty strings")
+        if calibration["colour_space"] != "sRGB_D65_2deg":
+            raise ValueError("Only explicitly calibrated sRGB_D65_2deg colour reference is supported")
+    if not Path(path).is_file():
+        raise ValueError(f"Colour reference file does not exist: {path}")
+    try:
+        array = tifffile.memmap(path, mode="r")
+    except Exception as error:
+        raise ValueError(f"Colour reference is not a memory-mappable TIFF: {path}: {error}") from error
+    try:
+        if array.dtype != np.uint16 or array.ndim != 3 or array.shape[2] != 3 or not all(array.shape):
+            raise ValueError(f"Colour reference must be a nonempty uint16 RGB TIFF: {path}")
+    finally:
+        array._mmap.close()
+
+
 def calibrated_delta_e(
     candidate: str | Path,
     reference: str | Path | None,

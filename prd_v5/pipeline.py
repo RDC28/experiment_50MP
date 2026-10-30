@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 
 from prd_v5.analytic import AnalyticISP
+from prd_v5.colour_metrics import validate_colour_reference
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.decode import decode_source
 from prd_v5.delivery import export_arrays, finish_bundle
@@ -82,10 +83,7 @@ def run_analytic(
     belongs in Colab with explicit memory budgets, never on the development Mac.
     """
     if colour_reference is not None:
-        if not isinstance(colour_reference, dict) or set(colour_reference) != {"path", "calibration"}:
-            raise ValueError("Colour reference requires exactly path and calibration")
-        if not isinstance(colour_reference["path"], (str, Path)) or not str(colour_reference["path"]).strip():
-            raise ValueError("Colour reference path must be nonempty")
+        validate_colour_reference(colour_reference)
     if optical_effects is None:
         optical_effects = OpticalEffects()
     if sensor_effects is None:
