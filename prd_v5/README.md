@@ -290,3 +290,13 @@ profiles must declare their spacing in native pixels. Missing profiles/evidence,
 flat edges and absent threshold crossings are explicit unavailable measurements.
 This API does not select scene edges, establish calibrated lens MTF or claim
 ISO slanted-edge compliance. Automatic notebook/report integration is pending.
+
+For a selected axis-aligned edge in a developed uint16 sRGB TIFF, call
+`prd_v5.mtf.tiff_edge_mtf(path, region=(top, left, bottom, right),
+normal_axis="x", edge_evidence="isolated vertical edge with both plateaus")`.
+Use `normal_axis="y"` for a horizontal edge. The API decodes sRGB before
+luminance averaging, reads one bounded row at a time and limits the region to
+1,048,576 pixels. Missing selection/evidence and flat edges stay not measured.
+Selection is caller-attested; slanted edges, scene texture, sharpening and noise
+can bias this sampled response. It is not calibrated optical MTF or recovered
+detail truth. Automatic notebook and pair-report wiring remains pending.

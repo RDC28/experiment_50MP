@@ -74,3 +74,70 @@ def test_invalid_spacing(spacing):
 def test_evidence_required():
     with pytest.raises(ValueError, match="evidence"):
         edge_mtf(np.arange(32), evidence={"edge": "unknown"})
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_tiff_edge_extraction_decodes_before_averaging(tmp_path, axis):
+    import tifffile
+
+    from prd_v5.mtf import tiff_edge_mtf
+
+    profile = 0.5 * (1 + erf(np.linspace(-8, 8, 128)))
+    linear = np.broadcast_to(profile[None, :, None], (4, 128, 3)).copy()
+    encoded = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
+    pixels = np.rint(encoded * 65535).astype(np.uint16)
+    if axis == "y":
+        pixels = pixels.transpose(1, 0, 2)
+    path = tmp_path / "edge.tif"
+    tifffile.imwrite(path, pixels, photometric="rgb")
+    region = (0, 0, *pixels.shape[:2])
+    result = tiff_edge_mtf(path, region=region, normal_axis=axis, edge_evidence="fixture straight edge")
+    decoded = pixels.astype(float) / 65535
+    decoded = np.where(decoded <= 0.04045, decoded / 12.92, ((decoded + 0.055) / 1.055) ** 2.4)
+    expected = edge_mtf(decoded[..., 0].mean(axis=0 if axis == "x" else 1), evidence=EVIDENCE)
+    np.testing.assert_allclose(result["response"], expected["response"], atol=1e-13)
+    assert result["region"] == list(region)
+    assert result["mtf50"] == pytest.approx(expected["mtf50"])
+    json.dumps(result, allow_nan=False)
+
+
+def test_tiff_edge_missing_selection_does_not_open_file():
+    from prd_v5.mtf import tiff_edge_mtf
+
+    assert tiff_edge_mtf("absent")["status"] == "not measured"
+
+
+@pytest.mark.parametrize("region", [(0, 0, 2, 15), (0, 0, 5, 128), (0, 0, 4, 129)])
+def test_tiff_edge_rejects_short_or_out_of_bounds_regions(tmp_path, region):
+    import tifffile
+
+    from prd_v5.mtf import tiff_edge_mtf
+
+    path = tmp_path / "edge.tif"
+    tifffile.imwrite(path, np.zeros((4, 128, 3), np.uint16), photometric="rgb")
+    with pytest.raises(ValueError):
+        tiff_edge_mtf(path, region=region, edge_evidence="fixture")
+
+
+@pytest.mark.parametrize("dtype,shape", [(np.uint8, (4, 128, 3)), (np.uint16, (1025, 1024, 3))])
+def test_tiff_edge_rejects_encoding_and_oversized_roi(tmp_path, dtype, shape):
+    import tifffile
+
+    from prd_v5.mtf import tiff_edge_mtf
+
+    path = tmp_path / "invalid.tif"
+    tifffile.imwrite(path, np.zeros(shape, dtype), photometric="rgb")
+    with pytest.raises(ValueError):
+        tiff_edge_mtf(path, region=(0, 0, *shape[:2]), edge_evidence="fixture")
+
+
+def test_tiff_edge_flat_crop_stays_not_measured(tmp_path):
+    import tifffile
+
+    from prd_v5.mtf import tiff_edge_mtf
+
+    path = tmp_path / "flat.tif"
+    tifffile.imwrite(path, np.full((8, 128, 3), 32768, np.uint16), photometric="rgb")
+    result = tiff_edge_mtf(path, region=(2, 8, 6, 120), edge_evidence="fixture")
+    assert result["status"] == "not measured"
+    assert result["region"] == [2, 8, 6, 120]

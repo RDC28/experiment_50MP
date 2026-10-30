@@ -624,3 +624,26 @@ sharp-edge absent crossings, polarity/gain/offset invariance, immutable inputs,
 JSON-safe missing measurements and invalid/bounded inputs. V5 lint and Python
 formatting checks pass. No model, weights, notebook, full-size reconstruction,
 background service, commit or push was started.
+
+### Bounded developed-TIFF edge extraction
+
+`tiff_edge_mtf` now extracts native-pixel profiles from caller-selected
+axis-aligned edge rectangles in developed uint16 sRGB TIFFs. It applies the
+[W3C inverse sRGB transfer](https://www.w3.org/TR/css-color-4/#color-conversion-code)
+before Rec.709 luminance and averaging parallel to the edge. A read-only memmap,
+one-row working buffers and a 1,048,576-pixel region cap bound memory and work;
+normal profiles retain the existing 16-65,536-sample limit. Handles close on
+success and failure. No edge selection, orientation inference, alignment,
+resampling or slanted-edge correction is performed. Missing region/evidence
+and flat edges stay not measured; malformed regions and unsupported types fail.
+
+Encoding and isolated straight-edge geometry remain caller attestations, not
+inferences from TIFF metadata or an optical calibration. Results retain region,
+axis and extraction evidence. Sampled response establishes neither correct
+scene detail nor recovered RAW truth. Notebook and pair-report integration
+remain pending. No weights, models, notebook or full-size reconstruction ran.
+
+Validation: 33 focused MTF fixtures pass, including real encoded TIFF extraction
+in both axes, independent decoded-profile agreement, missing evidence, flat
+crops, bounds, encoding and region-size limits. V5 lint, Python formatting and
+whitespace checks pass. No background process, commit or push was started.

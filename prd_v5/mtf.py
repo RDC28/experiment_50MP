@@ -78,3 +78,64 @@ def edge_mtf(profile, *, sample_spacing_px=1.0, evidence=None):
         "mtf50": crossing(0.5),
         "mtf10": crossing(0.1),
     }
+
+
+def tiff_edge_mtf(path, *, region=None, normal_axis="x", edge_evidence=None):
+    """Average a caller-selected axis-aligned edge in an encoded sRGB TIFF.
+
+    Region is (top, left, bottom, right), in native pixels. The caller must
+    attest an isolated straight edge normal to x or y, with both plateaus.
+    Decode sRGB before Rec.709 luminance and averaging. No alignment, edge
+    detection, resampling or slanted-edge correction is inferred.
+    """
+    import tifffile
+
+    from prd_v5.comparison import validate_region
+
+    validate_region(region)
+    if normal_axis not in ("x", "y"):
+        raise ValueError("normal_axis must be x or y")
+    if edge_evidence is not None and (not isinstance(edge_evidence, str) or not edge_evidence.strip()):
+        raise ValueError("edge_evidence must be a nonempty string")
+    if region is None or edge_evidence is None:
+        return {
+            "status": "not measured",
+            "reason": "No caller-selected edge region and edge evidence supplied",
+        }
+    array = tifffile.memmap(path, mode="r")
+    try:
+        if array.dtype != np.uint16 or array.ndim != 3 or array.shape[2] != 3:
+            raise ValueError("Edge extraction requires uint16 encoded sRGB RGB TIFF")
+        top, left, bottom, right = region
+        if bottom > array.shape[0] or right > array.shape[1]:
+            raise ValueError("region exceeds TIFF raster")
+        length = right - left if normal_axis == "x" else bottom - top
+        if not 16 <= length <= 65536 or (bottom - top) * (right - left) > 1048576:
+            raise ValueError("edge region requires 16 to 65536 normal samples and at most 1048576 pixels")
+        profile = np.zeros(length, dtype=np.float64)
+        # Bound decoded working memory independently of the selected rectangle.
+        for row in range(top, bottom):
+            rgb = array[row, left:right].astype(np.float64) / 65535
+            linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+            luminance = linear @ np.array([0.2126, 0.7152, 0.0722])
+            if normal_axis == "x":
+                profile += luminance
+            else:
+                profile[row - top] = luminance.mean()
+        if normal_axis == "x":
+            profile /= bottom - top
+        result = edge_mtf(
+            profile,
+            evidence={
+                "edge": edge_evidence,
+                "linearization": "Caller-declared encoded sRGB; inverse sRGB transfer then Rec.709 luminance",
+            },
+        )
+        return {
+            **result,
+            "region": list(region),
+            "normal_axis": normal_axis,
+            "extraction": "Native-pixel axis-aligned averaging; no slanted-edge correction or automatic selection",
+        }
+    finally:
+        array._mmap.close()
