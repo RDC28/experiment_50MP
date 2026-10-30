@@ -40,7 +40,10 @@ class AnalyticISP:
             or not np.isfinite(self.hdr_max_radiance)
             or not 1 <= self.hdr_max_radiance <= 32
         ):
-            raise ValueError("hdr_max_radiance must be finite in [1, 32]")
+            raise ValueError(
+                "hdr_max_radiance must be finite in [1, 32]; the cap keeps 18% grey "
+                "well above one DN after headroom scaling"
+            )
         # Copy mutable user sequences into immutable values.
         object.__setattr__(self, "camera_to_srgb", tuple(tuple(float(v) for v in row) for row in matrix))
         object.__setattr__(self, "white_balance", tuple(float(v) for v in wb))

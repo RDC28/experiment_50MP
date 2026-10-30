@@ -23,7 +23,7 @@ class ResidualAdapter:
     """Caller-loaded, deterministic tile predictor returning (residual, confidence).
 
     Inputs are encoded sRGB and clean camera RGB, both HxWx3; residual has
-    identical shape in base-ISO-full-well units and confidence is HxW in [0,1].
+    identical shape in camera.saturation_e units and confidence is HxW in [0,1].
     Predictors receive absolute (top,left) and the immutable camera. They must
     supply their own receptive-field handling and never add stochastic noise.
     No RAW-Flow/SpiralDiff compatibility or scientific calibration is implied.
@@ -37,14 +37,14 @@ class ResidualAdapter:
     licence: str
     licence_accepted: bool = False
     experimental_accepted: bool = False
-    normalization: str = "clean_camera_rgb_base_iso_full_well"
+    normalization: str = "clean_camera_rgb_saturation"
 
     def verify(self, camera: CameraHypothesis) -> dict:
         if not callable(self.predict) or self.experimental_accepted is not True or self.licence_accepted is not True:
             raise ValueError("Callable adapter and explicit experimental/licence acceptance required")
         if not self.source.strip() or not self.licence.strip():
             raise ValueError("Adapter source and licence required")
-        if self.normalization != "clean_camera_rgb_base_iso_full_well" or self.camera_sha256 != camera_domain(camera):
+        if self.normalization != "clean_camera_rgb_saturation" or self.camera_sha256 != camera_domain(camera):
             raise ValueError("Adapter normalization or camera domain mismatch")
         digest = hashlib.sha256()
         with Path(self.checkpoint_path).open("rb") as stream:

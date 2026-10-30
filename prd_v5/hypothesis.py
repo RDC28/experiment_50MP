@@ -60,7 +60,8 @@ class CameraHypothesis:
     ISO determines analogue gain relative to base ISO 100. Conversion gain is
     derived at base ISO so full well maps to the available ADC range. Collected
     electrons scale with exposure, 1/gain at higher ISO, and the gain restores
-    the ADC signal, so higher ISO lowers SNR rather than brightening. Digital
+    the ADC signal, so higher ISO lowers SNR rather than brightening. Below
+    base ISO exposure stays at full well and the white level drops. Digital
     gain is unity. NoiseProfile describes
     normalized black-subtracted temporal signal before clipping, excluding FPN.
     """

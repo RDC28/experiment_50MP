@@ -67,12 +67,13 @@ def test_full_quality_fixture_outputs_registry_and_decodable_adc(tmp_path, adc_b
     assert registry["Checkpoint hashes"]["provenance"] == "UNSPECIFIED"
 
 
-def test_portrait_pitch_and_clean_electrons_match_adc(tmp_path):
+@pytest.mark.parametrize("iso", [50, 400])
+def test_portrait_pitch_and_clean_electrons_match_adc(tmp_path, iso):
     from prd_v5.config import AnalyticRunConfig
 
     source = tmp_path / "source.png"
     Image.fromarray(np.full((40, 30, 3), 90, dtype=np.uint8)).save(source)
-    camera = CameraHypothesis(iso=400, shot_noise=False, read_noise=False)
+    camera = CameraHypothesis(iso=iso, shot_noise=False, read_noise=False)
     output = tmp_path / "run"
     report = AnalyticRunConfig(camera=camera, target_megapixels=0.0012, assume_unprofiled_srgb=True).run(
         source, output

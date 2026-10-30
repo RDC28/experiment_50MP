@@ -208,6 +208,7 @@
           "type": "boolean"
         },
         "hdr_max_radiance": {
+          "description": "Analytic HDR peak radiance mapped to sensor saturation. Capped at 32 so 18% grey stays well above one DN after headroom scaling.",
           "type": "number",
           "minimum": 1,
           "maximum": 32

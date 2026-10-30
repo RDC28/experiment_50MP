@@ -40,6 +40,13 @@ def test_invalid_hdr(value):
         AnalyticISP(hdr_max_radiance=value)
 
 
+def test_replayed_hdr_above_cap_explains_grey_floor():
+    config = json.loads(AnalyticRunConfig().to_json())
+    config["isp"]["hdr_max_radiance"] = 64
+    with pytest.raises(ValueError, match="18% grey"):
+        AnalyticRunConfig.from_json(json.dumps(config))
+
+
 def test_hdr_pair_pixels_replay_and_uncertainty(tmp_path):
     source = tmp_path / "source.png"
     Image.fromarray(np.full((32, 32, 3), 128, dtype=np.uint8)).save(source)

@@ -46,7 +46,7 @@ def export_arrays(output, optical, adc, camera, *, strip_rows=64):
                 else:
                     for y in range(start, end):
                         for parity in (0, 1):
-                            target[y, parity::2] = optical[y, parity::2, channels[y % 2, parity]] * camera.full_well_e / camera.analogue_gain
+                            target[y, parity::2] = optical[y, parity::2, channels[y % 2, parity]] * camera.saturation_e
             target.flush()
         finally:
             target._mmap.close()

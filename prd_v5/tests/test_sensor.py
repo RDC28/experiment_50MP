@@ -53,6 +53,16 @@ def test_gain_and_clipping(tmp_path):
     assert report["codes_clipped_high"] == 4
 
 
+def test_below_base_iso_keeps_full_well_exposure(tmp_path):
+    camera = CameraHypothesis(iso=50, shot_noise=False, read_noise=False)
+    source = np.broadcast_to(np.array([0, 0.6, 1])[:, None, None], (3, 4, 3)).astype(float)
+    dest = output(tmp_path, (3, 4))
+    report = BayerSensor(camera).process(source, dest)
+    np.testing.assert_array_equal(dest[:, 0], [512, round(512 + 0.6 * 0.5 * 15871), camera.white_level])
+    assert camera.white_level == 512 + round(0.5 * 15871)
+    assert report["codes_clipped_high"] == 0
+
+
 @pytest.mark.parametrize("signal", [0.0, 0.1, 0.5])
 def test_temporal_variance(tmp_path, signal):
     # Small flat fixtures test shot slope and read intercept including quantization.
