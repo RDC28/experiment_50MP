@@ -95,7 +95,7 @@ are ADC-referred electrons after pedestal removal and include clipping/quantisat
 The generated-region mask marks potentially generated/unsupported content, not a
 truth oracle. Original-source clipping uncertainty is independent of SR endpoints.
 The automatic HDR gate counts original-source endpoints and unsupported pixels.
-Its claim-policy audit permits no recovered-truth claims there, while numerical
+Its claim-policy audit fails when analytic HDR expansion (`hdr_claims.npy`) claims radiance there, passes otherwise, and is `not measured` when no HDR stage ran, while numerical
 HDR fidelity remains `not measured`. On Colab, inspect `validation.json` under
 `HDR validity` for these counts. For external benchmark assertions, call
 `hdr_validation.validate_hdr_claims(source_clipped, source_support, claimed_truth)`

@@ -55,6 +55,20 @@ class AnalyticISP:
             return 0.0
         return float(np.log2(self.hdr_max_radiance * (1 - 0.18) + 1))
 
+    def hdr_claim_mask(self, block: np.ndarray) -> np.ndarray:
+        """Pixels where analytic HDR expansion asserts radiance above the source clip level.
+
+        block is an HxWx3 normalized encoded-sRGB strip. All false when HDR is off.
+        """
+        block = np.asarray(block, dtype=np.float64)
+        if self.hdr_max_radiance <= 1:
+            return np.zeros(block.shape[:2], dtype=np.bool_)
+        linear = np.where(block <= 0.04045, block / 12.92, ((block + 0.055) / 1.055) ** 2.4)
+        if self.inverse_smoothstep:
+            linear = 0.5 - np.sin(np.arcsin(1 - 2 * linear) / 3)
+        linear = linear / (1 + 1 / self.hdr_max_radiance - linear)
+        return np.any(linear > 1 + 1e-6, axis=-1)
+
     def process(self, source: np.ndarray, destination: np.memmap, *, strip_rows: int = 64) -> dict:
         """Write float32 clean camera RGB, allocating only strip-sized intermediates.
 

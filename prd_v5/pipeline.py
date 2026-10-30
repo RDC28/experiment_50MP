@@ -304,6 +304,16 @@ def run_analytic(
                 packaged_clipping.flush()
             finally:
                 packaged_clipping._mmap.close()
+            packaged_claims = np.lib.format.open_memmap(
+                output / "hdr_claims.npy", mode="w+", dtype=np.bool_, shape=shape
+            )
+            try:
+                for start in range(0, shape[0], strip_rows):
+                    stop = start + strip_rows
+                    packaged_claims[start:stop] = isp.hdr_claim_mask(rgb[start:stop]) & support[start:stop]
+                packaged_claims.flush()
+            finally:
+                packaged_claims._mmap.close()
             packaged_defects = np.lib.format.open_memmap(
                 output / "sensor_defects.npy", mode="w+", dtype=np.uint8, shape=shape
             )
@@ -332,6 +342,7 @@ def run_analytic(
         "developed.tiff",
         "source_support.npy",
         "source_clipped.npy",
+        "hdr_claims.npy",
         "sensor_defects.npy",
         "config.json",
     ):

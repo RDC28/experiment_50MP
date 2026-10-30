@@ -293,10 +293,17 @@ Tiny generated-DNG fixtures exercise nonidentity WB, rational matrices, real tag
 
 ### HDR recovered-truth claim audit completion
 
-Every completed bundle now audits the original-source endpoint and support masks
-in bounded row strips and records their counts in the JSON/HTML HDR gate. The
-pipeline asserts no recovered-truth pixels. The reusable `validate_hdr_claims`
-API additionally accepts an explicit aligned boolean claim mask: an intersection
+Every completed bundle audits the original-source endpoint and support masks
+in bounded row strips and records their counts in the JSON/HTML HDR gate. When
+analytic HDR expansion runs, the pipeline writes `hdr_claims.npy` (pixels whose
+expanded radiance exceeds the source clip level) and `delivery.audit_hdr` passes
+it to `validate_hdr_claims`: any claim inside a source-clipped or unsupported
+pixel fails the gate (expansion maps clipped endpoints to the radiance cap, so
+HDR runs on sources with clipped pixels report `failed`), otherwise it reports
+`passed`. With no HDR stage the gate is `not measured`. Learned inverse tone
+mapping is not executed by this pipeline and contributes no claims. Only unit
+fixtures and a tiny end-to-end fixture ran. The reusable `validate_hdr_claims`
+API accepts an explicit aligned boolean claim mask: an intersection
 with a source endpoint or unsupported geometry fails the gate, counting the
 forbidden union once. Invalid mask dimensions, types and alignment fail clearly.
 The mask describes original source endpoints, including black endpoints, rather

@@ -143,6 +143,40 @@ def complete_registry(report):
     return registry
 
 
+def audit_hdr(output, report, clipped, support):
+    """Audit the pipeline's own HDR expansion claims against source endpoints.
+
+    The claim mask (hdr_claims.npy) marks pixels where analytic HDR expansion
+    asserted radiance above the source clip level. Learned inverse tone mapping
+    is never executed by this pipeline, so it contributes no claims. Without an
+    HDR stage the audit stays "not measured".
+    """
+    hdr_stage = report["stages"].get("analytic", {}).get("hdr", {})
+    path = output / "hdr_claims.npy"
+    if not hdr_stage.get("effective") or not path.exists():
+        result = validate_hdr_claims(clipped, support)
+        result["status"] = "not measured"
+        result["reason"] = "No HDR expansion or learned inverse tone mapping stage ran"
+        return result
+    claims = np.load(path, mmap_mode="r")
+    try:
+        result = validate_hdr_claims(clipped, support, claims)
+    finally:
+        claims._mmap.close()
+    if result["forbidden_claim_pixels"]:
+        result["reason"] = (
+            f"{result['forbidden_claim_pixels']} HDR-expanded pixels assert radiance above the clip level "
+            "inside source-clipped or unsupported regions"
+        )
+    else:
+        result["status"] = "passed"
+        result["reason"] = (
+            "No HDR-expanded pixel lies in source-clipped or unsupported regions; "
+            "numerical HDR fidelity remains not measured"
+        )
+    return result
+
+
 def finish_bundle(output, report, *, colour_reference=None):
     """Write canonical names, complete registry, masks, hashes and gate records."""
     import shutil
@@ -174,7 +208,7 @@ def finish_bundle(output, report, *, colour_reference=None):
     support = np.load(output / "source_support.npy", mmap_mode="r")
     clipped = np.load(output / "source_clipped.npy", mmap_mode="r")
     try:
-        hdr_validation = validate_hdr_claims(clipped, support)
+        hdr_validation = audit_hdr(output, report, clipped, support)
         learned = "super_resolution" in report["stages"] or report["stages"]["learned_raw"].get("effective") == "HYBRID"
         Image.fromarray((~support | learned).astype(np.uint8) * 255).save(output / "generated_region_mask.png")
         Image.fromarray((~support | clipped).astype(np.uint8) * 255).save(output / "uncertainty_map.png")

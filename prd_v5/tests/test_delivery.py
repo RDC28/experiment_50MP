@@ -86,12 +86,15 @@ def test_full_quality_fixture_outputs_registry_and_decodable_adc(tmp_path, adc_b
     assert report["validation"]["acceptance"].startswith("conditional")
     assert np.asarray(Image.open(output / "uncertainty_map.png"))[0, 0] == 255
     validation = json.loads((output / "validation.json").read_text())
-    assert validation["HDR validity"]["status"] == "not measured"
+    assert validation["HDR validity"]["status"] == "failed"
     hdr = validation["HDR validity"]
     assert hdr["source_endpoint_pixels"] == int(np.count_nonzero(np.load(output / "source_clipped.npy")))
     assert hdr["unsupported_pixels"] == int(np.count_nonzero(~np.load(output / "source_support.npy")))
     assert hdr["source_endpoint_pixels"] > 0
-    assert hdr["claimed_truth_pixels"] == hdr["forbidden_claim_pixels"] == 0
+    claims = np.load(output / "hdr_claims.npy")
+    expected_forbidden = claims & (np.load(output / "source_clipped.npy") | ~np.load(output / "source_support.npy"))
+    assert hdr["claimed_truth_pixels"] == int(np.count_nonzero(claims)) > 0
+    assert hdr["forbidden_claim_pixels"] == int(np.count_nonzero(expected_forbidden)) > 0
     assert hdr["numerical_hdr_fidelity"] == "not measured"
     assert validation["Metadata coherence"]["status"] == "passed"
     assert "AsShotNeutral" in validation["Metadata coherence"]["checked"]
@@ -105,7 +108,7 @@ def test_full_quality_fixture_outputs_registry_and_decodable_adc(tmp_path, adc_b
     for gate, record in validation.items():
         if isinstance(record, dict) and "status" in record:
             assert rendered[gate][0] == record["status"]
-    assert rendered["HDR validity"] == ["not measured", validation["HDR validity"]["reason"]]
+    assert rendered["HDR validity"] == ["failed", validation["HDR validity"]["reason"]]
     assert "Lanczos-3" in report["pipeline"] and "bilinear" not in report["pipeline"]
     assert "Lanczos-3" in page
 
@@ -158,3 +161,54 @@ def test_extended_low_iso_well_and_adc_tags_remain_coherent(tmp_path):
         assert raw.white_level == camera.white_level
         assert int(raw.raw_image.max()) <= camera.white_level
     assert report["registry"]["White level"]["value"] == camera.white_level
+
+
+def _hdr_inputs(tmp_path, claims, *, effective=True):
+    clipped = np.zeros((4, 4), dtype=bool)
+    clipped[0, 0] = True
+    if claims is not None:
+        np.save(tmp_path / "hdr_claims.npy", claims)
+    report = {"stages": {"analytic": {"hdr": {"effective": effective}}}}
+    return report, clipped, np.ones((4, 4), dtype=bool)
+
+
+def test_hdr_audit_passes_when_expansion_avoids_clipped_pixels(tmp_path):
+    from prd_v5.delivery import audit_hdr
+
+    claims = np.zeros((4, 4), dtype=bool)
+    claims[2, 2] = True
+    report, clipped, support = _hdr_inputs(tmp_path, claims)
+    result = audit_hdr(tmp_path, report, clipped, support)
+    assert result["status"] == "passed"
+    assert result["claimed_truth_pixels"] == 1 and result["forbidden_claim_pixels"] == 0
+    assert result["numerical_hdr_fidelity"] == "not measured"
+
+
+def test_hdr_audit_fails_when_expansion_claims_clipped_pixels(tmp_path):
+    from prd_v5.delivery import audit_hdr
+
+    claims = np.zeros((4, 4), dtype=bool)
+    claims[0, 0] = claims[2, 2] = True
+    report, clipped, support = _hdr_inputs(tmp_path, claims)
+    result = audit_hdr(tmp_path, report, clipped, support)
+    assert result["status"] == "failed"
+    assert result["forbidden_claim_pixels"] == 1
+
+
+def test_hdr_audit_not_measured_without_hdr_stage(tmp_path):
+    from prd_v5.delivery import audit_hdr
+
+    report, clipped, support = _hdr_inputs(tmp_path, None, effective=False)
+    result = audit_hdr(tmp_path, report, clipped, support)
+    assert result["status"] == "not measured"
+    assert "No HDR" in result["reason"]
+
+
+def test_analytic_claim_mask_marks_clipped_source_only_when_hdr_runs():
+    from prd_v5.analytic import AnalyticISP
+
+    block = np.full((2, 2, 3), 0.2, dtype=np.float32)
+    block[0, 0] = 1.0
+    assert not AnalyticISP().hdr_claim_mask(block).any()
+    mask = AnalyticISP(hdr_max_radiance=4).hdr_claim_mask(block)
+    assert mask.tolist() == [[True, False], [False, False]]
