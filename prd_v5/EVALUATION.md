@@ -595,3 +595,32 @@ passed, including actual tiny DNG development, calibrated reference propagation,
 missing truth, HTML numeric evidence and failure completion policy. V5 lint,
 all v5 Python formatting and diff whitespace checks pass. No full suite,
 background service, commit or push was started.
+
+### Sampled-edge MTF API
+
+`mtf.edge_mtf` now measures MTF50/MTF10 from a caller-supplied uniformly
+sampled linear-light edge-spread profile with explicit edge-extraction and
+linearization evidence. It computes the first-difference line spread, normalized
+real FFT magnitude and first downward threshold crossings by linear interpolation.
+The [NumPy real FFT contract](https://numpy.org/doc/stable/reference/generated/numpy.fft.rfft.html)
+and [frequency-spacing contract](https://numpy.org/doc/stable/reference/generated/numpy.fft.rfftfreq.html)
+were checked before implementation. Profiles are limited to 65,536 samples;
+zero padding refines interpolation without adding spatial information. Frequencies
+are restricted to both profile and native-pixel Nyquist limits. No crossing is
+reported as null with an explicit reason, never an invented bandwidth. Missing
+profiles/evidence and flat edges remain not measured.
+
+This is a finite-profile sampled response without derivative correction, smoothing
+or windowing, not ISO slanted-edge SFR, calibrated lens MTF, automatic edge
+selection or recovered-detail truth. Callers must include both plateaus and
+supply linear-light samples normal to an isolated straight edge. First differences
+introduce sampling-dependent attenuation; oversampling reduces that bias but does
+not establish source detail. Sharpening and noise can produce nonmonotone responses;
+the first downward crossing is explicitly the convention. Automatic TIFF edge
+extraction and notebook/pair reporting remain deferred.
+
+Validation: 24 small fixtures pass, including analytic Gaussian edge bandwidth,
+sharp-edge absent crossings, polarity/gain/offset invariance, immutable inputs,
+JSON-safe missing measurements and invalid/bounded inputs. V5 lint and Python
+formatting checks pass. No model, weights, notebook, full-size reconstruction,
+background service, commit or push was started.

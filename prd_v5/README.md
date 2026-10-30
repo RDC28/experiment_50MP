@@ -280,3 +280,13 @@ Single-source callers use `config.run(..., colour_reference={"path": reference,
 "calibration": contract})`. Whole-raster measurement does not imply an acceptance
 pass or WB accuracy; overall scientific acceptance stays conditional. References
 remain external caller inputs and are not stored in replay configuration.
+
+For explicitly measured edge profiles, `prd_v5.mtf.edge_mtf(profile,
+sample_spacing_px=1.0, evidence={"edge": "target and extraction procedure",
+"linearization": "linear-light conversion procedure"})` reports sampled MTF50
+and MTF10 in cycles per native pixel. Supply 16-65,536 uniformly spaced linear
+samples normal to an isolated straight edge, including both plateaus. Oversampled
+profiles must declare their spacing in native pixels. Missing profiles/evidence,
+flat edges and absent threshold crossings are explicit unavailable measurements.
+This API does not select scene edges, establish calibrated lens MTF or claim
+ISO slanted-edge compliance. Automatic notebook/report integration is pending.
