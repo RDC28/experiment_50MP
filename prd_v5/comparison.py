@@ -20,6 +20,62 @@ def validate_region(region: tuple[int, int, int, int] | None) -> None:
         raise ValueError("region must be (top, left, bottom, right) nonempty nonnegative integer bounds")
 
 
+def _frequency_bands(first: np.ndarray, second: np.ndarray) -> dict:
+    """Local windowed spectra at native resolution, at most 256x256 per FFT.
+
+    Demeaning removes patch DC. Window-energy normalization makes summed power
+    a window-weighted variance, not a ground-truth texture score. Partial edge
+    blocks are included if both dimensions have at least four pixels.
+    """
+    edges = (0.0, 0.0625, 0.125, 0.25, 0.5, 1.0)
+    totals = np.zeros((3, len(edges) - 1), dtype=np.float64)
+    pixels = patches = omitted = 0
+    for top in range(0, first.shape[0], 256):
+        for left in range(0, first.shape[1], 256):
+            shape = (min(256, first.shape[0] - top), min(256, first.shape[1] - left))
+            if min(shape) < 4:
+                omitted += shape[0] * shape[1]
+                continue
+            window = np.outer(np.hanning(shape[0]), np.hanning(shape[1]))
+            normalization = window.size * np.sum(window**2)
+            radius = np.hypot(np.fft.fftfreq(shape[0])[:, None], np.fft.fftfreq(shape[1])[None, :])
+            spectra = []
+            for array in (first, second):
+                rgb = array[top : top + shape[0], left : left + shape[1]].astype(np.float64) / 65535
+                # Encoded sRGB luma proxy, explicitly not linear radiance.
+                luma = rgb @ np.array([0.2126, 0.7152, 0.0722])
+                spectra.append(np.fft.fft2((luma - luma.mean()) * window))
+            powers = [np.abs(spectrum) ** 2 / normalization for spectrum in spectra]
+            powers.append(np.abs(spectra[0] - spectra[1]) ** 2 / normalization)
+            for index, (low, high) in enumerate(zip(edges[:-1], edges[1:], strict=True)):
+                mask = (radius >= low) & (radius < high)
+                totals[:, index] += np.array([power[mask].sum() for power in powers]) * window.size
+            pixels += window.size
+            patches += 1
+    return {
+        "status": "measured spectral disagreement" if patches else "not measured",
+        "reason": None if patches else "No patches with both dimensions at least four pixels",
+        "domain": "Encoded sRGB luma proxy; native pixels, no registration or resampling",
+        "method": "Nonoverlapping <=256x256 patches; mean removed, Hann window, window-energy normalized FFT power",
+        "units": "squared normalized luma; frequency in cycles per native pixel",
+        "patches": patches,
+        "measured_pixels": pixels,
+        "omitted_edge_pixels": omitted,
+        "bands": [
+            {
+                "low_inclusive": low,
+                "high_exclusive": high,
+                "first_power": float(totals[0, index] / pixels) if pixels else None,
+                "second_power": float(totals[1, index] / pixels) if pixels else None,
+                "difference_power": float(totals[2, index] / pixels) if pixels else None,
+            }
+            for index, (low, high) in enumerate(zip(edges[:-1], edges[1:], strict=True))
+        ],
+        "scientific_fidelity": "not measured; texture power does not establish correct or source-supported detail",
+        "limitations": "Window dependent; final band includes diagonal frequencies above axial Nyquist; DC removed",
+    }
+
+
 def compare_renders(
     first: str | Path,
     second: str | Path,
@@ -94,6 +150,7 @@ def compare_renders(
             "identical": maximum == 0,
             "psnr_null_reason": "Identical samples have infinite PSNR" if mse == 0 else None,
             "saturated_pixel_fraction": [value / pixels for value in saturated],
+            "frequency_bands": _frequency_bands(left, right),
         }
 
 

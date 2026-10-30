@@ -31,6 +31,10 @@ def test_pair_uses_shared_hypotheses_and_links_completed_bundles(tmp_path):
     assert report["comparison"]["status"] == "measured render disagreement"
     assert report["comparison"]["identical"] is True
     assert report["comparison"]["rmse"] == 0
+    spectra = report["comparison"]["frequency_bands"]
+    assert spectra["status"] == "measured spectral disagreement"
+    assert all(band["difference_power"] == 0 for band in spectra["bands"])
+    assert "frequency_bands" in (output / "2k_vs_4k_report.html").read_text()
     for stage in ("pre_noise", "post_noise"):
         raw = report["raw_comparison"][stage]["whole_raster"]
         assert raw["status"] == "measured RAW disagreement"

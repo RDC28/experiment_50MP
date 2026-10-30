@@ -78,6 +78,12 @@ validation JSON/HTML, completion manifest and per-artifact hashes. Original
 Canonical DNG/TIFF names use hard links where supported to avoid disk duplication.
 The pair folder adds `pair_manifest.json` and `2k_vs_4k_report.html`. Both include automatic full-resolution pre/post-noise RAW disagreement in electron-equivalent units, with separate CFA-phase metrics and optional native-pixel crops. These unaligned comparisons do not establish scene registration or ground-truth accuracy.
 
+Render comparisons also report five native-pixel frequency bands, including each
+render's power and spectral difference power. FFTs use at most 256x256 pixels,
+with mean removal and Hann windows. Inspect measured/omitted pixel counts for
+small crops and edge slivers. These encoded-sRGB luma spectra measure disagreement;
+they do not establish MTF, correct texture or learned-SR improvement against truth.
+
 Clean mosaic values are expected electrons before body/noise effects. Noisy values
 are ADC-referred electrons after pedestal removal and include clipping/quantisation.
 The generated-region mask marks potentially generated/unsupported content, not a
