@@ -17,6 +17,7 @@ from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField
 from prd_v5.inputs import InputInspector
 from prd_v5.learned import ResidualAdapter, resolve_mode
+from prd_v5.mtf import tiff_edge_mtf
 
 
 def run_analytic_pair(
@@ -32,6 +33,7 @@ def run_analytic_pair(
     residual_adapter: ResidualAdapter | None = None,
     comparison_region: tuple[int, int, int, int] | None = None,
     colour_references: dict | None = None,
+    mtf_edge: dict | None = None,
 ) -> dict:
     """Run caller-labelled variants sequentially using exactly the same config.
 
@@ -44,6 +46,8 @@ def run_analytic_pair(
     Optional colour_references maps 2k/4k to {path, calibration} records for
     independently trusted aligned uint16 sRGB TIFFs. Calibration is caller
     attestation; pair disagreement is never used as colour truth.
+    Optional mtf_edge supplies the same native region, normal_axis and
+    edge_evidence for each developed TIFF; it does not certify registration.
     """
     if not isinstance(config, AnalyticRunConfig):
         raise ValueError("Expected one validated AnalyticRunConfig")
@@ -57,6 +61,15 @@ def run_analytic_pair(
             raise ValueError("Each colour reference requires exactly path and calibration")
         if not isinstance(record["path"], (str, Path)) or not str(record["path"]).strip():
             raise ValueError("Colour reference path must be nonempty")
+    if mtf_edge is not None:
+        if not isinstance(mtf_edge, dict) or set(mtf_edge) != {"region", "normal_axis", "edge_evidence"}:
+            raise ValueError("mtf_edge requires exactly region, normal_axis and edge_evidence")
+        validate_region(mtf_edge["region"])
+        if mtf_edge["normal_axis"] not in ("x", "y"):
+            raise ValueError("mtf_edge normal_axis must be x or y")
+        evidence = mtf_edge["edge_evidence"]
+        if evidence is not None and (not isinstance(evidence, str) or not evidence.strip()):
+            raise ValueError("mtf_edge edge_evidence must be a nonempty string")
     camera_selections = tuple(camera_selections)
     isp_selections = tuple(isp_selections)
     validate_selections(config.camera, camera_selections)
@@ -155,7 +168,11 @@ def run_analytic_pair(
             path = Path(reference["path"])
             evidence["reference"] = {"path": str(path), "sha256": digest(path), "size_bytes": path.stat().st_size}
         colour_comparison[label] = evidence
+    mtf_comparison = {
+        label: tiff_edge_mtf(output / label / "developed.tiff", **(mtf_edge or {})) for label in ("2k", "4k")
+    }
     report = {
+        "mtf_comparison": mtf_comparison,
         "colour_comparison": colour_comparison,
         "raw_comparison": raw_comparison,
         "schema_version": 1,

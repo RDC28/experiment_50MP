@@ -393,3 +393,54 @@ def test_single_bundle_rejects_malformed_colour_reference_before_io(tmp_path, re
     with pytest.raises(ValueError, match="reference"):
         AnalyticRunConfig().run("absent", output, colour_reference=reference)
     assert not output.exists()
+
+
+def test_pair_sampled_mtf_matches_developed_tiffs_and_reports_missing_evidence(tmp_path):
+    import numpy as np
+
+    from prd_v5.mtf import tiff_edge_mtf
+
+    source = tmp_path / "edge.png"
+    image = np.full((32, 32, 3), 40, dtype=np.uint8)
+    image[:, 16:] = 180
+    Image.fromarray(image).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    edge = {"region": (4, 0, 28, 32), "normal_axis": "x", "edge_evidence": "fixture vertical step, both plateaus"}
+    output = tmp_path / "measured"
+    report = run_analytic_pair(source, source, output, config, mtf_edge=edge)
+    for label in ("2k", "4k"):
+        result = report["mtf_comparison"][label]
+        assert result == tiff_edge_mtf(output / label / "developed.tiff", **edge)
+        assert result["status"] == "measured sampled edge response"
+        assert result["samples"] == 32
+        assert result["region"] == list(edge["region"])
+        assert "mtf50" in result and "mtf10" in result
+    assert json.loads((output / "pair_manifest.json").read_text()) == report
+    assert "measured sampled edge response" in (output / "2k_vs_4k_report.html").read_text()
+    missing = run_analytic_pair(source, source, tmp_path / "missing", config)
+    assert all(value["status"] == "not measured" for value in missing["mtf_comparison"].values())
+
+
+@pytest.mark.parametrize("edge", [{}, [], {"region": (0, 0, 16, 16), "normal_axis": "z", "edge_evidence": "fixture"}])
+def test_pair_rejects_invalid_mtf_controls_before_io(tmp_path, edge):
+    output = tmp_path / "pair"
+    with pytest.raises(ValueError, match="mtf_edge"):
+        run_analytic_pair("absent", "absent", output, AnalyticRunConfig(), mtf_edge=edge)
+    assert not output.exists()
+
+
+def test_mtf_failure_prevents_pair_completion(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+
+    def fail(*args, **kwargs):
+        raise OSError("edge extraction failed")
+
+    monkeypatch.setattr("prd_v5.paired.tiff_edge_mtf", fail)
+    output = tmp_path / "pair"
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    with pytest.raises(OSError, match="edge extraction failed"):
+        run_analytic_pair(source, source, output, config)
+    assert (output / "4k/manifest.json").exists()
+    assert not (output / "pair_manifest.json").exists()
+    assert not (output / "2k_vs_4k_report.html").exists()

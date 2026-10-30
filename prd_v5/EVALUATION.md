@@ -647,3 +647,23 @@ Validation: 33 focused MTF fixtures pass, including real encoded TIFF extraction
 in both axes, independent decoded-profile agreement, missing evidence, flat
 crops, bounds, encoding and region-size limits. V5 lint, Python formatting and
 whitespace checks pass. No background process, commit or push was started.
+
+
+### Paired sampled-MTF reporting
+
+The pair runner now accepts an explicit `mtf_edge` record containing a native
+region, normal axis and caller edge evidence. Both developed TIFFs are measured
+independently through bounded linear-light edge extraction; pair JSON/HTML
+retains MTF50/MTF10, response curves and evidence. Missing selections or evidence
+stay not measured. Malformed controls fail before source I/O and extraction
+failure prevents pair completion. Shared coordinates do not establish alignment
+or edge suitability. No optical calibration, recovered detail or scientific
+acceptance is inferred. Notebook controls and child validation-gate integration
+remain pending. Controls remain external caller inputs, not replay configuration.
+
+Validation: all 63 focused paired and MTF fixtures passed; v5 lint, Python
+formatting and diff whitespace checks pass. Fixtures compare reports with independent
+TIFF extraction, verify actual tiny DNG development, JSON/HTML evidence, explicit
+missing measurements, invalid controls and failure completion policy. No model,
+weights, notebook, full-size inference, background service, commit or push was
+started.

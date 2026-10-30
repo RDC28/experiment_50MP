@@ -289,7 +289,7 @@ samples normal to an isolated straight edge, including both plateaus. Oversample
 profiles must declare their spacing in native pixels. Missing profiles/evidence,
 flat edges and absent threshold crossings are explicit unavailable measurements.
 This API does not select scene edges, establish calibrated lens MTF or claim
-ISO slanted-edge compliance. Automatic notebook/report integration is pending.
+ISO slanted-edge compliance. Notebook controls remain pending.
 
 For a selected axis-aligned edge in a developed uint16 sRGB TIFF, call
 `prd_v5.mtf.tiff_edge_mtf(path, region=(top, left, bottom, right),
@@ -299,4 +299,16 @@ luminance averaging, reads one bounded row at a time and limits the region to
 1,048,576 pixels. Missing selection/evidence and flat edges stay not measured.
 Selection is caller-attested; slanted edges, scene texture, sharpening and noise
 can bias this sampled response. It is not calibrated optical MTF or recovered
-detail truth. Automatic notebook and pair-report wiring remains pending.
+detail truth. Pair reporting is available as described below; notebook controls remain pending.
+
+
+`run_analytic_pair(..., mtf_edge={"region": (top, left, bottom, right),
+"normal_axis": "x", "edge_evidence": "isolated vertical edge, both plateaus"})`
+measures each developed TIFF independently at the same native-pixel coordinates.
+Pair JSON/HTML records `mtf_comparison` with sampled MTF50/MTF10, the response
+curve and extraction evidence. Omit the selection or evidence to retain explicit
+not-measured results. The caller must establish edge suitability in each output;
+shared coordinates do not certify registration. This is sampled response, not
+an acceptance pass or evidence of improved scene detail. Invalid selections or
+extraction failures prevent publication of pair completion. Controls remain
+external inputs rather than replay configuration; notebook wiring is pending.
