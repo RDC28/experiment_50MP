@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 
 from prd_v5.coherence import metadata_coherence
+from prd_v5.hdr_validation import validate_hdr_claims
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.physics import photon_transfer
 
@@ -172,6 +173,7 @@ def finish_bundle(output, report):
     support = np.load(output / "source_support.npy", mmap_mode="r")
     clipped = np.load(output / "source_clipped.npy", mmap_mode="r")
     try:
+        hdr_validation = validate_hdr_claims(clipped, support)
         learned = "super_resolution" in report["stages"] or report["stages"]["learned_raw"].get("effective") == "HYBRID"
         Image.fromarray((~support | learned).astype(np.uint8) * 255).save(output / "generated_region_mask.png")
         Image.fromarray((~support | clipped).astype(np.uint8) * 255).save(output / "uncertainty_map.png")
@@ -195,10 +197,7 @@ def finish_bundle(output, report):
                 "RAW editability": "Full EV/WB/highlight/shadow/demosaic sweep requires Colab validation",
             }.items()
         },
-        "HDR validity": {
-            "status": "not measured",
-            "reason": "No HDR check runs; analytic expansion is disclosed with uncertainty, not recovered truth",
-        },
+        "HDR validity": hdr_validation,
         "acceptance": "conditional: scientific gates unmeasured",
         "mask_semantics": {
             "generated": "Potential model-generated content or unsupported margins; not a truth oracle",

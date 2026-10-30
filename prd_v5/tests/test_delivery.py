@@ -87,6 +87,12 @@ def test_full_quality_fixture_outputs_registry_and_decodable_adc(tmp_path, adc_b
     assert np.asarray(Image.open(output / "uncertainty_map.png"))[0, 0] == 255
     validation = json.loads((output / "validation.json").read_text())
     assert validation["HDR validity"]["status"] == "not measured"
+    hdr = validation["HDR validity"]
+    assert hdr["source_endpoint_pixels"] == int(np.count_nonzero(np.load(output / "source_clipped.npy")))
+    assert hdr["unsupported_pixels"] == int(np.count_nonzero(~np.load(output / "source_support.npy")))
+    assert hdr["source_endpoint_pixels"] > 0
+    assert hdr["claimed_truth_pixels"] == hdr["forbidden_claim_pixels"] == 0
+    assert hdr["numerical_hdr_fidelity"] == "not measured"
     assert validation["Metadata coherence"]["status"] == "passed"
     assert "AsShotNeutral" in validation["Metadata coherence"]["checked"]
     assert "Full-well capacity" in validation["Metadata coherence"]["unmapped_registry_fields"]

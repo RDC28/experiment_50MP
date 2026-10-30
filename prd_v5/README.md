@@ -88,6 +88,13 @@ Clean mosaic values are expected electrons before body/noise effects. Noisy valu
 are ADC-referred electrons after pedestal removal and include clipping/quantisation.
 The generated-region mask marks potentially generated/unsupported content, not a
 truth oracle. Original-source clipping uncertainty is independent of SR endpoints.
+The automatic HDR gate counts original-source endpoints and unsupported pixels.
+Its claim-policy audit permits no recovered-truth claims there, while numerical
+HDR fidelity remains `not measured`. On Colab, inspect `validation.json` under
+`HDR validity` for these counts. For external benchmark assertions, call
+`hdr_validation.validate_hdr_claims(source_clipped, source_support, claimed_truth)`
+with aligned boolean masks; any claimed pixel at an endpoint or unsupported
+margin fails the gate. A claim elsewhere does not establish HDR truth.
 
 Independent LibRaw reopening checks pixel samples, CFA, levels and matrices; TIFF
 reopening checks uint16 samples. Small flat/dark measurements assess only baseline

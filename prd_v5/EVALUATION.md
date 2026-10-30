@@ -179,3 +179,27 @@ The final bundle now rereads every emitted standard tag from the actual DNG dire
 A passed result covers the emitted standard tags and their mapped registry fields only. The result explicitly lists unmapped fields: full well, physical sensor geometry, provenance, body effects and other concepts do not acquire a standard tag or an independent physical validation through this check. Scientific acceptance remains conditional. A complete simulator-versus-manifest dependency audit is still separate work.
 
 Tiny generated-DNG fixtures exercise nonidentity WB, rational matrices, real tag corruption, registry corruption, missing entries and optional-tag absence. Bundle integration fixtures validate the JSON and HTML gate output. No model, notebook, checkpoint or full-size reconstruction was executed.
+
+
+### HDR recovered-truth claim audit completion
+
+Every completed bundle now audits the original-source endpoint and support masks
+in bounded row strips and records their counts in the JSON/HTML HDR gate. The
+pipeline asserts no recovered-truth pixels. The reusable `validate_hdr_claims`
+API additionally accepts an explicit aligned boolean claim mask: an intersection
+with a source endpoint or unsupported geometry fails the gate, counting the
+forbidden union once. Invalid mask dimensions, types and alignment fail clearly.
+The mask describes original source endpoints, including black endpoints, rather
+than newly saturated synthetic photosites or post-SR endpoints.
+
+A claim-policy pass is separate from the HDR gate status. Without calibrated
+aligned HDR reference data, numerical HDR fidelity and the overall HDR gate
+remain **not measured**, even when there are no forbidden claims. Non-endpoint
+claims do not establish truth. This audit does not inspect free-form prose or
+validate a learned confidence estimate, and it is not an HDR benchmark metric.
+
+Validation: 25 focused claim-policy, tiny generated-DNG bundle and report tests
+passed; v5 lint and changed-Python formatting checks passed. Fixtures cover
+clipped/unsupported overlaps, strip-size invariance, read-only memmaps, malformed
+masks, missing claims and unsupported truth assertions. No notebook, model,
+checkpoint download or full-size reconstruction was executed.
