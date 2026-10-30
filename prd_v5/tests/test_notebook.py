@@ -111,3 +111,12 @@ def test_full_preset_values_are_executable_and_match_notebook():
     assert values["ACCEPT_SENSOR_EXPERIMENT"] and values["ACCEPT_OPTICS_EXPERIMENT"]
     assert values["ACCEPT_ANALYTIC_HDR_EXPERIMENT"]
     assert AnalyticRunConfig.from_json(preset.to_json()) == preset
+
+
+def test_notebook_wires_lpips_and_mtf_controls():
+    notebook, values = assignments()
+    assert values["LPIPS_OPTIONS"] == {"patch": 256, "net": "alex", "device": "cuda"}
+    assert values["MTF_EDGE"] is None
+    text = "\n".join(c.source for c in notebook.cells if c.cell_type == "code")
+    assert "lpips_options=LPIPS_OPTIONS" in text and "mtf_edge=MTF_EDGE" in text
+    assert "[sr,metrics]" in text
