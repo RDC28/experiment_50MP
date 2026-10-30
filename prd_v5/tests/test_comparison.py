@@ -119,3 +119,41 @@ def test_region_on_unequal_rasters_and_bounds_cleanup(tmp_path, monkeypatch):
         compare_renders(a, b, region=(0, 0, 3, 3))
     assert len(opened) == 2
     assert all(array._mmap.closed for array in opened)
+
+
+def test_bayer_electron_metrics_preserve_phase_and_crop_origin(tmp_path):
+    from prd_v5.comparison import compare_bayer
+
+    a = np.zeros((7, 9), dtype=np.float32)
+    b = np.arange(63, dtype=np.float32).reshape(7, 9)
+    first, second = tmp_path / "a.npy", tmp_path / "b.npy"
+    np.save(first, a)
+    np.save(second, b)
+    region = (1, 3, 6, 8)
+    report = compare_bayer(first, second, cfa_pattern="RGGB", region=region, strip_rows=1)
+    other = compare_bayer(first, second, cfa_pattern="RGGB", region=region, strip_rows=4)
+    assert report == other
+    difference = -b[1:6, 3:8].astype(float)
+    assert report["samples"] == 25
+    assert report["rmse"] == pytest.approx(np.sqrt(np.mean(difference**2)))
+    for phase, (key, result) in enumerate(report["phases"].items()):
+        expected = -b[1 + (phase // 2 - 1) % 2 : 6 : 2, 3 + (phase % 2 - 3) % 2 : 8 : 2]
+        assert key.endswith("RGGB"[phase])
+        assert result["bias_first_minus_second"] == pytest.approx(expected.mean())
+        assert result["mae"] == pytest.approx(np.abs(expected).mean())
+    json.dumps(report, allow_nan=False)
+
+
+def test_bayer_unequal_shape_and_invalid_samples(tmp_path):
+    from prd_v5.comparison import compare_bayer
+
+    a, b = tmp_path / "a.npy", tmp_path / "b.npy"
+    np.save(a, np.zeros((2, 2), np.float32))
+    np.save(b, np.zeros((4, 4), np.float32))
+    assert compare_bayer(a, b, cfa_pattern="BGGR")["status"] == "not measured"
+    np.save(b, np.full((2, 2), np.nan, np.float32))
+    with pytest.raises(ValueError, match="nonfinite"):
+        compare_bayer(a, b, cfa_pattern="BGGR")
+    np.save(b, np.zeros((2, 2), np.float64))
+    with pytest.raises(ValueError, match="float32"):
+        compare_bayer(a, b, cfa_pattern="BGGR")

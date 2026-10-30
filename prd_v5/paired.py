@@ -7,7 +7,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from prd_v5.comparison import compare_renders, validate_region
+from prd_v5.comparison import compare_bayer, compare_renders, validate_region
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.delivery import write_pair_html
 from prd_v5.fidelity import SRCheckpoint
@@ -99,7 +99,22 @@ def run_analytic_pair(
         if comparison_region is not None
         else None
     )
+    raw_comparison = {}
+    for stage, filename, domain in (
+        ("pre_noise", "clean_bayer.npy", "Expected electrons before stochastic and body effects"),
+        ("post_noise", "noisy_bayer.npy", "ADC-referred electrons including clipping and quantisation"),
+    ):
+        paths = [output / label / filename for label in ("2k", "4k")]
+        raw_comparison[stage] = {
+            "domain": domain,
+            "whole_raster": compare_bayer(*paths, cfa_pattern=config.camera.cfa_pattern, strip_rows=config.strip_rows),
+        }
+        if comparison_region is not None:
+            raw_comparison[stage]["crop"] = compare_bayer(
+                *paths, cfa_pattern=config.camera.cfa_pattern, strip_rows=config.strip_rows, region=comparison_region
+            )
     report = {
+        "raw_comparison": raw_comparison,
         "schema_version": 1,
         "pipeline": "sequential experimental learned residual pair"
         if residual_adapter is not None

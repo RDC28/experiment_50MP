@@ -95,3 +95,82 @@ def compare_renders(
             "psnr_null_reason": "Identical samples have infinite PSNR" if mse == 0 else None,
             "saturated_pixel_fraction": [value / pixels for value in saturated],
         }
+
+
+def compare_bayer(
+    first: str | Path,
+    second: str | Path,
+    *,
+    cfa_pattern: str,
+    strip_rows: int = 64,
+    region: tuple[int, int, int, int] | None = None,
+) -> dict:
+    """Compare exported electron-equivalent mosaics without fitting or resampling.
+
+    Phase metrics retain the two green sites separately. Equal geometry and CFA
+    are prerequisites, not evidence of scene registration or reference truth.
+    """
+    if type(strip_rows) is not int or strip_rows <= 0:
+        raise ValueError("strip_rows must be a positive integer")
+    if cfa_pattern not in ("RGGB", "BGGR", "GRBG", "GBRG"):
+        raise ValueError("Unsupported CFA pattern")
+    validate_region(region)
+    report = {
+        "status": "not measured",
+        "units": "electrons (exported electron-equivalent domain)",
+        "alignment": "none",
+        "scientific_fidelity": "not measured; neither mosaic is ground truth",
+        "cfa_pattern": cfa_pattern,
+    }
+    with ExitStack() as stack:
+        arrays = []
+        for path in (first, second):
+            array = np.load(path, mmap_mode="r", allow_pickle=False)
+            stack.callback(array._mmap.close)
+            if array.ndim != 2 or array.dtype != np.float32 or not all(array.shape):
+                raise ValueError("Comparison requires nonempty float32 Bayer NPY arrays")
+            arrays.append(array)
+        report["shapes"] = [list(array.shape) for array in arrays]
+        if arrays[0].shape != arrays[1].shape:
+            return {**report, "reason": "Unequal Bayer shapes; no implicit resampling or alignment"}
+        top, left, bottom, right = region or (0, 0, *arrays[0].shape)
+        if bottom > arrays[0].shape[0] or right > arrays[0].shape[1]:
+            raise ValueError("region exceeds a Bayer raster")
+        report["region"] = [top, left, bottom, right]
+        counts = np.zeros(4, dtype=np.int64)
+        sums = np.zeros((4, 3), dtype=np.float64)
+        maxima = np.zeros(4, dtype=np.float64)
+        for start in range(top, bottom, strip_rows):
+            a, b = [array[start : min(start + strip_rows, bottom), left:right] for array in arrays]
+            if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+                raise ValueError("Bayer comparison contains nonfinite samples")
+            delta = a.astype(np.float64) - b
+            for phase in range(4):
+                dy = (phase // 2 - start) % 2
+                dx = (phase % 2 - left) % 2
+                values = delta[dy::2, dx::2]
+                if values.size:
+                    counts[phase] += values.size
+                    sums[phase] += [np.sum(values), np.sum(np.abs(values)), np.sum(values * values)]
+                    maxima[phase] = max(maxima[phase], float(np.max(np.abs(values))))
+
+        def metrics(count, totals, maximum):
+            if not count:
+                return {"status": "not measured", "reason": "No samples of this CFA phase in region"}
+            return {
+                "samples": int(count),
+                "bias_first_minus_second": float(totals[0] / count),
+                "mae": float(totals[1] / count),
+                "rmse": float(np.sqrt(totals[2] / count)),
+                "max_absolute_error": float(maximum),
+            }
+
+        return {
+            **report,
+            "status": "measured RAW disagreement",
+            **metrics(counts.sum(), sums.sum(axis=0), maxima.max()),
+            "phases": {
+                f"{phase // 2},{phase % 2}:{cfa_pattern[phase]}": metrics(counts[phase], sums[phase], maxima[phase])
+                for phase in range(4)
+            },
+        }

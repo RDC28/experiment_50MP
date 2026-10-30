@@ -31,6 +31,11 @@ def test_pair_uses_shared_hypotheses_and_links_completed_bundles(tmp_path):
     assert report["comparison"]["status"] == "measured render disagreement"
     assert report["comparison"]["identical"] is True
     assert report["comparison"]["rmse"] == 0
+    for stage in ("pre_noise", "post_noise"):
+        raw = report["raw_comparison"][stage]["whole_raster"]
+        assert raw["status"] == "measured RAW disagreement"
+        assert raw["samples"] == 1024
+        assert raw["rmse"] == 0
     assert report["runs"]["2k"]["source_dimensions"] == [16, 16]
     assert report["runs"]["4k"]["source_dimensions"] == [32, 32]
     for label in ("2k", "4k"):
@@ -126,6 +131,8 @@ def test_pair_retains_whole_raster_and_native_crop_metrics(tmp_path):
     assert report["comparison"]["samples"] == 32 * 32 * 3
     crop = report["crop_comparison"]
     assert crop["region"] == list(region)
+    for stage in ("pre_noise", "post_noise"):
+        assert report["raw_comparison"][stage]["crop"]["samples"] == 8 * 9
     assert crop["samples"] == 8 * 9 * 3
     independent = compare_renders(output / "2k/developed.tiff", output / "4k/developed.tiff", region=region)
     assert {key: value for key, value in crop.items() if key != "limitations"} == independent
@@ -206,3 +213,26 @@ def test_pair_executes_shared_distortion_before_independent_roundtrip(tmp_path):
         assert np.count_nonzero(before != after) > 0
         assert (tmp_path / "warped" / label / "developed.tiff").is_file()
     assert report["comparison"]["identical"] is True
+
+
+def test_pair_raw_metrics_match_exported_electrons_with_sensor_noise(tmp_path):
+    import numpy as np
+
+    low, high = tmp_path / "low.png", tmp_path / "high.png"
+    Image.new("RGB", (16, 16), (60, 90, 120)).save(low)
+    Image.new("RGB", (32, 32), (100, 110, 120)).save(high)
+    config = AnalyticRunConfig(
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+        strip_rows=3,
+        camera=CameraHypothesis(shot_noise=True, read_noise=True),
+    )
+    output = tmp_path / "pair"
+    report = run_analytic_pair(low, high, output, config)
+    for stage, filename in (("pre_noise", "clean_bayer.npy"), ("post_noise", "noisy_bayer.npy")):
+        a, b = [np.load(output / label / filename).astype(float) for label in ("2k", "4k")]
+        difference = a - b
+        result = report["raw_comparison"][stage]["whole_raster"]
+        assert result["mae"] == pytest.approx(np.mean(np.abs(difference)))
+        assert result["rmse"] == pytest.approx(np.sqrt(np.mean(difference**2)))
+        assert result["rmse"] > 0

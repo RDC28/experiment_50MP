@@ -76,7 +76,7 @@ camera/config/source/checkpoint JSON, uncertainty/generated-region PNG masks,
 validation JSON/HTML, completion manifest and per-artifact hashes. Original
 `capture.dng`, `developed.tiff`, config and mask names remain for API compatibility.
 Canonical DNG/TIFF names use hard links where supported to avoid disk duplication.
-The pair folder adds `pair_manifest.json` and `2k_vs_4k_report.html`.
+The pair folder adds `pair_manifest.json` and `2k_vs_4k_report.html`. Both include automatic full-resolution pre/post-noise RAW disagreement in electron-equivalent units, with separate CFA-phase metrics and optional native-pixel crops. These unaligned comparisons do not establish scene registration or ground-truth accuracy.
 
 Clean mosaic values are expected electrons before body/noise effects. Noisy values
 are ADC-referred electrons after pedestal removal and include clipping/quantisation.
