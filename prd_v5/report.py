@@ -38,6 +38,12 @@ def render_report(report: dict) -> str:
         f"<td>{escape(record['sha256'])}</td></tr>"
         for name, record in report["artifacts"].items()
     )
+    gates = "".join(
+        f"<tr><th scope='row'>{escape(name)}</th><td>{escape(record['status'])}</td>"
+        f"<td>{escape(record.get('reason', '-'))}</td></tr>"
+        for name, record in report["validation"].items()
+        if isinstance(record, dict) and "status" in record
+    )
     pending = "".join(f"<li>{escape(item)}</li>" for item in report["pending"])
     masks = "".join(detail(name, record) for name, record in report["masks"].items())
     stages = "".join(detail(name, record) for name, record in report["stages"].items())
@@ -52,6 +58,9 @@ def render_report(report: dict) -> str:
         f"<p><strong>Scientific acceptance: {escape(report['scientific_acceptance'])}</strong></p>"
         "<p>File roundtrip checks are recorded below and do not establish scientific fidelity. "
         "The manifest is the machine-readable completion record.</p>"
+        "<h2>Acceptance gates</h2><table><thead><tr><th scope='col'>Gate</th>"
+        "<th scope='col'>Status</th><th scope='col'>Reason</th></tr></thead>"
+        f"<tbody>{gates}</tbody></table>"
         "<h2>Artifacts</h2><table><thead><tr><th scope='col'>File</th>"
         "<th scope='col'>Bytes</th><th scope='col'>SHA-256</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"

@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from html.parser import HTMLParser
 from importlib.resources import files
 
 import numpy as np
@@ -13,6 +14,29 @@ from prd_v5.delivery import digest
 from prd_v5.hypothesis import CameraHypothesis
 from prd_v5.physics import photon_transfer
 from prd_v5.presets import full_quality_config
+
+
+class _TableRows(HTMLParser):
+    """Collect the text cells of each rendered HTML table row."""
+
+    def __init__(self):
+        super().__init__()
+        self.rows, self.cell = [], None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self.rows.append([])
+        elif tag in ("th", "td"):
+            self.cell = ""
+
+    def handle_endtag(self, tag):
+        if tag in ("th", "td") and self.cell is not None:
+            self.rows[-1].append(self.cell)
+            self.cell = None
+
+    def handle_data(self, data):
+        if self.cell is not None:
+            self.cell += data
 
 
 @pytest.mark.parametrize("adc_bits", [12, 14, 16])
@@ -65,6 +89,16 @@ def test_full_quality_fixture_outputs_registry_and_decodable_adc(tmp_path, adc_b
     assert validation["HDR validity"]["status"] == validation["Metadata coherence"]["status"] == "not measured"
     assert registry["Checkpoint hashes"]["value"] is None
     assert registry["Checkpoint hashes"]["provenance"] == "UNSPECIFIED"
+    page = (output / "validation_report.html").read_text()
+    parser = _TableRows()
+    parser.feed(page)
+    rendered = {row[0]: row[1:] for row in parser.rows if row}
+    for gate, record in validation.items():
+        if isinstance(record, dict) and "status" in record:
+            assert rendered[gate][0] == record["status"]
+    assert rendered["HDR validity"] == ["not measured", validation["HDR validity"]["reason"]]
+    assert "Lanczos-3" in report["pipeline"] and "bilinear" not in report["pipeline"]
+    assert "Lanczos-3" in page
 
 
 @pytest.mark.parametrize("iso", [50, 400])

@@ -305,14 +305,15 @@ def run_analytic(
                 stages["distortion"]["status"] + "; uncalibrated; full-scale validation pending",
             )
         )
+    resampled = "Lanczos-3" if resampling == "LANCZOS" else "bilinear"
     report = {
         "schema_version": 1,
         "pipeline": "experimental learned residual over analytic baseline"
         if residual_adapter is not None
         else (
-            "verified checkpoint SR with bilinear geometry and analytic inverse ISP"
+            f"verified checkpoint SR with {resampled} geometry and analytic inverse ISP"
             if sr_checkpoint is not None
-            else "analytic MVP with explicit bilinear resampling; no learned inference"
+            else f"analytic MVP with explicit {resampled} resampling; no learned inference"
         ),
         "replay": {
             "config_scope": "analytic settings only",
