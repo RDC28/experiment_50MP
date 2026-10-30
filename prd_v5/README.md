@@ -328,9 +328,12 @@ Run these only on a Colab A100 runtime, never on the development Mac.
    use them. With no reference both stay `not measured`, never passed.
 4. Set `MTF_EDGE` to a native-pixel region and edge evidence to measure sampled MTF.
    Leave it `None` to keep MTF `not measured`.
-5. To use a HDRUNet residual, call `prd_v5.hdrunet.load_hdrunet_adapter(path,
-   expected_sha256, camera, licence_accepted=True, experimental_accepted=True)` and assign
-   the result to `RESIDUAL_ADAPTER`. It verifies the digest before unpickling, loads with
+5. To use a HDRUNet residual, set the notebook `HDRUNET_CHECKPOINT`, `HDRUNET_SHA256`,
+   `HDRUNET_LICENCE_ACCEPTED`, `HDRUNET_EXPERIMENTAL_ACCEPTED` and `HDRUNET_MAX_DELTA`
+   (with `ENABLE_LEARNED_RGB2RAW` on); the notebook calls
+   `prd_v5.hdrunet.load_hdrunet_adapter(path, expected_sha256, camera,
+   licence_accepted=True, experimental_accepted=True)` and uses the result as
+   `RESIDUAL_ADAPTER`. It verifies the digest before unpickling, loads with
    `weights_only=True` and strict keys, and pads tiles to multiples of four. Output is mapped
    to a linear residual by encoded-domain difference and gated by a change-size confidence;
    it is NTIRE2021 HDR, not Sony calibration or clipped-highlight truth.
