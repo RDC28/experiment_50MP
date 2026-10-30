@@ -29,12 +29,15 @@ def build_metadata(camera: CameraHypothesis, geometry: GeometryPlan, isp: Analyt
     Both illuminants use the same virtual D65 profile. No dual-illuminant camera
     calibration, original capture identity or independent scientific validation
     is implied. Exposure gain/tone parameters remain inverse-ISP manifest fields,
-    not invented physical exposure estimates. Returned records use the legacy
+    not invented physical exposure estimates; BaselineExposure only records HDR
+    headroom. Returned records use the legacy
     writer's serialization contract, not the complete v5 provenance registry.
     """
     config = ExperimentConfig(ADC_BITS=14 if camera.adc_bits <= 14 else 16, DNG_COMPRESSION="UNCOMPRESSED")
     xyz_to_camera = np.linalg.inv(np.asarray(SRGB_TO_XYZ_D65) @ np.asarray(isp.camera_to_srgb))
-    neutral = 1 / np.asarray(isp.white_balance)
+    neutral = np.linalg.solve(np.asarray(isp.camera_to_srgb), np.ones(3)) / np.asarray(isp.white_balance)
+    if not np.all(neutral > 0):
+        raise ValueError("camera_to_srgb maps sRGB white outside the positive camera gamut")
     neutral /= neutral[1]
     exposure = {
         name: FieldRecord(name, value, Provenance.FABRICATED, "Explicit v5 synthetic camera hypothesis")
@@ -58,6 +61,8 @@ def build_metadata(camera: CameraHypothesis, geometry: GeometryPlan, isp: Analyt
         exposure=exposure,
     )
     records["Model"].value = f"{camera.profile} Synthetic Sensor"
+    records["BaselineExposure"].value = isp.baseline_exposure_ev
+    records["BaselineExposure"].method = "Restores 18% grey after analytic HDR headroom scaling"
     records["UniqueCameraModel"].value = f"Synthetic PRD v5 {camera.profile}"
     for index in (1, 2):
         records[f"CalibrationIlluminant{index}"].value = 21

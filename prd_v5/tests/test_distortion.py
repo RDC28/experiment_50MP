@@ -32,7 +32,7 @@ def reference(source, model):
     return output, outside
 
 
-@pytest.mark.parametrize("model", [Distortion(k1=0.2), Distortion(k2=-0.2), Distortion(p1=0.1, p2=-0.15)])
+@pytest.mark.parametrize("model", [Distortion(k1=0.2), Distortion(k2=-0.15), Distortion(p1=0.1, p2=-0.15)])
 def test_independent_map_interpolation_persistence_and_strips(tmp_path, model):
     source = np.memmap(tmp_path / "source", mode="w+", shape=(5, 7, 3), dtype=np.float32)
     source[:] = np.random.default_rng(12).uniform(0, 8, source.shape)
@@ -70,6 +70,17 @@ def test_zero_identity_and_degenerate_dimensions(tmp_path, shape):
 def test_invalid_coefficients(name, value):
     with pytest.raises(ValueError, match=name):
         Distortion(**{name: value})
+
+
+@pytest.mark.parametrize("coefficients", [{"k2": -0.25}, {"k2": -0.2}, {"k1": -0.25, "k2": -0.25}])
+def test_folding_radial_maps_rejected(coefficients):
+    with pytest.raises(ValueError, match="monotonic"):
+        Distortion(**coefficients)
+
+
+def test_strong_monotonic_radial_maps_accepted():
+    for coefficients in ({"k1": -0.25}, {"k1": -0.25, "k2": 0.25}, {"k1": 0.25, "k2": -0.25}):
+        Distortion(**coefficients)
 
 
 def test_prewrite_validation(tmp_path):

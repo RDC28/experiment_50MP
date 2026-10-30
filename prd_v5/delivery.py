@@ -46,7 +46,7 @@ def export_arrays(output, optical, adc, camera, *, strip_rows=64):
                 else:
                     for y in range(start, end):
                         for parity in (0, 1):
-                            target[y, parity::2] = optical[y, parity::2, channels[y % 2, parity]] * camera.full_well_e
+                            target[y, parity::2] = optical[y, parity::2, channels[y % 2, parity]] * camera.full_well_e / camera.analogue_gain
             target.flush()
         finally:
             target._mmap.close()
@@ -59,10 +59,15 @@ def complete_registry(report):
     tags = {name: record["value"] for name, record in report["stages"]["dng"]["tags"].items()}
     sensor = report["stages"]["sensor"]["body_effects"]["parameters"]
     optics = report["stages"]["optical_effects"]["parameters"]
+    long_side = max(geometry["width"], geometry["height"])
+    checkpoints = {
+        "sr": report["stages"].get("super_resolution", {}).get("checkpoint", {}).get("sha256"),
+        "residual": (report["stages"]["learned_raw"].get("checkpoint") or {}).get("sha256"),
+    }
     aliases = {
         "Sensor width/height px": [geometry["width"], geometry["height"]],
-        "Sensor physical size": [35.9, 35.9 * geometry["height"] / geometry["width"]],
-        "Pixel pitch": 35900 / geometry["width"],
+        "Sensor physical size": [35.9 * geometry["width"] / long_side, 35.9 * geometry["height"] / long_side],
+        "Pixel pitch": 35900 / long_side,
         "CFA pattern": camera["cfa_pattern"],
         "CFA phase/origin": [0, 0],
         "ADC bit depth": camera["adc_bits"],
@@ -106,7 +111,7 @@ def complete_registry(report):
         "Motion blur": [optics["motion_length_px"], optics["motion_angle_deg"]],
         "Source SHA-256": report["source"]["sha256"],
         "Random seed": camera["seed"],
-        "Checkpoint hashes": {"sr": report["stages"].get("super_resolution", {}).get("checkpoint", {}).get("sha256")},
+        "Checkpoint hashes": checkpoints if any(checkpoints.values()) else None,
         "Synthetic-capture flag": True,
     }
     registry = dict(report["registry"])
@@ -167,15 +172,18 @@ def finish_bundle(output, report):
     clipped = np.load(output / "source_clipped.npy", mmap_mode="r")
     try:
         learned = "super_resolution" in report["stages"] or report["stages"]["learned_raw"].get("effective") == "HYBRID"
-        Image.fromarray(((~support | learned) * 255).astype(np.uint8)).save(output / "generated_region_mask.png")
-        Image.fromarray(((~support | clipped) * 255).astype(np.uint8)).save(output / "uncertainty_map.png")
+        Image.fromarray((~support | learned).astype(np.uint8) * 255).save(output / "generated_region_mask.png")
+        Image.fromarray((~support | clipped).astype(np.uint8) * 255).save(output / "uncertainty_map.png")
     finally:
         support._mmap.close()
         clipped._mmap.close()
     validation = {
         "DNG parse": {"status": "passed", "evidence": report["stages"]["roundtrip"]},
         "CFA integrity": {"status": "passed", "evidence": report["stages"]["dng"]["structural_validation"]},
-        "Metadata coherence": {"status": "passed", "scope": "serialized DNG fields and executed configuration"},
+        "Metadata coherence": {
+            "status": "not measured",
+            "reason": "No full registry-versus-DNG coherence check runs; DNG fields derive from executed configuration",
+        },
         "Provenance": {"status": "passed", "fields": len(report["registry"])},
         **{
             name: {"status": "not measured", "reason": reason}
@@ -187,7 +195,10 @@ def finish_bundle(output, report):
                 "RAW editability": "Full EV/WB/highlight/shadow/demosaic sweep requires Colab validation",
             }.items()
         },
-        "HDR validity": {"status": "passed", "scope": "disclosure and uncertainty; no recovered-truth assertion"},
+        "HDR validity": {
+            "status": "not measured",
+            "reason": "No HDR check runs; analytic expansion is disclosed with uncertainty, not recovered truth",
+        },
         "acceptance": "conditional: scientific gates unmeasured",
         "mask_semantics": {
             "generated": "Potential model-generated content or unsupported margins; not a truth oracle",

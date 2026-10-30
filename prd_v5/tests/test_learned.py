@@ -32,29 +32,40 @@ def adapter_for(tmp_path, camera, predict=None):
 def test_gating_tiles_and_units(tmp_path):
     camera = CameraHypothesis()
     origins = []
+    seen = []
 
     def predict(rgb, clean, origin, supplied_camera):
         assert supplied_camera is camera
         assert not clean.flags.writeable and not rgb.flags.writeable
         origins.append(origin)
+        seen.append(clean.copy())
         confidence = np.full(clean.shape[:2], 0.75)
         confidence[:, 0] = 0.25
         return np.full_like(clean, 0.2), confidence
 
     adapter = adapter_for(tmp_path, camera, predict)
     clean = np.memmap(tmp_path / "clean", mode="w+", dtype="float32", shape=(3, 4, 3))
+    learned = np.memmap(tmp_path / "learned", mode="w+", dtype="float32", shape=(3, 4, 3))
+    support = np.ones((3, 4), dtype=bool)
+    support[2] = False
     try:
         clean[:] = 0.1
-        report = apply_residual(np.zeros_like(clean), clean, camera, adapter, tile=2)
+        report = apply_residual(np.zeros_like(clean), clean, support, learned, camera, adapter, tile=2)
         expected = np.full((3, 4, 3), 0.25)
         expected[:, ::2] = 0.1
-        np.testing.assert_allclose(clean, expected)
+        expected[2] = 0.1
+        np.testing.assert_allclose(learned, expected)
+        np.testing.assert_allclose(clean, 0.1)
+        assert all(np.all(tile == np.float32(0.1)) for tile in seen)
         assert origins == [(0, 0), (0, 2), (2, 0), (2, 2)]
-        assert report["accepted_pixels"] == 6
-        assert report["changed_samples"] == 18
+        assert report["accepted_pixels"] == 4
+        assert report["changed_samples"] == 12
         assert report["sensor_noise_in_network"] is False
+        with pytest.raises(ValueError, match="separate"):
+            apply_residual(np.zeros_like(clean), clean, support, clean, camera, adapter)
     finally:
         clean._mmap.close()
+        learned._mmap.close()
 
 
 @pytest.mark.parametrize(
@@ -92,7 +103,14 @@ def test_bad_predictions(tmp_path, bad):
     try:
         clean[:] = 0.1
         with pytest.raises(ValueError):
-            apply_residual(np.zeros_like(clean), clean, camera, adapter_for(tmp_path, camera, predict))
+            apply_residual(
+                np.zeros_like(clean),
+                clean,
+                np.ones((2, 2), dtype=bool),
+                np.zeros_like(clean),
+                camera,
+                adapter_for(tmp_path, camera, predict),
+            )
         np.testing.assert_allclose(clean, 0.1)
     finally:
         clean._mmap.close()
@@ -124,12 +142,13 @@ def test_paired_residual_adc_effect_and_provenance(tmp_path):
             original = before.raw_image.copy()
         with rawpy.imread(str(output / label / "capture.dng")) as after:
             delta = after.raw_image.astype(float) - original
-        expected = 0.1 * camera.full_well_e * camera.analogue_gain / camera.conversion_gain_e_per_dn
+        expected = 0.1 * camera.full_well_e / camera.conversion_gain_e_per_dn
         np.testing.assert_allclose(delta, expected, atol=1)
         child = json.loads((output / label / "manifest.json").read_text())
         stage = child["stages"]["learned_raw"]
         assert stage["changed_samples"] == 32 * 32 * 3
         assert stage["checkpoint"]["sha256"] == adapter.sha256
+        assert child["registry"]["Checkpoint hashes"]["value"] == {"sr": None, "residual": adapter.sha256}
         assert child["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
         assert child["replay"]["additional_checkpoint_required"]
     assert result["inverse_isp"]["requested"] == "LEARNED_RGB2RAW"
@@ -154,3 +173,20 @@ def test_failed_adapter_withholds_completion_and_cleans_scratch(tmp_path):
     assert not (output / "2k/manifest.json").exists()
     assert not list((output / "2k").glob("working-*"))
     assert not (output / "4k").exists()
+
+
+def test_residual_never_reaches_sensor_margins(tmp_path):
+    import rawpy
+
+    camera = CameraHypothesis(shot_noise=False, read_noise=False)
+    source = tmp_path / "input.png"
+    Image.fromarray(np.full((20, 30, 3), 100, dtype=np.uint8)).save(source)
+    config = AnalyticRunConfig(camera=camera, target_megapixels=0.003, assume_unprofiled_srgb=True)
+    output = tmp_path / "run"
+    config.run(source, output, inverse_mode="HYBRID", residual_adapter=adapter_for(tmp_path, camera))
+    support = np.load(output / "source_support.npy")
+    assert not support.all() and support.any()
+    with rawpy.imread(str(output / "capture.dng")) as raw:
+        mosaic = raw.raw_image.copy()
+    assert np.all(mosaic[~support] == camera.black_level)
+    assert np.all(mosaic[support] > camera.black_level)

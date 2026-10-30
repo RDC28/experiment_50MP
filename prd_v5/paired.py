@@ -12,7 +12,9 @@ from prd_v5.config import AnalyticRunConfig
 from prd_v5.delivery import write_pair_html
 from prd_v5.fidelity import SRCheckpoint
 from prd_v5.fields import validate_selections
+from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField
+from prd_v5.inputs import InputInspector
 from prd_v5.learned import ResidualAdapter, resolve_mode
 
 
@@ -35,7 +37,7 @@ def run_analytic_pair(
     Actual source dimensions/hashes and geometry remain in each child manifest.
     A failed child leaves diagnostic outputs but no pair completion manifest.
     Optional comparison_region adds native-pixel crop metrics alongside the whole
-    visible raster comparison. Bounds must fit both developed TIFFs.
+    visible raster comparison. Bounds must fit both planned rasters before any run.
     Existing output directories are never reused. Full-scale work is Colab-only.
     """
     if not isinstance(config, AnalyticRunConfig):
@@ -47,6 +49,18 @@ def run_analytic_pair(
     validate_selections(config.camera, camera_selections)
     validate_selections(config.isp, isp_selections, isp=True)
     checkpoint_evidence = sr_checkpoint.verify() if sr_checkpoint is not None else None
+    if comparison_region is not None:
+        for source in (source_2k, source_4k):
+            record = InputInspector().inspect(source, assume_unprofiled_srgb=config.assume_unprofiled_srgb)
+            plan = GeometryPlanner().plan(
+                record.width,
+                record.height,
+                target_megapixels=config.target_megapixels,
+                mode=config.geometry_mode,
+                native_fit_policy=config.native_fit_policy,
+            )
+            if comparison_region[2] > plan.height or comparison_region[3] > plan.width:
+                raise ValueError("region exceeds a visible raster")
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=False)
     runs = {}

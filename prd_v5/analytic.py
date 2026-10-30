@@ -14,6 +14,8 @@ class AnalyticISP:
     Forward order: exposure * white balance, camera-to-linear-sRGB matrix,
     optional smoothstep tone, then the sRGB display transfer. Inversion reverses
     that order. Out-of-gamut camera values are floored, not silently normalized.
+    HDR expansion is scaled by 1/hdr_max_radiance into sensor headroom; the
+    BaselineExposure returned by baseline_exposure_ev restores 18% grey.
     """
 
     camera_to_srgb: tuple[tuple[float, ...], ...] = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
@@ -36,12 +38,19 @@ class AnalyticISP:
         if (
             type(self.hdr_max_radiance) not in (int, float)
             or not np.isfinite(self.hdr_max_radiance)
-            or not 1 <= self.hdr_max_radiance <= 65536
+            or not 1 <= self.hdr_max_radiance <= 32
         ):
-            raise ValueError("hdr_max_radiance must be finite in [1, 65536]")
+            raise ValueError("hdr_max_radiance must be finite in [1, 32]")
         # Copy mutable user sequences into immutable values.
         object.__setattr__(self, "camera_to_srgb", tuple(tuple(float(v) for v in row) for row in matrix))
         object.__setattr__(self, "white_balance", tuple(float(v) for v in wb))
+
+    @property
+    def baseline_exposure_ev(self) -> float:
+        """DNG BaselineExposure mapping 18% grey back after HDR headroom scaling."""
+        if self.hdr_max_radiance == 1:
+            return 0.0
+        return float(np.log2(self.hdr_max_radiance * (1 - 0.18) + 1))
 
     def process(self, source: np.ndarray, destination: np.memmap, *, strip_rows: int = 64) -> dict:
         """Write float32 clean camera RGB, allocating only strip-sized intermediates.
@@ -65,15 +74,16 @@ class AnalyticISP:
             raise ValueError("source and destination must not overlap")
         if isinstance(source, np.memmap) and source.filename == destination.filename:
             raise ValueError("source and destination must use separate files")
-        inverse = np.linalg.inv(np.asarray(self.camera_to_srgb, dtype=np.float32))
-        gains = np.asarray(self.white_balance, dtype=np.float32) * self.exposure_gain
+        inverse = np.linalg.inv(np.asarray(self.camera_to_srgb, dtype=np.float64))
+        gains = np.asarray(self.white_balance, dtype=np.float64) * self.exposure_gain
         clipped = 0
         negative = 0
         expanded = 0
         reconstruction_max = 0.0
         reconstruction_squared = 0.0
+        checked = 0
         for start in range(0, source.shape[0], strip_rows):
-            block = np.asarray(source[start : start + strip_rows], dtype=np.float32)
+            block = np.asarray(source[start : start + strip_rows], dtype=np.float64)
             if not np.isfinite(block).all() or np.any(block < 0) or np.any(block > 1):
                 raise ValueError("source must contain finite normalized [0, 1] samples")
             clipped += int(np.count_nonzero(np.any(block >= 1, axis=-1)))
@@ -84,25 +94,30 @@ class AnalyticISP:
                 # Invert y = r * (1 + 1/M) / (1 + r), with r in [0, M].
                 linear = linear / (1 + 1 / self.hdr_max_radiance - linear)
                 expanded += int(np.count_nonzero(np.any(linear > 1 + 1e-6, axis=-1)))
+                linear = linear / self.hdr_max_radiance
             camera = (linear @ inverse.T) / gains
             negative += int(np.count_nonzero(camera < 0))
             destination[start : start + len(block)] = np.maximum(camera, 0)
-            # Validate the stored float32 camera values, including any irreversible
-            # gamut flooring, against the declared forward model. Work stays local
-            # to this strip; this is self-consistency rather than camera truth.
+            # Validate the stored float32 camera values against the declared forward
+            # model; irreversibly gamut-floored pixels are counted above instead.
+            # Work stays local to this strip; this is self-consistency, not truth.
+            inside = np.all(camera >= 0, axis=-1)
             stored = np.asarray(destination[start : start + len(block)], dtype=np.float64)
             forward = (stored * gains) @ np.asarray(self.camera_to_srgb).T
             if self.hdr_max_radiance > 1:
-                forward = np.maximum(forward, 0)
+                forward = np.maximum(forward, 0) * self.hdr_max_radiance
                 forward = forward * (1 + 1 / self.hdr_max_radiance) / (1 + forward)
             forward = np.clip(forward, 0, 1)
             if self.inverse_smoothstep:
                 forward = forward**2 * (3 - 2 * forward)
             encoded = np.where(forward <= 0.0031308, 12.92 * forward, 1.055 * forward ** (1 / 2.4) - 0.055)
-            residual = encoded - block
-            reconstruction_max = max(reconstruction_max, float(np.max(np.abs(residual))))
+            residual = (encoded - block)[inside]
+            checked += residual.size
+            reconstruction_max = max(reconstruction_max, float(np.max(np.abs(residual), initial=0)))
             reconstruction_squared += float(np.sum(residual**2, dtype=np.float64))
         destination.flush()
+        if reconstruction_max > 1e-5:
+            raise ValueError(f"Analytic forward consistency failed: max error {reconstruction_max:.3g}")
         return {
             "method": "analytic_srgb_unprocessing",
             "parameters": asdict(self),
@@ -120,20 +135,23 @@ class AnalyticISP:
                 "uncertainty": "All expanded radiance is a tone-curve hypothesis; endpoints remain unknown. "
                 "source_clipped.npy marks resampled endpoints only, not every uncertain HDR pixel.",
                 "learned_hdr": "not executed; no selected compatible checkpoint",
-                "sensor_limit": "Values above sensor saturation clip in ADC; no automatic headroom reservation",
+                "raw_exposure_offset_ev": -float(np.log2(self.hdr_max_radiance)),
+                "baseline_exposure_ev": self.baseline_exposure_ev,
+                "sensor_limit": "hdr_max_radiance maps to sensor saturation; DNG BaselineExposure restores 18% grey",
             },
             "validation": "analytic transform only; scene radiance accuracy not measured",
             "forward_consistency": {
-                "status": "passed" if reconstruction_max <= 1e-5 else "failed",
+                "status": "passed",
                 "max_absolute_error": reconstruction_max,
-                "rmse": float(np.sqrt(reconstruction_squared / source.size)),
+                "rmse": float(np.sqrt(reconstruction_squared / max(checked, 1))),
+                "checked_samples": checked,
                 "tolerance": 1e-5,
                 "units": "normalized encoded sRGB",
                 "reference": "resampled input before analytic inversion",
                 "method": "camera RGB -> exposure/WB -> matrix -> optional HDR compression -> clip -> tone -> sRGB",
                 "limitations": (
                     "Internal model consistency only, not calibrated colour or recovered radiance accuracy; "
-                    "camera gamut flooring and forward display clipping can be irreversible"
+                    "gamut-floored pixels are excluded and counted in negative_camera_samples_floored"
                 ),
             },
             "strip_rows": strip_rows,

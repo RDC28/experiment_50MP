@@ -74,7 +74,7 @@ def test_catalogue_profile_reaches_paired_dng_and_selection_evidence(tmp_path):
         ],
         {"ColorMatrix1/2": "USER", "AsShotNeutral": "USER"},
     )
-    assert isp.white_balance == (2, 1, 4)
+    np.testing.assert_allclose(isp.white_balance, (2.5, 1, 10 / 3), rtol=1e-12)
     evidence = validate_selections(isp, isp_records, isp=True)["isp.camera_to_srgb"]
     assert evidence["provenance"] == "USER_SET"
     assert evidence["posterior"]["illuminant"] == "D65"
@@ -97,6 +97,8 @@ def test_catalogue_profile_reaches_paired_dng_and_selection_evidence(tmp_path):
             for name in ("ColorMatrix1", "ColorMatrix2"):
                 rational = np.asarray(tags[name].value).reshape(9, 2)
                 np.testing.assert_allclose((rational[:, 0] / rational[:, 1]).reshape(3, 3), matrix, atol=1e-6)
+            neutral = np.asarray(tags["AsShotNeutral"].value).reshape(3, 2)
+            np.testing.assert_allclose(neutral[:, 0] / neutral[:, 1], (0.5, 1, 0.25), atol=1e-6)
     manifests = [json.loads(path.read_text()) for path in output.rglob("manifest.json")]
     assert len(manifests) == 2
     for manifest in manifests:

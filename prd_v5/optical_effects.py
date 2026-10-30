@@ -15,9 +15,9 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 class OpticalEffects:
     """Explicit priors, not inferred lens calibration.
 
-    Gaussian PSFs approximate central lobes, not Airy rings. Spatial PSF blends
-    center and edge Gaussian variances. Axial CA is a channel-specific blur prior,
-    not a depth reconstruction. Motion is one uniform global line trajectory.
+    Gaussian PSFs approximate central lobes, not Airy rings. Spatial PSF linearly
+    mixes center- and edge-blurred images by squared normalized radius. Axial CA
+    is a channel-specific blur prior, not a depth reconstruction. Motion is one uniform global line trajectory.
     Defaults preserve existing analytic callers; the notebook uses a full preset.
     """
 

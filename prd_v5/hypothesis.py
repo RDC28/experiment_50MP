@@ -58,8 +58,10 @@ class CameraHypothesis:
     """One seeded camera draw; tuples and scalars prevent cross-run mutation.
 
     ISO determines analogue gain relative to base ISO 100. Conversion gain is
-    derived at base ISO so full well maps to the available ADC range. Higher ISO
-    consequently saturates sooner. Digital gain is unity. NoiseProfile describes
+    derived at base ISO so full well maps to the available ADC range. Collected
+    electrons scale with exposure, 1/gain at higher ISO, and the gain restores
+    the ADC signal, so higher ISO lowers SNR rather than brightening. Digital
+    gain is unity. NoiseProfile describes
     normalized black-subtracted temporal signal before clipping, excluding FPN.
     """
 
@@ -151,8 +153,11 @@ class CameraHypothesis:
 
         The initial MVP subset is intentionally not the complete PRD registry.
         No statistical validation is implied by arithmetic validation rules.
+        Electronics equal to sample(seed) draws are labelled PRIOR_SAMPLED.
         """
         result = {}
+        prior = CameraHypothesis.sample(self.seed)
+        sampled = {name for name in ("full_well_e", "read_noise_e") if getattr(self, name) == getattr(prior, name)}
 
         def add(name, value, units, provenance, method, validation, mode="AUTO"):
             result[name] = asdict(CameraField(name, value, units, mode, provenance, None, None, method, validation))
@@ -175,8 +180,10 @@ class CameraHypothesis:
                 name,
                 getattr(self, name),
                 units,
-                "SYNTHETIC",
-                "Explicit synthetic hypothesis; not measured",
+                "PRIOR_SAMPLED" if name in sampled else "SYNTHETIC",
+                "Seeded draw from the declared sample() prior; not measured"
+                if name in sampled
+                else "Explicit synthetic hypothesis; not measured",
                 "CameraHypothesis physical-domain checks",
             )
         for name, value, units in (

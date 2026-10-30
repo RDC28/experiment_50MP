@@ -69,6 +69,26 @@ def test_tiled_double_and_visible_oom_retry(tmp_path, monkeypatch):
     result._mmap.close()
 
 
+def test_model_overshoot_is_clamped_and_counted(tmp_path, monkeypatch):
+    def infer(patch):
+        prediction = np.repeat(np.repeat(patch, 4, axis=0), 4, axis=1)
+        prediction[0, 0] = [-0.25, 1.5, 0.5]
+        return prediction
+
+    monkeypatch.setattr(fidelity, "load_checkpoint", lambda spec: (infer, {}))
+    output = tmp_path / "sr.npy"
+    report = fidelity.reconstruct(
+        np.full((2, 2, 3), 0.5, dtype=np.float32), output, checkpoint(tmp_path), tile=4, overlap=0
+    )
+    result = np.load(output, mmap_mode="r")
+    try:
+        assert result.min() >= 0 and result.max() <= 1
+        np.testing.assert_allclose(result[0, 0], [0, 1, 0.5], atol=1e-7)
+        assert report["clamped_samples"] == 2
+    finally:
+        result._mmap.close()
+
+
 def test_invalid_model_output_cleans_partial_artifacts(tmp_path, monkeypatch):
     monkeypatch.setattr(fidelity, "load_checkpoint", lambda spec: (lambda patch: patch, {}))
     output = tmp_path / "sr.npy"
@@ -78,14 +98,19 @@ def test_invalid_model_output_cleans_partial_artifacts(tmp_path, monkeypatch):
     assert not output.with_name(output.name + ".weights.npy").exists()
 
 
-@pytest.mark.parametrize("architecture,scale,channels", [("wrong", 4, 3), ("HAT", 2, 3), ("HAT", 4, 1)])
-def test_loader_rejects_incompatible_descriptor(tmp_path, monkeypatch, architecture, scale, channels):
+def fake_loader(monkeypatch, architecture, scale, channels):
     from types import SimpleNamespace
 
     import synthraw.model_manifest as manifest
 
     class Descriptor:
-        pass
+        supports_half = False
+
+        def eval(self):
+            return self
+
+        def to(self, **kwargs):
+            return self
 
     descriptor = Descriptor()
     descriptor.architecture = SimpleNamespace(id=architecture)
@@ -94,8 +119,11 @@ def test_loader_rejects_incompatible_descriptor(tmp_path, monkeypatch, architect
     descriptor.output_channels = 3
     loads = []
     torch = SimpleNamespace(
-        cuda=SimpleNamespace(is_available=lambda: True),
+        cuda=SimpleNamespace(is_available=lambda: True, is_bf16_supported=lambda: False),
         load=lambda *args, **kwargs: loads.append(kwargs) or {},
+        bfloat16="bfloat16",
+        float16="float16",
+        float32="float32",
     )
     spandrel = SimpleNamespace(
         ImageModelDescriptor=Descriptor,
@@ -103,9 +131,22 @@ def test_loader_rejects_incompatible_descriptor(tmp_path, monkeypatch, architect
     )
     monkeypatch.setattr(manifest, "_require_colab", lambda: None)
     monkeypatch.setattr(fidelity.importlib, "import_module", lambda name: {"torch": torch, "spandrel": spandrel}[name])
+    return loads
+
+
+@pytest.mark.parametrize("architecture,scale,channels", [("wrong", 4, 3), ("HAT", 2, 3), ("HAT", 4, 1)])
+def test_loader_rejects_incompatible_descriptor(tmp_path, monkeypatch, architecture, scale, channels):
+    loads = fake_loader(monkeypatch, architecture, scale, channels)
     with pytest.raises(ValueError, match="contract mismatch"):
         fidelity.load_checkpoint(checkpoint(tmp_path))
     assert loads == [{"map_location": "cpu", "weights_only": True}]
+
+
+@pytest.mark.parametrize("backend,architecture", [("HAT", "HAT"), ("REAL_ESRGAN", "ESRGAN")])
+def test_loader_accepts_spandrel_architecture_ids(tmp_path, monkeypatch, backend, architecture):
+    fake_loader(monkeypatch, architecture, 4, 3)
+    _, evidence = fidelity.load_checkpoint(replace(checkpoint(tmp_path), backend=backend))
+    assert evidence["architecture"] == architecture
 
 
 def test_checkpoint_pixels_reach_independent_raw_roundtrip(tmp_path, monkeypatch):

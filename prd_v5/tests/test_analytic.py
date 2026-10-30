@@ -81,10 +81,15 @@ def test_out_of_gamut_report(tmp_path):
     assert report["negative_camera_samples_floored"] == 1
     np.testing.assert_array_equal(dest, [[[0, 1, 0]]])
     consistency = report["forward_consistency"]
-    assert consistency["status"] == "failed"
-    expected_error = 1.055 * 0.5 ** (1 / 2.4) - 0.055
-    assert consistency["max_absolute_error"] == pytest.approx(expected_error)
-    assert consistency["rmse"] == pytest.approx(expected_error / np.sqrt(3))
+    assert consistency["status"] == "passed"
+    assert consistency["checked_samples"] == 0
+
+
+def test_inconsistent_stored_camera_values_fail(tmp_path):
+    source = np.random.default_rng(4).uniform(0.3, 0.6, (4, 4, 3)).astype(np.float32)
+    isp = AnalyticISP(((1000, -999, 0), (-999, 1000, 0), (0, 0, 1)))
+    with pytest.raises(ValueError, match="forward consistency"):
+        isp.process(source, output(tmp_path, source.shape))
 
 
 def test_forward_consistency_endpoints_and_strip_metrics(tmp_path):

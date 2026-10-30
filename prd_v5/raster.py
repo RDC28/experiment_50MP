@@ -7,14 +7,7 @@ import numpy as np
 from prd_v5.geometry import GeometryPlan
 
 
-def rasterize(source: np.ndarray, destination: np.memmap, support: np.memmap, plan: GeometryPlan) -> dict:
-    """Apply edge-coordinate geometry with pixel-center bilinear sampling.
-
-    Source must already be normalized encoded sRGB. This explicit baseline is
-    not an SR fallback. Sensor margins are zero signal with false support;
-    outpainting requests fail before writing. Working arrays are one row wide.
-    Caller owns buffers and must discard partial output on invalid source data.
-    """
+def _check_buffers(source, destination, support, plan: GeometryPlan) -> None:
     if plan.generated_bands:
         raise ValueError("Outpainting required but no generator is available")
     if source.shape != (plan.source_size[1], plan.source_size[0], 3) or source.dtype.kind != "f":
@@ -35,6 +28,17 @@ def rasterize(source: np.ndarray, destination: np.memmap, support: np.memmap, pl
         for other in arrays[i + 1 :]:
             if np.may_share_memory(array, other) or (isinstance(array, np.memmap) and array.filename == other.filename):
                 raise ValueError("source and outputs must use separate nonoverlapping buffers")
+
+
+def rasterize(source: np.ndarray, destination: np.memmap, support: np.memmap, plan: GeometryPlan) -> dict:
+    """Apply edge-coordinate geometry with pixel-center bilinear sampling.
+
+    Source must already be normalized encoded sRGB. This explicit baseline is
+    not an SR fallback. Sensor margins are zero signal with false support;
+    outpainting requests fail before writing. Working arrays are one row wide.
+    Caller owns buffers and must discard partial output on invalid source data.
+    """
+    _check_buffers(source, destination, support, plan)
     x = np.arange(plan.width, dtype=np.float64) + 0.5
     source_x = np.clip((x - plan.offset_xy[0]) / plan.scale - 0.5, 0, plan.source_size[0] - 1)
     x0 = np.floor(source_x).astype(np.intp)
@@ -70,21 +74,30 @@ def rasterize(source: np.ndarray, destination: np.memmap, support: np.memmap, pl
 
 
 def rasterize_lanczos(source, destination, support, plan):
-    """Lanczos-3 baseline using the shared row-bounded resizer and CFA crop."""
+    """Lanczos-3 baseline using the shared row-bounded resizer and CFA crop.
+
+    The crop maps back through the plan affine, matching bilinear sample centres.
+    """
     from pathlib import Path
     from tempfile import TemporaryDirectory
 
     from synthraw.super_resolution import resize_exact
 
-    if plan.generated_bands:
-        raise ValueError("Outpainting required but no generator is available")
+    _check_buffers(source, destination, support, plan)
     x, y = plan.default_crop_origin
     width, height = plan.default_crop_size
+    (ox, oy), scale = plan.offset_xy, plan.scale
+    source_box = tuple(
+        min(float(limit), max(0.0, (edge - offset) / scale))
+        for edge, offset, limit in zip(
+            (x, y, x + width, y + height), (ox, oy, ox, oy), plan.source_size * 2, strict=True
+        )
+    )
     destination[:] = 0
     support[:] = False
     with TemporaryDirectory(prefix="lanczos-", dir=Path(destination.filename).parent) as directory:
         path = resize_exact(
-            source, Path(directory) / "resized.npy", width=width, height=height, source_box=plan.source_crop
+            source, Path(directory) / "resized.npy", width=width, height=height, source_box=source_box
         )
         resized = np.load(path, mmap_mode="r")
         try:

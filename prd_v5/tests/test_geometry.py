@@ -93,3 +93,11 @@ def test_invalid_geometry_fails_before_any_processing(kwargs):
 def test_impossible_cfa_crop_is_rejected():
     with pytest.raises(ValueError, match="CFA-aligned"):
         GeometryPlanner().plan(1000000000, 1, mode="SONY_A1II_NATIVE")
+
+
+@pytest.mark.parametrize("size", [(3, 39), (4, 26)])
+def test_floating_point_residue_does_not_create_margins_or_shrink_crop(size):
+    plan = GeometryPlanner().plan(*size, target_megapixels=0.01)
+    assert plan.offset_xy[1] == 0
+    assert plan.default_crop_origin[1] == 0 and plan.default_crop_size[1] == plan.height
+    assert all(band[1] == 0 and band[3] == plan.height for band in plan.margin_bands)

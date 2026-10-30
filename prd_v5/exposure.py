@@ -65,7 +65,7 @@ def resolve_exposure(
         "selected": selected,
         "limitations": (
             "Explicit EV prior, not image metering; weights normalize over retained candidates only. "
-            "ISO drives sensor gain/noise; shutter and aperture do not rescale unknown radiance. "
+            "ISO trades collected electrons for analogue gain, lowering SNR at equal raw signal; shutter and aperture do not rescale unknown radiance. "
             "ISP exposure_gain is independent. No calibrated capture-exposure recovery is claimed."
         ),
     }

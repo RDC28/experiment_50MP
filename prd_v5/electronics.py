@@ -10,9 +10,11 @@ from prd_v5.hypothesis import CameraField, CameraHypothesis
 class DualConversionProfile:
     """Two supplied effective charge/read regimes, switched at ISO >= threshold.
 
-    Each full well defines base conversion gain through the shared ADC range.
-    Existing ISO analogue gain still applies. This is a simplified effective
-    model, not simultaneous dual-gain readout or measured Sony electronics.
+    The low-gain full well sets the photon scale and total DN per electron at
+    every ISO. Switching changes only read noise and the in-pixel conversion
+    gain regime, whose charge capacity must hold the ADC-saturating charge.
+    This is a simplified effective model, not simultaneous dual-gain readout or
+    measured Sony electronics.
     """
 
     label: str
@@ -32,6 +34,8 @@ class DualConversionProfile:
                 full_well_e=getattr(self, f"{regime}_full_well_e"),
                 read_noise_e=getattr(self, f"{regime}_read_noise_e"),
             )
+        if self.high_full_well_e < self.low_full_well_e * 100 / self.switch_iso:
+            raise ValueError("high_full_well_e must hold the ADC-saturating charge at switch_iso")
 
     def resolve(self, base: CameraHypothesis, *, accept_experimental: bool = False):
         """Return immutable camera, selection records and strict-JSON evidence.
@@ -45,17 +49,20 @@ class DualConversionProfile:
         if accept_experimental is not True:
             raise ValueError("Explicit experimental acceptance is required")
         regime = "high" if base.iso >= self.switch_iso else "low"
-        values = {name: getattr(self, f"{regime}_{name}") for name in ("full_well_e", "read_noise_e")}
+        values = {"full_well_e": self.low_full_well_e, "read_noise_e": getattr(self, f"{regime}_read_noise_e")}
         report = {
             "status": "experimental",
             "profile": asdict(self),
             "selected_regime": regime,
             "iso": base.iso,
             "selection_rule": "high when ISO >= switch_iso; otherwise low",
+            "charge_capacity_e": getattr(self, f"{regime}_full_well_e"),
+            "adc_saturation_e": self.low_full_well_e * min(1, 100 / base.iso),
             "zero_effect": all(getattr(base, name) == value for name, value in values.items()),
             "limitations": (
                 "User-supplied effective electronics hypothesis, not Sony calibration. "
-                "ISO analogue gain remains ISO/100; no simultaneous dual readout. "
+                "Total gain remains ISO/100 over the low-gain well; switching never changes photon counts. "
+                "No simultaneous dual readout. "
                 "Physical photon-transfer and full-scale validation pending."
             ),
         }

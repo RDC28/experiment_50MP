@@ -27,7 +27,7 @@ def photon_transfer(camera, *, tolerance=0.2, side=64):
         samples = []
         try:
             for fraction in (0, 0.005, 0.01, 0.02, 0.04, 0.08):
-                signal[:] = fraction / camera.analogue_gain
+                signal[:] = fraction
                 BayerSensor(camera).process(signal, codes)
                 values = codes.astype(np.float64) - camera.black_level
                 samples.append({"mean_dn": float(values.mean()), "variance_dn": float(values.var(ddof=1))})

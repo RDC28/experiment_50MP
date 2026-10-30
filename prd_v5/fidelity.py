@@ -65,7 +65,7 @@ def load_checkpoint(spec: SRCheckpoint):
     spandrel = importlib.import_module("spandrel")
     state = torch.load(spec.path, map_location="cpu", weights_only=True)
     descriptor = spandrel.ModelLoader().load_from_state_dict(state)
-    expected = {"HAT": "HAT", "REAL_ESRGAN": "RRDBNet"}[spec.backend]
+    expected = {"HAT": "HAT", "REAL_ESRGAN": "ESRGAN"}[spec.backend]
     if (
         not isinstance(descriptor, spandrel.ImageModelDescriptor)
         or descriptor.architecture.id != expected
@@ -97,12 +97,21 @@ def reconstruct(source, output_path, spec: SRCheckpoint, *, tile=512, overlap=64
 
     Reuse the tested halo/blend engine and its visible one-time OOM tile retry.
     Load failures propagate before allocation. No substitute backend is selected.
+    Model overshoot is clamped to encoded [0, 1] and counted, halos included.
     """
     infer, evidence = load_checkpoint(spec)
+    clamped = 0
+
+    def bounded(patch):
+        nonlocal clamped
+        prediction = np.asarray(infer(patch), dtype=np.float32)
+        clamped += int(np.count_nonzero((prediction < 0) | (prediction > 1)))
+        return np.clip(prediction, 0, 1)
+
     result = SuperResolutionEngine().reconstruct_tiles(
         source,
         output_path,
-        infer,
+        bounded,
         scale=spec.scale,
         tiles=TileParameters(tile, overlap, False, True),
     )
@@ -114,6 +123,7 @@ def reconstruct(source, output_path, spec: SRCheckpoint, *, tile=512, overlap=64
         "tile_count": result.tile_count,
         "effective_tile": result.effective_tile_size,
         "retry_reasons": list(result.retry_reasons),
+        "clamped_samples": clamped,
         "fallback": None,
         "validation": "Execution only; scientific fidelity and full-scale Colab validation pending",
     }

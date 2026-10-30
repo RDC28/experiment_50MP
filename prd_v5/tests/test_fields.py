@@ -139,7 +139,7 @@ def test_resolved_camera_drives_tiny_adc(tmp_path):
     dest = np.memmap(tmp_path / "adc", mode="w+", dtype=np.uint16, shape=(2, 2))
     try:
         BayerSensor(camera).process(np.full((2, 2, 3), 0.125), dest)
-        np.testing.assert_array_equal(dest, round(512 + 0.5 * (16383 - 512)))
+        np.testing.assert_array_equal(dest, round(512 + 0.125 * (16383 - 512)))
     finally:
         dest._mmap.close()
 

@@ -172,16 +172,18 @@ def resolve_analytic_panel(
             neutral = np.asarray(field["value"], dtype=np.float64)
             if neutral.shape != (3,) or not np.isfinite(neutral).all() or np.any(neutral <= 0) or neutral[1] != 1:
                 raise ValueError("AsShotNeutral must contain three positive finite values with green equal to 1")
+            profile = candidates["camera_to_srgb"][0].value if "camera_to_srgb" in candidates else isp.camera_to_srgb
+            white = np.linalg.solve(np.asarray(profile, dtype=np.float64), np.ones(3))
             candidates["white_balance"] = (
                 CameraField(
                     "white_balance",
-                    tuple(1 / neutral),
+                    tuple(white / neutral / white[1]),
                     "ratio",
                     "USER",
                     "USER_SET",
                     None,
                     None,
-                    "Reciprocal of user-supplied green-normalized AsShotNeutral",
+                    "Camera-space sRGB white divided by user-supplied green-normalized AsShotNeutral",
                     "Positive neutral and AnalyticISP domain checks; no illuminant estimation",
                 ),
             )

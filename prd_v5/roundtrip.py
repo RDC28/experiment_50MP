@@ -44,8 +44,8 @@ def develop_roundtrip(
 
     import rawpy
 
-    # Deterministic baseline rendering: camera WB, sRGB transfer, no auto exposure
-    # or automatic orientation. Development is a render, not linear scene truth.
+    # Deterministic baseline rendering: camera WB, sRGB transfer, DNG BaselineExposure
+    # (LibRaw ignores the tag), no auto exposure or automatic orientation. Development is a render, not linear scene truth.
     with rawpy.imread(str(source)) as raw:
         if raw.sizes.flip != 0:
             raise HardValidationError("Unexpected RAW orientation")
@@ -54,6 +54,7 @@ def develop_roundtrip(
             output_bps=16,
             use_camera_wb=True,
             no_auto_bright=True,
+            bright=float(2**isp.baseline_exposure_ev),
             user_flip=0,
             output_color=rawpy.ColorSpace.sRGB,
             gamma=(2.4, 12.92),

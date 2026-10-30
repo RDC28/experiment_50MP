@@ -184,6 +184,7 @@ def test_joint_exposure_panel_drives_both_real_output_bundles(tmp_path):
 
     import numpy as np
     import rawpy
+    import tifffile
     from PIL import Image
 
     from prd_v5.analytic import AnalyticISP
@@ -218,7 +219,9 @@ def test_joint_exposure_panel_drives_both_real_output_bundles(tmp_path):
             assert field["posterior"]["joint_candidates"] == report["joint_candidates"]
             assert field["value"] == getattr(camera, name)
         with rawpy.imread(str(tmp_path / "pair" / label / "capture.dng")) as raw:
-            assert np.all(raw.raw_image > baseline)
+            np.testing.assert_array_equal(raw.raw_image, baseline)
+        with tifffile.TiffFile(tmp_path / "pair" / label / "capture.dng") as handle:
+            assert handle.pages[0].tags[34855].value == camera.iso
         assert manifest["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
 
 
@@ -375,7 +378,7 @@ def test_electronics_panel_selects_after_iso_and_retains_evidence(tmp_path):
         {"name": "ISO", "value": 800, "mode": "AUTO"},
     ]
     camera, records = resolve_camera_panel(CameraHypothesis(), requests, {r["name"]: "USER" for r in requests})
-    assert camera.iso == 800 and camera.full_well_e == 26000 and camera.read_noise_e == 1
+    assert camera.iso == 800 and camera.full_well_e == 52000 and camera.read_noise_e == 1
     assert payload["accept_experimental"] is True
     assert len({r.name for r in records}) == len(records)
     assert next(r for r in records if r.name == "iso").provenance == "USER_SET"

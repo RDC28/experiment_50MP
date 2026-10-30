@@ -96,7 +96,10 @@ class GeometryPlanner:
             width = max(2, 2 * round(math.sqrt(pixels * aspect) / 2))
             height = max(2, 2 * round(math.sqrt(pixels / aspect) / 2))
         scale = (max if policy == "CROP_HORIZONTAL" else min)(width / source_width, height / source_height)
-        left, top = (width - source_width * scale) / 2, (height - source_height * scale) / 2
+        left, top = (
+            0.0 if abs(edge) < 1e-9 else edge
+            for edge in ((width - source_width * scale) / 2, (height - source_height * scale) / 2)
+        )
         content = (max(0.0, left), max(0.0, top), min(float(width), width - left), min(float(height), height - top))
         crop = tuple(
             min(float(limit), max(0.0, (edge - offset) / scale))

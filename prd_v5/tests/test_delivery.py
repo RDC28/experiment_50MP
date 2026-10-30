@@ -61,6 +61,31 @@ def test_full_quality_fixture_outputs_registry_and_decodable_adc(tmp_path, adc_b
     assert report["stages"]["raster"]["method"].startswith("Lanczos-3")
     assert report["validation"]["acceptance"].startswith("conditional")
     assert np.asarray(Image.open(output / "uncertainty_map.png"))[0, 0] == 255
+    validation = json.loads((output / "validation.json").read_text())
+    assert validation["HDR validity"]["status"] == validation["Metadata coherence"]["status"] == "not measured"
+    assert registry["Checkpoint hashes"]["value"] is None
+    assert registry["Checkpoint hashes"]["provenance"] == "UNSPECIFIED"
+
+
+def test_portrait_pitch_and_clean_electrons_match_adc(tmp_path):
+    from prd_v5.config import AnalyticRunConfig
+
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((40, 30, 3), 90, dtype=np.uint8)).save(source)
+    camera = CameraHypothesis(iso=400, shot_noise=False, read_noise=False)
+    output = tmp_path / "run"
+    report = AnalyticRunConfig(camera=camera, target_megapixels=0.0012, assume_unprofiled_srgb=True).run(
+        source, output
+    )
+    width, height = report["geometry"]["width"], report["geometry"]["height"]
+    assert height > width
+    registry = json.loads((output / "field_registry.json").read_text())
+    assert registry["Pixel pitch"]["value"] == pytest.approx(35900 / height)
+    assert registry["Sensor physical size"]["value"] == pytest.approx([35.9 * width / height, 35.9])
+    electron_per_dn = camera.conversion_gain_e_per_dn / camera.analogue_gain
+    np.testing.assert_allclose(
+        np.load(output / "clean_bayer.npy"), np.load(output / "noisy_bayer.npy"), atol=electron_per_dn / 2 + 1e-3
+    )
 
 
 @pytest.mark.parametrize("seed", [0, 42, 100])

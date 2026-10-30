@@ -140,16 +140,15 @@ def test_pair_rejects_invalid_crop_before_source_io(tmp_path, region):
     assert not output.exists()
 
 
-def test_out_of_bounds_crop_prevents_pair_completion(tmp_path):
+@pytest.mark.parametrize("region", [(0, 0, 33, 32), (0, 0, 32, 33)])
+def test_out_of_bounds_crop_fails_before_any_run(tmp_path, region):
     source = tmp_path / "source.png"
     Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
     output = tmp_path / "pair"
     config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
     with pytest.raises(ValueError, match="exceeds"):
-        run_analytic_pair(source, source, output, config, comparison_region=(0, 0, 33, 32))
-    assert (output / "2k/manifest.json").exists()
-    assert (output / "4k/manifest.json").exists()
-    assert not (output / "pair_manifest.json").exists()
+        run_analytic_pair(source, source, output, config, comparison_region=region)
+    assert not output.exists()
 
 
 def test_pair_executes_shared_vignetting_before_independent_roundtrip(tmp_path):

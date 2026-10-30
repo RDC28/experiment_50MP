@@ -8,7 +8,7 @@ import pytest
 from prd_v5.analytic import AnalyticISP
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraHypothesis
-from prd_v5.raster import rasterize
+from prd_v5.raster import rasterize, rasterize_lanczos
 from prd_v5.sensor import BayerSensor
 
 
@@ -62,18 +62,36 @@ def test_pixel_centers_and_margin_mask(tmp_path):
     assert mask[1:3].all()
 
 
-def test_outpaint_and_invalid_buffers_rejected_before_write(tmp_path):
+@pytest.mark.parametrize("raster", [rasterize, rasterize_lanczos])
+def test_outpaint_and_invalid_buffers_rejected_before_write(tmp_path, raster):
     plan = GeometryPlanner().plan(2, 2, target_megapixels=16 / 1e6)
     source = np.zeros((2, 2, 3), dtype=np.float32)
     rgb, mask = buffers(tmp_path, plan)
     rgb[:] = 0.75
     with pytest.raises(ValueError, match="Outpainting"):
-        rasterize(source, rgb, mask, replace(plan, generated_bands=((0, 0, 4, 1),)))
+        raster(source, rgb, mask, replace(plan, generated_bands=((0, 0, 4, 1),)))
+    with pytest.raises(ValueError, match="matching the geometry plan"):
+        raster(np.zeros((3, 2, 3), dtype=np.float32), rgb, mask, plan)
     assert np.all(rgb == 0.75)
     with pytest.raises(ValueError, match="disk-backed"):
-        rasterize(source, np.zeros(rgb.shape, dtype=np.float32), mask, plan)
+        raster(source, np.zeros(rgb.shape, dtype=np.float32), mask, plan)
     with pytest.raises(ValueError, match="separate"):
-        rasterize(rgb, rgb, mask, replace(plan, source_size=(4, 4)))
+        raster(rgb, rgb, mask, replace(plan, source_size=(4, 4)))
+
+
+def test_lanczos_crop_follows_bilinear_geometry(tmp_path):
+    plan = GeometryPlanner().plan(50, 20, target_megapixels=0.0004)
+    x, y = plan.default_crop_origin
+    width, height = plan.default_crop_size
+    assert width < plan.content_box[2] - plan.content_box[0]
+    source = np.broadcast_to(np.linspace(0, 1, 50, dtype=np.float32)[None, :, None], (20, 50, 3)).copy()
+    outputs = []
+    for index, raster in enumerate((rasterize, rasterize_lanczos)):
+        (tmp_path / str(index)).mkdir()
+        rgb, mask = buffers(tmp_path / str(index), plan)
+        raster(source, rgb, mask, plan)
+        outputs.append(rgb[y : y + height, x : x + width].copy())
+    np.testing.assert_allclose(outputs[1], outputs[0], atol=1e-3)
 
 
 @pytest.mark.parametrize("value", [np.nan, np.inf, -0.1, 1.1])

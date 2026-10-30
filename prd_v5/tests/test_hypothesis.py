@@ -58,6 +58,12 @@ def test_registry_is_json_serializable_honest_and_detached():
     registry["iso"]["value"] = 32000
     assert camera.registry()["iso"]["value"] == camera.iso == 100
     assert registry["noise_profile"]["provenance"] == "DERIVED"
+    assert registry["full_well_e"]["provenance"] == registry["read_noise_e"]["provenance"] == "PRIOR_SAMPLED"
+    assert registry["iso"]["provenance"] == "SYNTHETIC"
+    explicit = replace(camera, full_well_e=50000.0).registry()
+    assert explicit["full_well_e"]["provenance"] == "SYNTHETIC"
+    assert explicit["read_noise_e"]["provenance"] == "PRIOR_SAMPLED"
+    assert CameraHypothesis().registry()["full_well_e"]["provenance"] == "SYNTHETIC"
 
 
 @pytest.mark.parametrize(

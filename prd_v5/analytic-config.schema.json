@@ -210,7 +210,7 @@
         "hdr_max_radiance": {
           "type": "number",
           "minimum": 1,
-          "maximum": 65536
+          "maximum": 32
         }
       }
     },

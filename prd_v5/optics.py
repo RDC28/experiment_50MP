@@ -87,6 +87,7 @@ class Distortion:
     Output pixel centers map to source coordinates with x/y normalized by half
     the sensor diagonal. Positive k1 samples farther outward (barrel appearance).
     Bilinear interpolation uses edge extension outside the source footprint.
+    Radial maps that fold before the corners are rejected.
     """
 
     k1: float = 0.0
@@ -98,6 +99,10 @@ class Distortion:
         for name, value in asdict(self).items():
             if type(value) not in (int, float) or not np.isfinite(value) or abs(value) > 0.25:
                 raise ValueError(f"{name} must be finite in [-0.25, 0.25]")
+        # d/dr of r * (1 + k1 r^2 + k2 r^4) with u = r^2 over the normalized radius [0, 1].
+        knots = [1.0] + ([-0.3 * self.k1 / self.k2] if self.k2 > 0 else [])
+        if min(1 + 3 * self.k1 * u + 5 * self.k2 * u * u for u in knots if 0 <= u <= 1) <= 0:
+            raise ValueError("Radial distortion must stay monotonic out to the sensor corners")
 
     def process(self, source, destination, *, strip_rows=64, accept_experimental=False):
         """Warp clean RGB before CFA with row-bounded gathers and float32 storage.

@@ -83,8 +83,14 @@ def resolve_mode(mode, adapter, camera) -> dict:
     }
 
 
-def apply_residual(rgb, clean, camera, adapter, *, mode="HYBRID", tile=1024, threshold=0.5) -> dict:
-    """Modify disk-backed clean expectation in bounded tiles before CFA/noise."""
+def apply_residual(
+    rgb, clean, support, destination, camera, adapter, *, mode="HYBRID", tile=1024, threshold=0.5
+) -> dict:
+    """Write corrected clean expectation in bounded tiles before CFA/noise.
+
+    Predictors always read the unmodified clean baseline. Corrections apply only
+    to supported source pixels; sensor margins are copied unchanged.
+    """
     report = resolve_mode(mode, adapter, camera)
     if type(tile) is not int or tile < 1 or not np.isfinite(threshold) or not 0 <= threshold <= 1:
         raise ValueError("Invalid residual tile or confidence threshold")
@@ -92,6 +98,14 @@ def apply_residual(rgb, clean, camera, adapter, *, mode="HYBRID", tile=1024, thr
         return report
     if rgb.shape != clean.shape or clean.ndim != 3 or clean.shape[-1] != 3:
         raise ValueError("Residual inputs must be matching HxWx3 arrays")
+    if support.shape != clean.shape[:2] or support.dtype != np.bool_:
+        raise ValueError("Residual support must be a boolean HxW mask")
+    if (
+        destination.shape != clean.shape
+        or np.may_share_memory(destination, clean)
+        or (isinstance(clean, np.memmap) and getattr(destination, "filename", None) == clean.filename)
+    ):
+        raise ValueError("Residual destination must be a separate HxWx3 buffer")
     accepted = changed = floored = 0
     for top in range(0, clean.shape[0], tile):
         for left in range(0, clean.shape[1], tile):
@@ -108,7 +122,7 @@ def apply_residual(rgb, clean, camera, adapter, *, mode="HYBRID", tile=1024, thr
                 raise ValueError("Nonfinite residual/confidence")
             if np.any(confidence < 0) or np.any(confidence > 1):
                 raise ValueError("Confidence must be in [0,1]")
-            gate = confidence >= threshold
+            gate = (confidence >= threshold) & support[region]
             corrected = baseline.astype(np.float64) + np.where(gate[..., None], residual * confidence[..., None], 0)
             if not np.isfinite(corrected).all() or np.any(corrected > np.finfo(np.float32).max):
                 raise ValueError("Residual exceeds clean float32 range")
@@ -116,8 +130,8 @@ def apply_residual(rgb, clean, camera, adapter, *, mode="HYBRID", tile=1024, thr
             corrected = np.maximum(corrected, 0).astype(np.float32)
             changed += int(np.count_nonzero(corrected != baseline))
             accepted += int(np.count_nonzero(gate))
-            clean[region] = corrected
-    clean.flush()
+            destination[region] = corrected
+    destination.flush()
     return {
         **report,
         "status": "executed experimental residual",

@@ -2,6 +2,7 @@
 
 import json
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -55,21 +56,24 @@ def test_scene_ev_moves_joint_exposure():
     assert ev(bright) > ev(dark) + 10
 
 
-def test_selected_iso_changes_actual_adc(tmp_path):
-    base = CameraHypothesis(shot_noise=False, read_noise=False)
+def test_selected_iso_trades_exposure_for_gain(tmp_path):
+    base = CameraHypothesis()
     camera, _, _ = resolve_exposure(base, scene_ev100=-8)
-    assert camera.iso > base.iso
-    source = np.full((4, 4, 3), 0.001, dtype=np.float32)
-    outputs = []
-    for index, hypothesis in enumerate((base, camera)):
-        dest = np.memmap(tmp_path / str(index), mode="w+", shape=(4, 4), dtype=np.uint16)
+    assert camera.iso > base.iso and camera.analogue_gain > base.analogue_gain
+
+    def codes(hypothesis, signal, shape):
+        dest = np.memmap(tmp_path / "codes", mode="w+", shape=shape, dtype=np.uint16)
         try:
-            BayerSensor(hypothesis).process(source, dest)
-            outputs.append(dest.copy())
+            BayerSensor(hypothesis).process(np.full((*shape, 3), signal, dtype=np.float32), dest)
+            return dest.astype(np.float64) - hypothesis.black_level
         finally:
             dest._mmap.close()
-    assert np.all(outputs[1] > outputs[0])
-    assert camera.analogue_gain > base.analogue_gain
+
+    quiet = [replace(h, shot_noise=False, read_noise=False) for h in (base, camera)]
+    np.testing.assert_array_equal(codes(quiet[0], 0.2, (4, 4)), codes(quiet[1], 0.2, (4, 4)))
+    low, high = (codes(h, 0.2, (128, 128)) for h in (base, camera))
+    assert high.mean() == pytest.approx(low.mean(), rel=0.01)
+    assert high.mean() / high.std() < 0.5 * low.mean() / low.std()
 
 
 def test_exposure_selection_survives_real_dng_tiff_bundle(tmp_path):

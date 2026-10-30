@@ -49,7 +49,7 @@ def test_gain_and_clipping(tmp_path):
     source = np.broadcast_to(np.array([0, 0.25, 2])[:, None, None], (3, 4, 3)).astype(float)
     dest = output(tmp_path, (3, 4))
     report = BayerSensor(CameraHypothesis(iso=200, shot_noise=False, read_noise=False)).process(source, dest)
-    np.testing.assert_array_equal(dest[:, 0], [512, round(512 + 0.5 * 15871), 16383])
+    np.testing.assert_array_equal(dest[:, 0], [512, round(512 + 0.25 * 15871), 16383])
     assert report["codes_clipped_high"] == 4
 
 

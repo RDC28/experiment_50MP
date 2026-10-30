@@ -85,7 +85,8 @@ class SensorEffects:
 class BayerSensor:
     """Apply one shared hypothesis to clean camera RGB at final sensor geometry.
 
-    Unity clean signal represents base-ISO full well. Shot noise precedes read
+    Unity clean signal represents ADC saturation: full well at base ISO and
+    full well / analogue gain above it. Shot noise precedes read
     noise, analogue gain, rounding and clipping. Optional body effects are synthetic priors, not camera calibration.
     No optical effects are implied. CFA origin is the top-left of the supplied
     full sensor array; crops must be taken after this stage.
@@ -163,7 +164,7 @@ class BayerSensor:
                 mosaic = np.empty(source.shape[1], dtype=np.float64)
                 for parity in (0, 1):
                     mosaic[parity::2] = row[parity::2, tile[y % 2, parity]]
-                electrons = mosaic * camera.full_well_e
+                electrons = mosaic * camera.full_well_e / camera.analogue_gain
                 if not np.isfinite(electrons).all() or np.any(electrons > 1e15):
                     raise ValueError("electron expectation exceeds supported numerical range")
                 if effects.prnu_sigma:
@@ -242,8 +243,8 @@ class BayerSensor:
                 "body_seed": camera.stream_seed("sensor_body"),
                 "order": "CFA, PRNU, defects and dark expectations, shot, charge compression, read, DSNU/FPN, ADC",
                 "noise_profile_limit": (
-                    "DNG NoiseProfile describes baseline temporal noise only; "
-                    "excludes body maps, dark current and nonlinear charge response"
+                    "DNG NoiseProfile and LinearResponseLimit describe the linear baseline only; "
+                    "they exclude body maps, dark current and nonlinear charge compression"
                 ),
                 "validation": "Experimental uncalibrated priors; dead sites retain read/offset electronics",
             },

@@ -159,10 +159,16 @@ def run_analytic(
                 stages["raster"]["learned_super_resolution"] = sr_checkpoint.backend
             clean = allocate("clean", np.float32, (*shape, 3))
             stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows)
-            stages["learned_raw"] = apply_residual(rgb, clean, camera, residual_adapter, mode=inverse_mode)
+            learned = None if residual_adapter is None else allocate("learned", np.float32, (*shape, 3))
+            stages["learned_raw"] = apply_residual(
+                rgb, clean, support, learned, camera, residual_adapter, mode=inverse_mode
+            )
             optical = allocate("optical", np.float32, (*shape, 3))
             stages["optics"] = vignetting.process(
-                clean, optical, strip_rows=strip_rows, accept_experimental=accept_experimental_optics
+                clean if learned is None else learned,
+                optical,
+                strip_rows=strip_rows,
+                accept_experimental=accept_experimental_optics,
             )
             sensor_rgb = optical
             if any(asdict(distortion).values()):
@@ -186,7 +192,7 @@ def run_analytic(
                 sensor_rgb,
                 final_optical,
                 aperture=camera.aperture,
-                pixel_pitch_um=35900 / geometry.width,
+                pixel_pitch_um=35900 / max(geometry.width, geometry.height),
                 strip_rows=strip_rows,
             )
             adc = allocate("adc", np.uint16, shape)
