@@ -273,3 +273,24 @@ Validation: 19 focused roundtrip fixtures pass, including actual DNG colour-rati
 response, source immutability, output precision, overwrite protection, memory
 limits, invalid controls and failure cleanup. V5 lint, changed Python formatting
 and diff whitespace checks pass.
+
+### Automatic WB sweep integration
+
+The maximum preset and notebook now request sequential cool/neutral/warm edits
+for both generated DNGs. Strict `wb_sweep` and bounded `wb_sweep_strength`
+configuration serialize for replay; notebook `ENABLE_WB_SWEEP=True` and
+`WB_SWEEP_STRENGTH=1.25` expose them. The actual ISP BaselineExposure and existing
+LibRaw memory admission apply. Disabled runs record that state explicitly, and
+a sweep failure prevents a completion manifest.
+
+Child manifests, pair summaries and JSON/HTML RAW editability evidence retain
+the measured WB response; nested TIFFs receive byte counts and SHA-256 hashes.
+Allow an additional 1.8 GB disk for the pair. Relative gains are not calibrated
+Kelvin, illuminant truth or physical latitude; RAW editability stays not measured.
+Highlight/shadow/demosaic sweeps and full-size visual Colab acceptance remain
+pending. No model, weights or notebook was executed locally.
+
+Validation: 122 focused pipeline, configuration/schema, notebook-static, delivery,
+pair and roundtrip fixtures passed. After formatting the README and notebook,
+all four notebook-static fixtures passed again. V5 lint, formatting and diff
+whitespace checks pass. No background service, commit or push was started.

@@ -209,6 +209,7 @@ def finish_bundle(output, report):
         },
     }
     validation["RAW editability"]["exposure_sweep"] = report["stages"]["exposure_sweep"]
+    validation["RAW editability"]["wb_sweep"] = report["stages"]["wb_sweep"]
     validation["Noise validity"] = photon_transfer(CameraHypothesis(**report["camera"]))
     (output / "validation.json").write_text(json.dumps(validation, indent=2) + "\n")
     report["validation"] = validation

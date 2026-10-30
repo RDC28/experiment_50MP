@@ -106,6 +106,16 @@
     "exposure_sweep": {
       "type": "boolean",
       "default": false
+    },
+    "wb_sweep": {
+      "type": "boolean",
+      "default": false
+    },
+    "wb_sweep_strength": {
+      "type": "number",
+      "minimum": 1.000001,
+      "maximum": 4,
+      "default": 1.25
     }
   },
   "$defs": {

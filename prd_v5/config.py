@@ -42,10 +42,20 @@ class AnalyticRunConfig:
     distortion: Distortion = field(default_factory=Distortion)
     accept_experimental_optics: bool = False
     exposure_sweep: bool = False
+    wb_sweep: bool = False
+    wb_sweep_strength: float = 1.25
 
     def __post_init__(self):
         if type(self.exposure_sweep) is not bool:
             raise ValueError("exposure_sweep must be boolean")
+        if type(self.wb_sweep) is not bool:
+            raise ValueError("wb_sweep must be boolean")
+        if (
+            type(self.wb_sweep_strength) not in (int, float)
+            or not math.isfinite(self.wb_sweep_strength)
+            or not 1.000001 <= self.wb_sweep_strength <= 4
+        ):
+            raise ValueError("wb_sweep_strength must be finite and between 1.000001 and 4")
         if self.resampling not in ("BILINEAR", "LANCZOS"):
             raise ValueError("resampling must be BILINEAR or LANCZOS")
         if not isinstance(self.optical_effects, OpticalEffects):
@@ -165,4 +175,6 @@ class AnalyticRunConfig:
             max_decode_bytes=self.max_decode_bytes,
             max_develop_bytes=self.max_develop_bytes,
             exposure_sweep=self.exposure_sweep,
+            wb_sweep=self.wb_sweep,
+            wb_sweep_strength=self.wb_sweep_strength,
         )

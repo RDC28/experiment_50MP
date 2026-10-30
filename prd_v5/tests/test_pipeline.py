@@ -49,6 +49,7 @@ def test_complete_bundle(tmp_path):
     assert "Runtime and replay limits" in page
     assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
     assert report["stages"]["exposure_sweep"]["status"] == "disabled"
+    assert report["stages"]["wb_sweep"]["status"] == "disabled"
     assert not (output / "exposure_edits").exists()
     assert report["stages"]["analytic"]["forward_consistency"]["status"] == "passed"
     assert report["registry"]["gps"]["value"] is None
@@ -291,6 +292,8 @@ def test_config_runs_exposure_edits_and_hashes_nested_outputs(tmp_path):
         target_megapixels=0.001024,
         assume_unprofiled_srgb=True,
         exposure_sweep=True,
+        wb_sweep=True,
+        wb_sweep_strength=1.5,
         isp=AnalyticISP(hdr_max_radiance=2),
     )
     output = tmp_path / "edits"
@@ -309,16 +312,29 @@ def test_config_runs_exposure_edits_and_hashes_nested_outputs(tmp_path):
     assert validation["RAW editability"]["exposure_sweep"] == sweep
     assert json.loads((output / "config.json").read_text())["exposure_sweep"] is True
     assert "exposure_edits/exposure_+3EV.tiff" in (output / "report.html").read_text()
+    wb = report["stages"]["wb_sweep"]
+    assert wb["status"] == "measured"
+    assert wb["strength"] == 1.5
+    assert wb["baseline_exposure_ev"] == config.isp.baseline_exposure_ev
+    assert [r["name"] for r in wb["renders"]] == ["cool", "neutral", "warm"]
+    assert validation["RAW editability"]["wb_sweep"] == wb
+    saved = json.loads((output / "config.json").read_text())
+    assert saved["wb_sweep"] is True and saved["wb_sweep_strength"] == 1.5
+    for name in ("cool", "neutral", "warm"):
+        path = f"wb_edits/wb_{name}.tiff"
+        assert report["artifacts"][path]["sha256"] == hashlib.sha256((output / path).read_bytes()).hexdigest()
+        assert path in (output / "report.html").read_text()
 
 
-def test_exposure_failure_prevents_completion(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stage", ["exposure", "wb"])
+def test_edit_failure_prevents_completion(tmp_path, monkeypatch, stage):
     source = tmp_path / "source.png"
     Image.fromarray(np.full((32, 32, 3), 80, dtype=np.uint8)).save(source)
 
     def fail(*args, **kwargs):
         raise OSError("fixture exposure failure")
 
-    monkeypatch.setattr("prd_v5.pipeline.develop_exposure_sweep", fail)
+    monkeypatch.setattr(f"prd_v5.pipeline.develop_{stage}_sweep", fail)
     output = tmp_path / "failed"
     with pytest.raises(OSError, match="exposure failure"):
         run_analytic(
@@ -327,7 +343,7 @@ def test_exposure_failure_prevents_completion(tmp_path, monkeypatch):
             CameraHypothesis(),
             target_megapixels=0.001024,
             assume_unprofiled_srgb=True,
-            exposure_sweep=True,
+            **{f"{stage}_sweep": True},
         )
     assert not (output / "manifest.json").exists()
     assert not list(output.glob("working-*"))

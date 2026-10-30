@@ -17,6 +17,7 @@ def full_quality_config():
     return AnalyticRunConfig(
         resampling="LANCZOS",
         exposure_sweep=True,
+        wb_sweep=True,
         target_megapixels=50,
         assume_unprofiled_srgb=True,
         max_decode_bytes=1024**3,

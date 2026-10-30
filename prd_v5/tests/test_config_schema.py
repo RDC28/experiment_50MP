@@ -44,6 +44,10 @@ def test_schema_covers_every_implemented_setting(schema):
     [
         {"unknown": 1},
         {"exposure_sweep": 1},
+        {"wb_sweep": 1},
+        {"wb_sweep_strength": True},
+        {"wb_sweep_strength": 1},
+        {"wb_sweep_strength": 4.1},
         {"distortion": {"k1": 0.26}},
         {"distortion": {"p1": True}},
         {"distortion": {"unknown": 0}},
