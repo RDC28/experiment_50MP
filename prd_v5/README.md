@@ -145,3 +145,25 @@ response in its manifest and RAW editability validation evidence. A failed sweep
 prevents completion. WB/highlight/shadow/demosaic sweeps and full-size visual
 review remain pending; RAW editability remains not measured. Test without models using
 `.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.
+
+For a separate relative white-balance edit sweep on Colab:
+
+```python
+from prd_v5.roundtrip import develop_wb_sweep
+wb_edits = develop_wb_sweep(
+    dng_path, output_directory / "wb_edits",
+    baseline_exposure_ev=baseline_exposure_ev,
+    strength=1.25,
+    max_working_bytes=8 * 1024**3,
+)
+```
+
+This sequentially exports cool/neutral/warm linear-light uint16 TIFFs. Neutral
+uses green-normalized camera WB; cool divides red and multiplies blue by
+`strength`, warm reverses those changes. LibRaw normalizes the gains, so relative
+channel ratios describe the change rather than absolute brightness scaling.
+These are relative developer settings, not calibrated Kelvin temperatures.
+The fresh destination is protected from overwrite and removed on failure.
+Allow another 1.8 GB disk for both 50 MP inputs. WB accuracy stays not measured;
+notebook/default/report integration and highlight/shadow/demosaic sweeps remain
+pending.

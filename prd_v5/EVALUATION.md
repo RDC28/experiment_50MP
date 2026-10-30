@@ -251,3 +251,25 @@ Validation for this integration: 110 focused pipeline, configuration/schema,
 notebook-static, delivery, pair and roundtrip fixtures passed; v5 lint, changed
 Python formatting and diff whitespace checks passed. No full suite, checkpoint
 download, notebook execution, commit, push or background service was started.
+
+### Generated-DNG WB sweep API
+
+`develop_wb_sweep` now exports sequential cool/neutral/warm linear-light uint16
+TIFFs from unchanged generated DNGs, using explicit user WB derived from camera
+multipliers. Strength defaults to 1.25: cool reduces red and increases blue;
+warm reverses those gains. Green remains the reference. A missing second-green
+multiplier uses the first green. LibRaw normalizes gains, so the fixture validates
+channel ratios rather than absolute code scaling. Disabling LibRaw pixel scaling
+also disables the intended WB response and is deliberately avoided.
+
+Memory admission occurs from the header before unpacking, a fresh directory is
+required, and failed exports remove only that directory. Reports retain exact
+gains, RGB means, clipping counts and paths. These edits establish developer
+response, not calibrated Kelvin/illuminant accuracy or physical latitude.
+Notebook/default/report integration remains deferred, as do highlight/shadow
+and demosaic sweeps. No model, weights or notebook was executed locally.
+
+Validation: 19 focused roundtrip fixtures pass, including actual DNG colour-ratio
+response, source immutability, output precision, overwrite protection, memory
+limits, invalid controls and failure cleanup. V5 lint, changed Python formatting
+and diff whitespace checks pass.

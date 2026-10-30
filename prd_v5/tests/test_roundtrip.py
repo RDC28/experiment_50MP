@@ -102,3 +102,67 @@ def test_sweep_invalid_baseline_fails_before_io(tmp_path, value):
     with pytest.raises(ValueError, match="baseline_exposure_ev"):
         develop_exposure_sweep(tmp_path / "absent", tmp_path / "edits", baseline_exposure_ev=value)
     assert not (tmp_path / "edits").exists()
+
+
+def test_wb_sweep_real_dng_relative_response(tmp_path):
+    from prd_v5.roundtrip import develop_wb_sweep
+
+    plan = GeometryPlanner().plan(64, 48, target_megapixels=0.003072)
+    source = tmp_path / "source.dng"
+    write_dng(source, np.full((48, 64), 2500, np.uint16), CameraHypothesis(), plan, AnalyticISP())
+    original = source.read_bytes()
+    report = develop_wb_sweep(source, tmp_path / "wb")
+    json.dumps(report, allow_nan=False)
+    cool, neutral, warm = report["renders"]
+    assert [entry["name"] for entry in report["renders"]] == ["cool", "neutral", "warm"]
+    assert cool["user_wb"][0] == pytest.approx(neutral["user_wb"][0] / 1.25)
+    assert warm["user_wb"][2] == pytest.approx(neutral["user_wb"][2] / 1.25)
+    for entry, red, blue in ((cool, 0.8, 1.25), (neutral, 1, 1), (warm, 1.25, 0.8)):
+        means = entry["mean_linear_rgb_code"]
+        assert means[0] / means[1] == pytest.approx(red, abs=0.001)
+        assert means[2] / means[1] == pytest.approx(blue, abs=0.001)
+    for entry in report["renders"]:
+        rgb = tifffile.imread(entry["path"])
+        assert rgb.shape == (48, 64, 3) and rgb.dtype == np.uint16
+    assert source.read_bytes() == original
+    assert report["white_balance_accuracy"] == "not measured"
+    with pytest.raises(FileExistsError):
+        develop_wb_sweep(source, tmp_path / "wb")
+    with pytest.raises(ValueError, match="memory budget"):
+        develop_wb_sweep(source, tmp_path / "budget", max_working_bytes=1)
+    assert not (tmp_path / "budget").exists()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"strength": 1},
+        {"strength": True},
+        {"strength": float("nan")},
+        {"baseline_exposure_ev": 17},
+        {"max_working_bytes": False},
+    ],
+)
+def test_wb_sweep_invalid_settings_before_io(tmp_path, kwargs):
+    from prd_v5.roundtrip import develop_wb_sweep
+
+    with pytest.raises(ValueError):
+        develop_wb_sweep(tmp_path / "absent", tmp_path / "wb", **kwargs)
+    assert not (tmp_path / "wb").exists()
+
+
+def test_wb_sweep_write_failure_cleanup(tmp_path, monkeypatch):
+    from prd_v5.roundtrip import develop_wb_sweep
+
+    plan = GeometryPlanner().plan(64, 48, target_megapixels=0.003072)
+    source = tmp_path / "source.dng"
+    write_dng(source, np.full((48, 64), 2500, np.uint16), CameraHypothesis(), plan, AnalyticISP())
+
+    def fail(*args, **kwargs):
+        raise OSError("fixture write failure")
+
+    monkeypatch.setattr(tifffile, "imwrite", fail)
+    with pytest.raises(OSError, match="fixture write failure"):
+        develop_wb_sweep(source, tmp_path / "wb")
+    assert not (tmp_path / "wb").exists()
+    assert source.is_file()
