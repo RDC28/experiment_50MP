@@ -685,5 +685,29 @@ SHA256 not published by metadata, so no digest is recorded). Missing reference o
 contract stays not measured; unequal rasters give no implicit registration. Perceptual
 distance to a reference is not recovered-detail truth. Fixtures use a stand-in
 distance and fake `lpips`/`torch` modules only to test tiling, contract and loader
-wiring; no LPIPS network ran. Pair report, notebook controls and `lpips` pip
-install in the Colab setup cell remain pending.
+wiring; no LPIPS network ran. The pair report, notebook controls and the `lpips`
+pip install in the Colab setup cell are wired (see below).
+
+### Adobe dng_validate on Colab: precise skip
+
+Metadata and source-layout inspection on 2026-10-30. The official
+[Adobe DNG page](https://www.adobe.com/support/downloads/dng/dng_sdk.html)
+redirects to a helpx page whose SDK link is script-rendered, so no link could be
+extracted from its static HTML. `https://download.adobe.com/pub/adobe/dng/dng_sdk_1_7_1.zip`
+returned HTTP 200, `application/zip`, 80,367,206 bytes, Last-Modified 2024-01-02
+(this is the conventional Adobe path, not a link verified on the page). The SDK
+archive is source code, not weights; its SHA-256 computed on this Mac is
+`5366d9abd0e623858573bfaf0291b5e352d704f51b322753a22f82af3ae6e0c2`. Adobe
+publishes no digest, so this value is a local observation of one fetch and not
+an upstream attestation. Its `DNG_ReadMe.txt` documents build projects only for
+macOS (Xcode 12.4 to 14.2) and Windows (Visual Studio 2022 with clang). The
+archive has no Linux makefile or top-level CMake project for `dng_validate`
+(only third-party libjxl/libjpeg builds), and bundles XMP SDK with boost, expat and
+zlib. A Colab Linux build would be a hand-written, untested build of about 80 MB
+of C++ and cannot be exercised on this Mac. Adobe SDK terms also apply.
+
+Disposition: **not built**. The notebook must not install or claim
+`dng_validate`; the generated DNG's conformance stays reported as "dng_validate
+not run" with the reason above, and independent LibRaw plus the registry-vs-DNG
+coherence check remain the available validators. A user may supply a prebuilt
+`dng_validate` path; none is assumed.
