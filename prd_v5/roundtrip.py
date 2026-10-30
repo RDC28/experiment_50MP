@@ -346,7 +346,7 @@ def develop_demosaic_sweep(
         "baseline_exposure_ev": baseline_exposure_ev,
         "working_bytes_estimate": estimate,
         "rawpy_version": rawpy.__version__,
-        "libraw_version": rawpy.libraw_version,
+        "libraw_version": list(rawpy.libraw_version),
         "renders": entries,
         "skipped": skipped,
         "detail_accuracy": "not measured",

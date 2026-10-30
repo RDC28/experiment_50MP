@@ -26,7 +26,7 @@ from prd_v5.optics import Distortion, Vignetting
 from prd_v5.raster import rasterize, rasterize_lanczos
 from prd_v5.registry import analytic_registry
 from prd_v5.report import render_report
-from prd_v5.roundtrip import develop_exposure_sweep, develop_roundtrip, develop_wb_sweep
+from prd_v5.roundtrip import develop_demosaic_sweep, develop_exposure_sweep, develop_roundtrip, develop_wb_sweep
 from prd_v5.runtime import runtime_record
 from prd_v5.sensor import BayerSensor, SensorEffects
 
@@ -45,6 +45,7 @@ def run_analytic(
     accept_experimental_optics: bool = False,
     exposure_sweep: bool = False,
     wb_sweep: bool = False,
+    demosaic_sweep: bool = False,
     wb_sweep_strength: float = 1.25,
     target_megapixels: float = 50.0,
     geometry_mode: str = "PRESERVE_SOURCE_ASPECT_50MP",
@@ -94,6 +95,7 @@ def run_analytic(
         accept_experimental_optics=accept_experimental_optics,
         exposure_sweep=exposure_sweep,
         wb_sweep=wb_sweep,
+        demosaic_sweep=demosaic_sweep,
         wb_sweep_strength=wb_sweep_strength,
         isp=isp,
         target_megapixels=target_megapixels,
@@ -236,6 +238,16 @@ def run_analytic(
                 )
                 if wb_sweep
                 else {"status": "disabled", "reason": "wb_sweep=False"}
+            )
+            stages["demosaic_sweep"] = (
+                develop_demosaic_sweep(
+                    output / "capture.dng",
+                    output / "demosaic_edits",
+                    baseline_exposure_ev=isp.baseline_exposure_ev,
+                    max_working_bytes=max_develop_bytes,
+                )
+                if demosaic_sweep
+                else {"status": "disabled", "reason": "demosaic_sweep=False"}
             )
             export_arrays(output, final_optical, adc, camera, strip_rows=strip_rows)
             # Export only after the independent image gate, without materializing

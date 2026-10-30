@@ -142,7 +142,7 @@ request these edits automatically via `exposure_sweep=True` and
 `ENABLE_EXPOSURE_SWEEP=True`. Conservative library defaults disable them. Each
 child bundle retains `exposure_edits/`, hashes all five TIFFs, and includes the
 response in its manifest and RAW editability validation evidence. A failed sweep
-prevents completion. Highlight/shadow/demosaic sweeps and full-size visual
+prevents completion. Highlight/shadow sweeps and full-size visual
 review remain pending; RAW editability remains not measured. Test without models using
 `.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.
 
@@ -167,7 +167,7 @@ channel ratios describe the change rather than absolute brightness scaling.
 These are relative developer settings, not calibrated Kelvin temperatures.
 The fresh destination is protected from overwrite and removed on failure.
 Allow another 1.8 GB disk for both 50 MP inputs. WB accuracy stays not measured;
-highlight/shadow/demosaic sweeps and full-size visual review remain pending.
+highlight/shadow sweeps and full-size visual review remain pending.
 The maximum preset enables `wb_sweep=True`; notebook `ENABLE_WB_SWEEP=True`
 and `WB_SWEEP_STRENGTH=1.25` expose the controls. Conservative library defaults
 disable the sweep. Both child bundles retain `wb_edits/`, per-TIFF hashes and
@@ -175,7 +175,7 @@ WB response in manifest, pair and JSON/HTML validation reports. A failed sweep
 prevents completion. The existing development memory budget admits each render;
 RAW editability remains not measured.
 
-Generated-DNG demosaic sweep API (Colab; automatic notebook integration pending):
+Generated-DNG demosaic sweep API (Colab; also invoked by the maximum notebook):
 
 ```python
 from prd_v5.roundtrip import develop_demosaic_sweep
@@ -196,3 +196,11 @@ clipping counts. Allow another 1.8 GB disk for two 50 MP inputs. Algorithm
 response does not prove detail accuracy or visual editability. Highlight/shadow
 sweeps and full-size visual review remain pending. Tiny fixtures:
 `.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.
+
+The maximum preset enables `demosaic_sweep=True`; notebook
+`ENABLE_DEMOSAIC_SWEEP=True` exposes the control. Conservative library defaults
+disable it. Both child bundles retain `demosaic_edits/`, per-TIFF SHA-256 and
+response evidence in child manifests, paired summaries and JSON/HTML validation.
+The ISP-derived BaselineExposure and existing development memory budget apply.
+Unavailable methods retain precise skips; a runtime failure prevents completion.
+RAW editability remains not measured pending visual acceptance and truth data.

@@ -107,6 +107,10 @@
       "type": "boolean",
       "default": false
     },
+    "demosaic_sweep": {
+      "type": "boolean",
+      "default": false
+    },
     "wb_sweep": {
       "type": "boolean",
       "default": false

@@ -81,6 +81,7 @@ def test_full_preset_values_are_executable_and_match_notebook():
     _, values = assignments()
     preset = full_quality_config()
     assert preset.exposure_sweep == values["ENABLE_EXPOSURE_SWEEP"] is True
+    assert preset.demosaic_sweep == values["ENABLE_DEMOSAIC_SWEEP"] is True
     assert preset.wb_sweep == values["ENABLE_WB_SWEEP"] is True
     assert preset.wb_sweep_strength == values["WB_SWEEP_STRENGTH"] == 1.25
     assert asdict(preset.sensor_effects) == values["SENSOR_VALUES"]

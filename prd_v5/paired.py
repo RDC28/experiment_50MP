@@ -79,6 +79,7 @@ def run_analytic_pair(
         runs[label] = {
             "exposure_sweep": child["stages"]["exposure_sweep"],
             "wb_sweep": child["stages"]["wb_sweep"],
+            "demosaic_sweep": child["stages"]["demosaic_sweep"],
             "learned_raw": child["stages"]["learned_raw"],
             "optics": child["stages"]["optics"],
             "distortion": child["stages"]["distortion"],

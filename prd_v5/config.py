@@ -43,11 +43,14 @@ class AnalyticRunConfig:
     accept_experimental_optics: bool = False
     exposure_sweep: bool = False
     wb_sweep: bool = False
+    demosaic_sweep: bool = False
     wb_sweep_strength: float = 1.25
 
     def __post_init__(self):
         if type(self.exposure_sweep) is not bool:
             raise ValueError("exposure_sweep must be boolean")
+        if type(self.demosaic_sweep) is not bool:
+            raise ValueError("demosaic_sweep must be boolean")
         if type(self.wb_sweep) is not bool:
             raise ValueError("wb_sweep must be boolean")
         if (
@@ -176,5 +179,6 @@ class AnalyticRunConfig:
             max_develop_bytes=self.max_develop_bytes,
             exposure_sweep=self.exposure_sweep,
             wb_sweep=self.wb_sweep,
+            demosaic_sweep=self.demosaic_sweep,
             wb_sweep_strength=self.wb_sweep_strength,
         )

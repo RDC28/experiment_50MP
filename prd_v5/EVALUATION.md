@@ -313,3 +313,26 @@ accuracy or visual editability acceptance. Automatic maximum preset/notebook
 and bundle-report integration remains deferred, along with highlight/shadow
 sweeps and full-size Colab visual acceptance. No model, weights or notebook was
 executed locally.
+
+### Automatic demosaic sweep integration
+
+The maximum preset and notebook now request sequential LINEAR/VNG/AHD edits
+for both generated DNGs. Strict boolean `demosaic_sweep` configuration serializes
+for replay; notebook `ENABLE_DEMOSAIC_SWEEP=True` exposes the control. Each sweep
+uses the actual ISP BaselineExposure and existing LibRaw memory admission.
+Disabled runs record that state; unavailable methods retain explicit reasons,
+and runtime failures prevent a completion manifest.
+
+Child manifests, paired summaries and JSON/HTML RAW editability evidence retain
+algorithm response and library versions; nested TIFFs receive byte counts and
+SHA-256 hashes. Allow another 1.8 GB disk for the pair. Developer response does
+not establish detail accuracy or physical latitude; RAW editability remains not
+measured. Highlight/shadow sweeps and full-size Colab visual acceptance remain
+pending. No model, weights or notebook was executed locally.
+
+Validation: 105 focused pipeline, configuration/schema, notebook-static, paired,
+roundtrip and delivery fixtures passed. V5 lint, formatting and diff whitespace
+checks pass. Integration fixtures cover real DNG edits, replay, nested hashes,
+paired propagation, disabled/unavailable states and failure completion policy.
+LibRaw's version tuple is normalized to a JSON list in sweep evidence so saved
+and in-memory reports agree. No background service, commit or push was started.
