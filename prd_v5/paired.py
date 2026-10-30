@@ -77,6 +77,7 @@ def run_analytic_pair(
         )
         manifest = output / label / "manifest.json"
         runs[label] = {
+            "exposure_sweep": child["stages"]["exposure_sweep"],
             "learned_raw": child["stages"]["learned_raw"],
             "optics": child["stages"]["optics"],
             "distortion": child["stages"]["distortion"],

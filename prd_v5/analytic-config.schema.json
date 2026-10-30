@@ -102,6 +102,10 @@
         "BILINEAR",
         "LANCZOS"
       ]
+    },
+    "exposure_sweep": {
+      "type": "boolean",
+      "default": false
     }
   },
   "$defs": {

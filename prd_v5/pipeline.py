@@ -26,7 +26,7 @@ from prd_v5.optics import Distortion, Vignetting
 from prd_v5.raster import rasterize, rasterize_lanczos
 from prd_v5.registry import analytic_registry
 from prd_v5.report import render_report
-from prd_v5.roundtrip import develop_roundtrip
+from prd_v5.roundtrip import develop_exposure_sweep, develop_roundtrip
 from prd_v5.runtime import runtime_record
 from prd_v5.sensor import BayerSensor, SensorEffects
 
@@ -43,6 +43,7 @@ def run_analytic(
     vignetting: Vignetting | None = None,
     distortion: Distortion | None = None,
     accept_experimental_optics: bool = False,
+    exposure_sweep: bool = False,
     target_megapixels: float = 50.0,
     geometry_mode: str = "PRESERVE_SOURCE_ASPECT_50MP",
     native_fit_policy: str = "LETTERBOX_SENSOR_MARGIN",
@@ -89,6 +90,7 @@ def run_analytic(
         vignetting=vignetting,
         distortion=distortion,
         accept_experimental_optics=accept_experimental_optics,
+        exposure_sweep=exposure_sweep,
         isp=isp,
         target_megapixels=target_megapixels,
         geometry_mode=geometry_mode,
@@ -209,6 +211,16 @@ def run_analytic(
                 geometry,
                 isp,
                 max_working_bytes=max_develop_bytes,
+            )
+            stages["exposure_sweep"] = (
+                develop_exposure_sweep(
+                    output / "capture.dng",
+                    output / "exposure_edits",
+                    baseline_exposure_ev=isp.baseline_exposure_ev,
+                    max_working_bytes=max_develop_bytes,
+                )
+                if exposure_sweep
+                else {"status": "disabled", "reason": "exposure_sweep=False"}
             )
             export_arrays(output, final_optical, adc, camera, strip_rows=strip_rows)
             # Export only after the independent image gate, without materializing

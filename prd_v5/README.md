@@ -137,7 +137,11 @@ The JSON-safe return value records brightness multipliers, mean code and
 zero/saturation counts. These are developer response measurements, not recovered
 highlight truth or physical dynamic range. Files have linear transfer, unlike
 the ordinary sRGB-transfer `developed.tiff`. Allow approximately 1.5 GB extra
-storage per 50 MP capture. The reusable API is fixture-tested; automatic notebook
-and bundle integration, WB/highlight/shadow/demosaic sweeps and full-size visual
-review remain pending. Test without models using
+storage per 50 MP capture (3 GB for the pair). The maximum preset and notebook
+request these edits automatically via `exposure_sweep=True` and
+`ENABLE_EXPOSURE_SWEEP=True`. Conservative library defaults disable them. Each
+child bundle retains `exposure_edits/`, hashes all five TIFFs, and includes the
+response in its manifest and RAW editability validation evidence. A failed sweep
+prevents completion. WB/highlight/shadow/demosaic sweeps and full-size visual
+review remain pending; RAW editability remains not measured. Test without models using
 `.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.

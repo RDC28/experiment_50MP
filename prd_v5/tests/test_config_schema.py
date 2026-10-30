@@ -43,6 +43,7 @@ def test_schema_covers_every_implemented_setting(schema):
     "value",
     [
         {"unknown": 1},
+        {"exposure_sweep": 1},
         {"distortion": {"k1": 0.26}},
         {"distortion": {"p1": True}},
         {"distortion": {"unknown": 0}},

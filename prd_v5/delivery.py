@@ -208,6 +208,7 @@ def finish_bundle(output, report):
             "noisy_bayer.npy": "ADC-referred electrons including clipping and quantisation",
         },
     }
+    validation["RAW editability"]["exposure_sweep"] = report["stages"]["exposure_sweep"]
     validation["Noise validity"] = photon_transfer(CameraHypothesis(**report["camera"]))
     (output / "validation.json").write_text(json.dumps(validation, indent=2) + "\n")
     report["validation"] = validation
@@ -218,9 +219,12 @@ def finish_bundle(output, report):
         "Colab full-scale runtime and quality gates",
         "Independent Adobe DNG conformance",
     ]
-    for path in sorted(output.iterdir()):
+    for path in sorted(output.rglob("*")):
         if path.is_file() and path.name not in ("manifest.json", "report.html", "validation_report.html"):
-            report["artifacts"][path.name] = {"sha256": digest(path), "size_bytes": path.stat().st_size}
+            report["artifacts"][path.relative_to(output).as_posix()] = {
+                "sha256": digest(path),
+                "size_bytes": path.stat().st_size,
+            }
     return report
 
 

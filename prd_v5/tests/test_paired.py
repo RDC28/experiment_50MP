@@ -24,6 +24,7 @@ def test_pair_uses_shared_hypotheses_and_links_completed_bundles(tmp_path):
         target_megapixels=0.001024,
         assume_unprofiled_srgb=True,
         strip_rows=3,
+        exposure_sweep=True,
     )
     output = tmp_path / "pair"
     report = run_analytic_pair(low, high, output, config, camera_selections=selections)
@@ -47,6 +48,8 @@ def test_pair_uses_shared_hypotheses_and_links_completed_bundles(tmp_path):
         manifest = output / run["manifest"]
         assert run["manifest_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
         child = json.loads(manifest.read_text())
+        assert run["exposure_sweep"] == child["stages"]["exposure_sweep"]
+        assert len(run["exposure_sweep"]["renders"]) == 5
         assert child["camera"] == report["shared_camera"]
         assert child["registry"]["iso"]["mode"] == "USER"
         assert child["registry"]["iso"]["provenance"] == "USER_SET"

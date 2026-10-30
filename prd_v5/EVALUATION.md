@@ -228,3 +228,26 @@ existing-directory protection, invalid settings and partial-write cleanup.
 Automatic bundle/notebook invocation and WB/highlight/shadow/demosaic sweeps
 remain deferred. Full 50 MP execution and visual edit acceptance require Colab;
 no model, checkpoint download or notebook execution occurred locally.
+
+### Automatic exposure sweep integration
+
+The maximum preset and notebook now request sequential -3/-2/0/+2/+3 EV
+exports for both generated DNGs. `AnalyticRunConfig.exposure_sweep` is a strict
+boolean with a conservative false library default; notebook
+`ENABLE_EXPOSURE_SWEEP` defaults true. Execution uses the actual ISP-derived
+BaselineExposure and existing development memory budget. Disabled runs record
+that state explicitly. A failed sweep prevents a completion manifest.
+
+Child manifests, pair summaries and JSON/HTML validation retain the measured
+developer response; nested edit TIFFs have per-artifact SHA-256 and byte counts.
+Allow an additional 3 GB disk for both 50 MP sweeps. The RAW editability gate
+stays not measured: WB/highlight/shadow/demosaic sweeps, visual acceptance and
+full-size Colab execution remain pending, and brightness edits cannot establish
+physical latitude or recovered highlight truth. Tiny real DNG pipeline fixtures
+verify replay settings, baseline scaling, exported hashes, pair propagation,
+disabled state and failure completion policy. No model or notebook was executed.
+
+Validation for this integration: 110 focused pipeline, configuration/schema,
+notebook-static, delivery, pair and roundtrip fixtures passed; v5 lint, changed
+Python formatting and diff whitespace checks passed. No full suite, checkpoint
+download, notebook execution, commit, push or background service was started.

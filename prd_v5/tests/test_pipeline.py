@@ -48,6 +48,8 @@ def test_complete_bundle(tmp_path):
     assert report["runtime"]["libraries"]["libraw"] in page
     assert "Runtime and replay limits" in page
     assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+    assert report["stages"]["exposure_sweep"]["status"] == "disabled"
+    assert not (output / "exposure_edits").exists()
     assert report["stages"]["analytic"]["forward_consistency"]["status"] == "passed"
     assert report["registry"]["gps"]["value"] is None
     registry = report["registry"]
@@ -277,3 +279,55 @@ def test_bundle_defect_mask_matches_seeded_sensor_and_replay(tmp_path, hot_fract
     path = tmp_path / "first/sensor_defects.npy"
     assert first["artifacts"][path.name]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert "sensor_defects.npy" in (tmp_path / "first/report.html").read_text()
+
+
+def test_config_runs_exposure_edits_and_hashes_nested_outputs(tmp_path):
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.config import AnalyticRunConfig
+
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((32, 32, 3), 80, dtype=np.uint8)).save(source)
+    config = AnalyticRunConfig(
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+        exposure_sweep=True,
+        isp=AnalyticISP(hdr_max_radiance=2),
+    )
+    output = tmp_path / "edits"
+    report = config.run(source, output)
+    sweep = report["stages"]["exposure_sweep"]
+    assert sweep["status"] == "measured"
+    assert sweep["baseline_exposure_ev"] == config.isp.baseline_exposure_ev
+    assert [r["brightness_multiplier"] for r in sweep["renders"]] == [
+        2 ** (config.isp.baseline_exposure_ev + ev) for ev in (-3, -2, 0, 2, 3)
+    ]
+    for ev in (-3, -2, 0, 2, 3):
+        name = f"exposure_edits/exposure_{ev:+d}EV.tiff"
+        assert report["artifacts"][name]["sha256"] == hashlib.sha256((output / name).read_bytes()).hexdigest()
+    validation = json.loads((output / "validation.json").read_text())
+    assert validation["RAW editability"]["status"] == "not measured"
+    assert validation["RAW editability"]["exposure_sweep"] == sweep
+    assert json.loads((output / "config.json").read_text())["exposure_sweep"] is True
+    assert "exposure_edits/exposure_+3EV.tiff" in (output / "report.html").read_text()
+
+
+def test_exposure_failure_prevents_completion(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((32, 32, 3), 80, dtype=np.uint8)).save(source)
+
+    def fail(*args, **kwargs):
+        raise OSError("fixture exposure failure")
+
+    monkeypatch.setattr("prd_v5.pipeline.develop_exposure_sweep", fail)
+    output = tmp_path / "failed"
+    with pytest.raises(OSError, match="exposure failure"):
+        run_analytic(
+            source,
+            output,
+            CameraHypothesis(),
+            target_megapixels=0.001024,
+            assume_unprofiled_srgb=True,
+            exposure_sweep=True,
+        )
+    assert not (output / "manifest.json").exists()
+    assert not list(output.glob("working-*"))

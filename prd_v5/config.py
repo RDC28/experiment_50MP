@@ -41,8 +41,11 @@ class AnalyticRunConfig:
     vignetting: Vignetting = field(default_factory=Vignetting)
     distortion: Distortion = field(default_factory=Distortion)
     accept_experimental_optics: bool = False
+    exposure_sweep: bool = False
 
     def __post_init__(self):
+        if type(self.exposure_sweep) is not bool:
+            raise ValueError("exposure_sweep must be boolean")
         if self.resampling not in ("BILINEAR", "LANCZOS"):
             raise ValueError("resampling must be BILINEAR or LANCZOS")
         if not isinstance(self.optical_effects, OpticalEffects):
@@ -161,4 +164,5 @@ class AnalyticRunConfig:
             strip_rows=self.strip_rows,
             max_decode_bytes=self.max_decode_bytes,
             max_develop_bytes=self.max_develop_bytes,
+            exposure_sweep=self.exposure_sweep,
         )
