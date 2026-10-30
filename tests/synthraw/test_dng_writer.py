@@ -18,6 +18,7 @@ from synthraw.libraw_validator import LibRawValidator
 def fixture_data():
     geometry = replace(
         TargetGeometryPlanner().plan(64, 48),
+        outpaint_bands=(),  # The bare test sensor has no planned outpaint bands.
         width=64,
         height=48,
         active_area=(0, 0, 48, 64),
@@ -83,6 +84,7 @@ def test_readback_detects_corrupted_pixels(tmp_path, fixture_data):
 def _geometry(width, height):
     return replace(
         TargetGeometryPlanner().plan(width, height),
+        outpaint_bands=(),  # The bare test sensor has no planned outpaint bands.
         width=width,
         height=height,
         active_area=(0, 0, height, width),

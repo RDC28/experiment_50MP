@@ -28,13 +28,14 @@ def plan(mode, *, portrait=False):
 
 @pytest.mark.parametrize("mode", ["crop", "outpaint", "margins"])
 @pytest.mark.parametrize("portrait", [False, True])
-def test_canvas_preserves_content_and_labels_only_invented_bands(tmp_path, mode, portrait):
+@pytest.mark.parametrize("learned", [False, True])
+def test_canvas_preserves_content_and_labels_only_invented_bands(tmp_path, mode, portrait, learned):
     geometry = plan(mode, portrait=portrait)
     left, top, right, bottom = map(round, geometry.content_box)
     content = np.linspace(0.1, 0.9, (bottom - top) * (right - left) * 3, dtype=np.float32).reshape(
         bottom - top, right - left, 3
     )
-    result = place_sensor_canvas(content, geometry, tmp_path)
+    result = place_sensor_canvas(content, geometry, tmp_path, learned_detail=learned)
     canvas = np.load(result.path)
     supported = np.load(result.source_supported_mask)
     generated = np.load(result.generated_detail_mask)
@@ -42,7 +43,12 @@ def test_canvas_preserves_content_and_labels_only_invented_bands(tmp_path, mode,
     expected_support = np.zeros((8, 8), dtype=np.float32)
     expected_support[top:bottom, left:right] = 1
     np.testing.assert_array_equal(supported, expected_support)
-    np.testing.assert_array_equal(generated, 1 - supported if mode == "outpaint" else np.zeros((8, 8)))
+    outpaint = np.load(result.outpaint_mask)
+    np.testing.assert_array_equal(outpaint, 1 - supported if mode == "outpaint" else np.zeros((8, 8)))
+    # Regression: the "generated SR detail" mask was really the outpaint bands; it now marks
+    # only content a learned model synthesised, never the bands.
+    np.testing.assert_array_equal(generated, supported if learned else np.zeros((8, 8)))
+    assert result.provenance.value["learned_detail"] is learned
     if mode == "outpaint":
         expected = np.pad(content, ((top, 8 - bottom), (left, 8 - right), (0, 0)), mode="edge")
         np.testing.assert_array_equal(canvas, expected)

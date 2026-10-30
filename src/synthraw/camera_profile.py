@@ -11,6 +11,24 @@ from synthraw.geometry import GeometryPlan, TargetGeometryPlanner
 from synthraw.provenance import FieldRecord, Provenance, ProvenanceWriter
 
 SENSOR_PRIOR_DISCLAIMER = "Not measured from a Sony Alpha 1 II sensor."
+# Measured from one Sony ILCE-1M2 sample ARW (8672 x 5784, ISO 100) via LibRaw; see
+# docs/reference-arw-comparison.md. One frame establishes the decoder identity and ceilings only.
+ILCE1M2_SAMPLE_METHOD = "Measured from one ILCE-1M2 sample ARW via LibRaw; single frame"
+ILCE1M2_SAMPLE_DISCLAIMER = (
+    "Single-frame measurement of one Sony Alpha 1 II sample raw; not a calibration of this synthetic exposure."
+)
+ILCE1M2_XYZ_TO_CAMERA_D65 = [
+    [0.8161, -0.2947, -0.0739],
+    [-0.4811, 1.2668, 0.2389],
+    [-0.0437, 0.1229, 0.6524],
+]
+ILCE1M2_AS_SHOT_NEUTRAL = [0.4883, 1.0, 0.5636]
+ILCE1M2_DAYLIGHT_NEUTRAL = [0.3744, 1.0, 0.7402]
+# Single-frame upper bounds (scene texture included), in DN at ISO 100: R, G1, G2, B planes.
+ILCE1M2_ROW_BANDING_RMS_DN = [6.66, 14.5, 15.0, 10.3]
+ILCE1M2_COLUMN_BANDING_RMS_DN = [4.76, 10.6, 9.8, 6.2]
+ILCE1M2_DARK_SIGMA_MAD_DN = [11.9, 23.7, 23.7, 16.3]
+ILCE1M2_DARK_POSITIVE_TAIL_4SIGMA = 0.0065
 PROFILE_NAMES = ("SONY_A1II_LIKE", "CINEMA_50MP_VIRTUAL", "VIRTUAL_16BIT_SENSOR")
 
 
@@ -119,15 +137,33 @@ class CameraProfileManager:
             add(sensor, field, value)
         add(sensor, "cfa_pattern", "RGGB", fabricated=True)
         add(sensor, "BlackLevel", 512, "DN", fabricated=True)
-        # Each interval and its selected default retain the scientific disclaimer.
+        # Each interval and its selected default retain the scientific disclaimer. The Sony-like profile
+        # takes its defaults from the one measured ILCE-1M2 frame where that frame supports them.
+        sony_like = not virtual
         for field, value, interval, unit in (
-            ("full_well_electrons", 52000.0, [20000.0, 100000.0], "electrons"),
+            ("full_well_electrons", 33000.0 if sony_like else 52000.0, [20000.0, 100000.0], "electrons"),
             ("read_noise_electrons", 3.0, [0.3, 10.0], "electrons RMS"),
             ("prnu_sigma", 0.01, [0.0, 0.03], "fraction"),
             ("dsnu_sigma_dn", 1.0, [0.0, 64.0], "DN"),
         ):
             add(sensor, field, value, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
             add(sensor, f"{field}_range", interval, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
+        # Noise sources the simulator applies; the Sony-like profile replaces the defect densities and
+        # read noise with the measured frame's in _add_ilce1m2_sample.
+        for field, value, unit in (
+            ("row_fpn_electrons", 0.5, "electrons RMS"),
+            ("column_fpn_electrons", 0.5, "electrons RMS"),
+            ("dark_current_e_per_s", 0.1, "electrons/s"),
+            ("hot_pixel_fraction", 1e-5, "fraction"),
+            ("dead_pixel_fraction", 1e-5, "fraction"),
+            ("hot_pixel_e_per_s", 1000.0, "electrons/s"),
+        ):
+            add(sensor, field, value, unit, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
+        # No lens is modelled: zero coefficients, so DISTORTION applies no geometry and the run report says so.
+        add(camera, "lens_distortion_k1", 0.0, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
+        add(camera, "lens_distortion_k2", 0.0, fabricated=True, disclaimer=SENSOR_PRIOR_DISCLAIMER)
+        if sony_like:
+            self._add_ilce1m2_sample(camera, sensor)
         profile = CameraProfile(camera, sensor)
         if source in ("REFERENCE_RAW", "FULL_CALIBRATION"):
             self._read_reference(profile, Path(reference_raw))
@@ -146,6 +182,53 @@ class CameraProfileManager:
 
             calibrate_sensor(profile, config or ExperimentConfig(), Path(reference_raw))
         return profile
+
+    @staticmethod
+    def _add_ilce1m2_sample(camera: dict[str, FieldRecord], sensor: dict[str, FieldRecord]) -> None:
+        """Measured (M) and single-frame inferred (I) records from the one ILCE-1M2 sample ARW."""
+
+        def sample(records: dict[str, FieldRecord], field: str, value: Any, unit: str | None = None) -> None:
+            records[field] = FieldRecord(
+                field,
+                value,
+                Provenance.MEASURED,
+                ILCE1M2_SAMPLE_METHOD,
+                unit=unit,
+                disclaimer=ILCE1M2_SAMPLE_DISCLAIMER,
+            )
+
+        sample(camera, "xyz_to_camera_d65", ILCE1M2_XYZ_TO_CAMERA_D65)
+        sample(camera, "reference_as_shot_neutral", ILCE1M2_AS_SHOT_NEUTRAL)
+        sample(camera, "reference_daylight_neutral", ILCE1M2_DAYLIGHT_NEUTRAL)
+        sample(sensor, "reference_row_banding_rms_dn", ILCE1M2_ROW_BANDING_RMS_DN, "DN")
+        sample(sensor, "reference_column_banding_rms_dn", ILCE1M2_COLUMN_BANDING_RMS_DN, "DN")
+        sample(sensor, "reference_dark_sigma_mad_dn", ILCE1M2_DARK_SIGMA_MAD_DN, "DN")
+        sample(sensor, "reference_dark_positive_tail_4sigma", ILCE1M2_DARK_POSITIVE_TAIL_4SIGMA, "fraction")
+        # A single frame cannot separate scene texture from sensor noise: these are inferred ceilings.
+        bound = "Single-frame photon-transfer intercept on the green planes; an upper bound, scene texture included"
+        sensor["conversion_gain_e_per_dn"] = FieldRecord(
+            "conversion_gain_e_per_dn",
+            2.08,
+            Provenance.MEASURED,
+            ILCE1M2_SAMPLE_METHOD + "; green-plane photon-transfer slope",
+            unit="electrons/DN",
+            disclaimer=ILCE1M2_SAMPLE_DISCLAIMER,
+        )
+        for field, value, unit in (
+            ("read_noise_electrons", 4.0, "electrons RMS"),
+            ("hot_pixel_fraction", 2e-6, "fraction"),
+            ("dead_pixel_fraction", 2e-8, "fraction"),
+        ):
+            sensor[field] = FieldRecord(
+                field,
+                value,
+                Provenance.INFERRED,
+                bound if field == "read_noise_electrons" else "Isolated-outlier count in one ILCE-1M2 frame",
+                unit=unit,
+                confidence=0.3,
+                dependencies=["conversion_gain_e_per_dn"] if field == "read_noise_electrons" else [],
+                disclaimer=ILCE1M2_SAMPLE_DISCLAIMER,
+            )
 
     @staticmethod
     def _read_reference(profile: CameraProfile, path: Path) -> None:
@@ -179,6 +262,7 @@ class CameraProfileManager:
                 raise ValueError("Reference RAW has invalid black/white levels")
             if wb.size < 3 or not np.isfinite(wb[:3]).all() or np.any(wb[:3] <= 0):
                 raise ValueError("Reference RAW has no valid camera white balance")
+            sample_span = profile.sensor["WhiteLevel"].value - profile.sensor["BlackLevel"].value
             for field, value in {
                 "sensor_width": raw.sizes.raw_width,
                 "sensor_height": raw.sizes.raw_height,
@@ -197,6 +281,20 @@ class CameraProfileManager:
                 "WhiteLevel": raw.white_level,
             }.items():
                 measured(profile.sensor, field, value)
+            # A conversion gain measured at the built-in sample's levels does not carry over to other levels:
+            # map full well to the reference's ADC range instead, as the pipeline does without a measurement.
+            span = white - float(levels.mean())
+            gain = profile.sensor.get("conversion_gain_e_per_dn")
+            if gain is not None and gain.method.startswith(ILCE1M2_SAMPLE_METHOD) and span != sample_span:
+                profile.sensor["conversion_gain_e_per_dn"] = FieldRecord(
+                    "conversion_gain_e_per_dn",
+                    profile.sensor["full_well_electrons"].value / span,
+                    Provenance.FABRICATED,
+                    "Full-well to the reference RAW's ADC range; the ILCE-1M2 sample gain was measured at "
+                    "different black/white levels",
+                    unit="electrons/DN",
+                    dependencies=["full_well_electrons", "WhiteLevel", "BlackLevel"],
+                )
             measured(profile.camera, "camera_whitebalance", wb.tolist())
             # The reference capture's white balance, not the synthetic exposure's AsShotNeutral.
             measured(profile.camera, "reference_as_shot_neutral", (wb[1] / wb[:3]).tolist())
@@ -208,6 +306,10 @@ class CameraProfileManager:
                 matrix = np.asarray(matrix)
                 if np.isfinite(matrix).all() and np.any(matrix):
                     measured(profile.camera, field, matrix.tolist())
+            # LibRaw's rgb_xyz_matrix rows 0-2 are the D65 XYZ-to-camera matrix of an RGB Bayer camera.
+            xyz_to_camera = np.asarray(raw.rgb_xyz_matrix, dtype=float)[:3]
+            if np.isfinite(xyz_to_camera).all() and abs(np.linalg.det(xyz_to_camera)) > 1e-6:
+                measured(profile.camera, "xyz_to_camera_d65", xyz_to_camera.tolist())
         profile.camera["profile_source"] = FieldRecord(
             "profile_source", "REFERENCE_RAW", Provenance.DETERMINISTIC, "Explicit user profile selection"
         )

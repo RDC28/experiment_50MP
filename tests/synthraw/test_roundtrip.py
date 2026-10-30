@@ -136,10 +136,10 @@ def test_pipeline_round_trip_is_colour_faithful(tmp_path, geometry):
     assert checks["roundtrip_supported_ssim"].passed is True
     assert checks["roundtrip_whole_ssim"].passed is True
     assert checks["colour_delta_e00"].passed is True
-    # No double WB, mis-tagged space or exposure sign error: alignment is a near-scalar gain. The DNG keeps
-    # the HDR highlight headroom below WhiteLevel, so the linear development is 2^HDR_HIGHLIGHT_EV darker.
+    # No double WB, mis-tagged space or exposure error: exposure is placed from the HDR peak actually
+    # reconstructed and the development honours BaselineExposure, so alignment is near the identity.
     matrix = np.asarray(checks["colour_delta_e00"].measured["alignment_matrix"])
-    np.testing.assert_allclose(matrix, np.eye(3) * np.trace(matrix) / 3, atol=0.01 * 2.0**config.HDR_HIGHLIGHT_EV)
-    assert 0.9 < np.trace(matrix) / 3 / 2.0**config.HDR_HIGHLIGHT_EV < 1.1
+    np.testing.assert_allclose(matrix, np.eye(3), atol=0.02)
+    assert checks["colour_delta_e00"].measured["alignment_gain"] == pytest.approx(1, abs=0.02)
     # The "lifted, desaturated" look is the absent display tone curve, reported not hidden.
     assert checks["roundtrip_unaligned"].measured["unaligned"]["median_delta_e00_supported"] > 2.5

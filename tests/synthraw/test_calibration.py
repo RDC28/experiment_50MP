@@ -20,6 +20,7 @@ def calibration(tmp_path):
     shape = (128, 128)
     geometry = replace(
         TargetGeometryPlanner().plan(128, 128),
+        outpaint_bands=(),  # The bare test sensor has no planned outpaint bands.
         width=128,
         height=128,
         active_area=(0, 0, 128, 128),

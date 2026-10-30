@@ -5,7 +5,16 @@ import math
 import pytest
 
 from synthraw.camera_profile import CameraProfileManager
-from synthraw.exposure import APERTURE_STOPS, ISO_STOPS, SHUTTER_STOPS, ExposurePosteriorEstimator
+from synthraw.exposure import (
+    APERTURE_STOPS,
+    ISO_STOPS,
+    MAX_DEVELOPMENT_SHIFT_EV,
+    MIN_DEVELOPMENT_SHIFT_EV,
+    SHUTTER_STOPS,
+    ExposurePosteriorEstimator,
+    exposure_and_gain,
+    placement_clamp_note,
+)
 from synthraw.provenance import ProvenanceWriter
 
 
@@ -86,3 +95,21 @@ def test_electronic_and_expanded_limits(profile):
 def test_invalid_requests(profile, kwargs):
     with pytest.raises(ValueError):
         ExposurePosteriorEstimator().estimate(profile, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("peak", "applied_ev", "clamped"),
+    ((1.0, 0.5, False), (8.0, MAX_DEVELOPMENT_SHIFT_EV, True), (0.01, MIN_DEVELOPMENT_SHIFT_EV, True)),
+)
+def test_exposure_placement_stays_developable(profile, peak, applied_ev, clamped):
+    from synthraw.config import ExperimentConfig
+
+    exposure = ExposurePosteriorEstimator().estimate(profile).records
+    records = exposure_and_gain(ExperimentConfig(), exposure, profile.camera, hdr_peak=peak)
+    assert records["applied_baseline_exposure_ev"].value == pytest.approx(applied_ev)
+    gain = records["applied_analogue_gain"].value
+    assert records["applied_exposure_scale"].value == pytest.approx(2.0**-applied_ev / gain)
+    note = placement_clamp_note(records)
+    assert (note is not None) == clamped
+    if clamped:
+        assert "clamped" in note

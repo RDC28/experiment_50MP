@@ -65,6 +65,7 @@ PRD_TREE = {
         f"confidence/{name}.npy"
         for name in (
             "generated_detail_mask",
+            "outpaint_mask",
             "source_supported_mask",
             "highlight_fabricated_mask",
             "shadow_fabricated_mask",
@@ -338,22 +339,26 @@ def _records(path):
 
 
 def test_hdr_highlight_headroom_is_not_clipped_in_the_dng(source_png, tmp_path):
-    """Regression: exposure scale 1 put HDR radiance above 1 at or past full well, so the DNG clipped it."""
+    """Regression: a fixed exposure scale put HDR radiance at or past full well, so the DNG clipped it."""
     from synthraw.cfa import CFAMosaicer
 
-    config = ExperimentConfig(FAST_DEV_RUN=True, SR_BACKEND="LANCZOS")
     result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS")
     root = result.root
     sensor = _records(root / "metadata/sensor_profile.json")
+    # Exposure is placed from the reconstructed HDR peak actually used, with a 0.5 EV margin.
+    peak = sensor["applied_hdr_peak"]["value"]
+    placement = np.log2(peak) + 0.5
+    assert sensor["applied_baseline_exposure_ev"]["value"] == pytest.approx(placement)
     assert sensor["applied_exposure_scale"]["value"] == pytest.approx(
-        2.0**-config.HDR_HIGHLIGHT_EV / sensor["applied_analogue_gain"]["value"]
+        2.0**-placement / sensor["applied_analogue_gain"]["value"]
     )
     optical = CFAMosaicer(sensor["applied_cfa_phase"]["value"]).mosaic(
         np.load(root / "intermediates/06_optical_sensor_rgb.npy")
     )
     mosaic = np.load(root / "raw/sensor_mosaic_uint16.npy")
     white = sensor["applied_adc_white_level"]["value"]
-    headroom = (optical > 1.0) & (optical < 0.8 * 2.0**config.HDR_HIGHLIGHT_EV)
+    # The top stop of reconstructed radiance, the region a fixed exposure scale used to clip.
+    headroom = optical > 0.5 * peak
     assert headroom.sum() > 0
     assert mosaic[headroom].max() < white
     # Brighter reconstructed radiance stays brighter in the stored codes.
@@ -407,6 +412,7 @@ def test_reference_raw_profile_runs_end_to_end(source_png, tmp_path):
 
     geometry = replace(
         TargetGeometryPlanner().plan(64, 48),
+        outpaint_bands=(),  # The bare test sensor has no planned outpaint bands.
         width=64,
         height=48,
         active_area=(0, 0, 48, 64),
@@ -709,3 +715,36 @@ def test_without_synthetic_exif_capture_settings_stay_out_of_the_dng_and_sidecar
     )
     with tifffile.TiffFile(manual.dng_path) as dng:
         assert dng.pages[0].tags[34855].value == 400  # Explicit user exposure is still written.
+
+
+@pytest.mark.parametrize("fit", ["OUTPAINT_VERTICAL", "FIT_WITH_SENSOR_MARGINS"])
+def test_realism_measures_only_the_source_content_inside_the_dng_crop(source_png, tmp_path, fit):
+    """Regression: realism statistics included the invented outpaint bands or the neutral sensor margins."""
+    from synthraw.realism import measure_raw
+
+    result = run_tiny(source_png, tmp_path / "runs", SR_BACKEND="LANCZOS", SENSOR_FIT_MODE=fit)
+    source = np.load(result.root / "confidence/sr_source_supported_mask.npy") > 0
+    assert not source.all()
+    measured = measure_raw(result.root / "raw/synthetic_50mp.dng")
+    top, left, bottom, right = measured["measured_box"]
+    assert measured["shape"] == [bottom - top, right - left]
+    assert top % 2 == left % 2 == 0
+    assert source[top:bottom, left:right].all()
+    rows, columns = np.flatnonzero(source.any(axis=1)), np.flatnonzero(source.any(axis=0))
+    assert top - rows[0] <= 1 and rows[-1] + 1 - bottom <= 1
+    assert left - columns[0] <= 1 and columns[-1] + 1 - right <= 1
+
+
+def test_skipped_c2pa_and_noop_optics_are_reported_not_silent(source_png, tmp_path):
+    """Regression: C2PA was skipped and DISTORTION ran with k1 = k2 = 0 without a word in the run report."""
+
+    def fallbacks(name, **settings):
+        result = run_tiny(source_png, tmp_path / name, SR_BACKEND="LANCZOS", **settings)
+        return json.loads((result.root / "validation/run_report.json").read_text())["fallbacks"]
+
+    report = fallbacks("zero", OPTICAL_SIMULATION=True, DISTORTION=True)
+    assert any(reason.startswith("C2PA unavailable: ") for reason in report)
+    assert "Optics DISTORTION is enabled but k1 = k2 = 0: lens distortion is not modelled" in report
+    report = fallbacks("off", DISTORTION=True, VIGNETTING=True)
+    assert "Optics DISTORTION, VIGNETTING enabled but OPTICAL_SIMULATION is off: not applied" in report
+    assert not any(reason.startswith("Optics") for reason in fallbacks("none", OPTICAL_SIMULATION=True))

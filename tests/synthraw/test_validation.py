@@ -32,6 +32,7 @@ NEUTRAL = (0.5, 1.0, 0.75)
 def tiny_dng(tmp_path, *, width=64, height=48, phase="RGGB", neutral=NEUTRAL, scale=0.4):
     geometry = replace(
         TargetGeometryPlanner().plan(width, height),
+        outpaint_bands=(),  # The bare test sensor has no planned outpaint bands.
         width=width,
         height=height,
         active_area=(0, 0, height, width),

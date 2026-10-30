@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from math import isclose, log2
+from math import ceil, floor, isclose, log2
 from numbers import Real
 from typing import Any
 
@@ -44,6 +44,21 @@ DISCLOSURE = (
 )
 
 
+def user_crop_fractions(geometry: GeometryPlan) -> tuple[float, float, float, float]:
+    """DNG DefaultUserCrop (top, left, bottom, right) of the source content box.
+
+    Edges are rounded inward to even pixels so the crop holds only source content on Bayer tiles;
+    the exact pixel ratios fit DNG RATIONALs without rounding.
+    """
+    left, top = (2 * ceil(geometry.content_box[i] / 2) for i in (0, 1))
+    right, bottom = (2 * floor(geometry.content_box[i] / 2) for i in (2, 3))
+    (x, y), (width, height) = geometry.default_crop_origin, geometry.default_crop_size
+    if right <= left or bottom <= top:
+        raise ValueError("Source content box leaves no CFA-aligned user crop")
+    fractions = ((top - y) / height, (left - x) / width, (bottom - y) / height, (right - x) / width)
+    return tuple(min(1.0, max(0.0, value)) for value in fractions)
+
+
 @dataclass
 class DNGFieldRecord(FieldRecord):
     """A provenance record with its container type, including element count."""
@@ -79,12 +94,15 @@ class DNGMetadataBuilder:
         software_version: str = "0.1.0",
         exposure: Mapping[str, FieldRecord] | None = None,
         lens: Mapping[str, FieldRecord] | None = None,
+        baseline_exposure: float | None = None,
     ) -> dict[str, DNGFieldRecord]:
         """Construct allocation-free metadata for a rectangular Bayer sensor.
 
         NoiseProfile must come from the same noise model applied to the pixels;
         the defaults only describe a trivial synthetic milestone fixture. Pass None
         to omit the tag when disabled shot noise cannot satisfy DNG's S > 0.
+        ``baseline_exposure`` is the push (EV) that undoes the simulated exposure placement; without it
+        BaselineExposure stays the zero profile prior.
         """
         config = config or ExperimentConfig()
         if cfa_phase not in CFA_PATTERNS:
@@ -127,6 +145,11 @@ class DNGMetadataBuilder:
             ("ImageDescription", DISCLOSURE, "ASCII"),
         ):
             add(name, value, dtype)
+        if geometry.outpaint_bands:
+            # Outpaint bands are invented edge extension. DefaultUserCrop (DNG 1.6, ignored by older
+            # readers) opens the frame on the CFA-aligned source content box, as fractions of the
+            # default crop, while the full outpainted frame stays one crop reset away.
+            add("DefaultUserCrop", user_crop_fractions(geometry), "RATIONAL[4]")
         if noise_profile is not None:
             add("NoiseProfile", tuple(noise_profile), f"DOUBLE[{len(noise_profile)}]")
         model, unique = {
@@ -147,8 +170,13 @@ class DNGMetadataBuilder:
             add(f"CameraCalibration{index}", (1, 0, 0, 0, 1, 0, 0, 0, 1), "SRATIONAL[9]", "F")
         add("AnalogBalance", (1, 1, 1), "RATIONAL[3]", "F")
         add("AsShotNeutral", as_shot_neutral, "RATIONAL[3]", "F")
+        if baseline_exposure is not None:
+            if not np.isfinite(baseline_exposure):
+                raise ValueError("baseline_exposure must be finite")
+            add("BaselineExposure", round(float(baseline_exposure), 4), "SRATIONAL")
+        else:
+            add("BaselineExposure", 0, "SRATIONAL", "F")
         for name, value, dtype in (
-            ("BaselineExposure", 0, "SRATIONAL"),
             ("BaselineNoise", 1, "RATIONAL"),
             ("BaselineSharpness", 1, "RATIONAL"),
             ("LinearResponseLimit", 1, "RATIONAL"),
@@ -350,3 +378,7 @@ class DNGMetadataBuilder:
             raise ValueError("ActiveArea outside sensor")
         if not (x >= 0 and y >= 0 and cw > 0 and ch > 0 and x + cw <= right - left and y + ch <= bottom - top):
             raise ValueError("Default crop outside ActiveArea")
+        if "DefaultUserCrop" in records:
+            crop_top, crop_left, crop_bottom, crop_right = value("DefaultUserCrop")
+            if not (0 <= crop_top < crop_bottom <= 1 and 0 <= crop_left < crop_right <= 1):
+                raise ValueError("DefaultUserCrop must be an ordered box within the default crop")

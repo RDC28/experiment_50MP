@@ -136,6 +136,13 @@ def _write_json(payload: Any, path: str | Path) -> Path:
     return destination
 
 
+def c2pa_fallback(status: Mapping[str, Any]) -> str | None:
+    """Run-report line for C2PA that was requested but not written; None when signed or disabled."""
+    if status.get("status") != "C2PA unavailable":
+        return None
+    return f"C2PA unavailable: {status.get('reason')}"
+
+
 def write_c2pa(
     targets: Iterable[str | Path],
     *,

@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from synthraw.camera_profile import PROFILE_NAMES, SENSOR_PRIOR_DISCLAIMER, CameraProfileManager
+from synthraw.camera_profile import (
+    ILCE1M2_SAMPLE_DISCLAIMER,
+    ILCE1M2_XYZ_TO_CAMERA_D65,
+    PROFILE_NAMES,
+    SENSOR_PRIOR_DISCLAIMER,
+    CameraProfileManager,
+)
 from synthraw.provenance import FieldRecord, Provenance
 
 
@@ -46,10 +52,40 @@ def test_sensor_priors_are_fabricated_and_disclaimed(name):
     for field in ("full_well_electrons", "read_noise_electrons", "prnu_sigma", "dsnu_sigma_dn"):
         record, interval = sensor[field], sensor[f"{field}_range"]
         assert interval.value[0] <= record.value <= interval.value[1]
-        for item in (record, interval):
+        # The Sony-like read noise is a single-frame bound from the ILCE-1M2 sample, not a pure prior.
+        sampled = name == "SONY_A1II_LIKE" and field == "read_noise_electrons"
+        for item in (interval,) if sampled else (record, interval):
             assert item.provenance == Provenance.FABRICATED
             assert item.confidence is None
             assert item.disclaimer == SENSOR_PRIOR_DISCLAIMER
+        if sampled:
+            assert record.provenance == Provenance.INFERRED
+            assert record.disclaimer == ILCE1M2_SAMPLE_DISCLAIMER
+
+
+def test_sony_like_profile_carries_the_measured_ilce1m2_sample():
+    profile = CameraProfileManager().build("SONY_A1II_LIKE")
+    camera, sensor = profile.camera, profile.sensor
+    assert camera["xyz_to_camera_d65"].value == ILCE1M2_XYZ_TO_CAMERA_D65
+    neutral = camera["reference_as_shot_neutral"].value
+    assert neutral[0] < 1 and neutral[2] < 1
+    for record in (camera["xyz_to_camera_d65"], sensor["conversion_gain_e_per_dn"]):
+        assert record.provenance == Provenance.MEASURED
+        assert record.disclaimer == ILCE1M2_SAMPLE_DISCLAIMER
+    # Full well lands at the ADC ceiling with the measured conversion gain.
+    span = sensor["WhiteLevel"].value - sensor["BlackLevel"].value
+    assert sensor["full_well_electrons"].value == pytest.approx(
+        span * sensor["conversion_gain_e_per_dn"].value, rel=0.01
+    )
+    virtual = CameraProfileManager().build("CINEMA_50MP_VIRTUAL")
+    assert "xyz_to_camera_d65" not in virtual.camera
+
+
+@pytest.mark.parametrize("name", PROFILE_NAMES)
+def test_no_profile_models_lens_distortion(name):
+    """No lens is calibrated, so no profile may warp the image geometry the user receives."""
+    camera = CameraProfileManager().build(name).camera
+    assert camera["lens_distortion_k1"].value == camera["lens_distortion_k2"].value == 0
 
 
 def test_sidecars_round_trip_and_fresh_profiles(tmp_path):
@@ -81,6 +117,7 @@ def test_reference_raw_real_decoder_round_trip(tmp_path, phase):
 
     geometry = replace(
         TargetGeometryPlanner().plan(64, 48),
+        outpaint_bands=(),  # The bare test sensor has no planned outpaint bands.
         width=64,
         height=48,
         active_area=(0, 0, 48, 64),
@@ -102,7 +139,7 @@ def test_reference_raw_real_decoder_round_trip(tmp_path, phase):
     assert profile.camera["profile_source"].value == "REFERENCE_RAW"
     assert "libraw_rgb_xyz_matrix" not in profile.camera
     assert profile.camera["Make"].value == "Synthetic"
-    assert profile.sensor["read_noise_electrons"].provenance == Provenance.FABRICATED
+    assert profile.sensor["read_noise_electrons"].provenance != Provenance.MEASURED
     for field in ("camera_whitebalance", "reference_as_shot_neutral", "libraw_color_matrix"):
         record = profile.camera[field]
         assert record.provenance == Provenance.MEASURED
@@ -191,3 +228,34 @@ def test_native_config_identity_and_margin_geometry(settings):
     assert profile.sensor["adc_bits"].value == config.ADC_BITS
     assert profile.sensor["default_crop_origin"].value == list(geometry.default_crop_origin)
     assert profile.sensor["default_crop_size"].value == list(geometry.default_crop_size)
+
+
+def test_reference_raw_levels_replace_the_sample_conversion_gain(tmp_path):
+    from dataclasses import replace
+
+    import numpy as np
+
+    from synthraw.dng_metadata import DNGMetadataBuilder
+    from synthraw.dng_writer import DNGWriter
+    from synthraw.geometry import TargetGeometryPlanner
+
+    geometry = replace(
+        TargetGeometryPlanner().plan(64, 48),
+        outpaint_bands=(),
+        width=64,
+        height=48,
+        active_area=(0, 0, 48, 64),
+        default_crop_origin=(0, 0),
+        default_crop_size=(64, 48),
+    )
+    # A 12-bit reference: the 14-bit sample's measured gain no longer maps full well onto its range.
+    records = DNGMetadataBuilder().build(
+        geometry, cfa_phase="RGGB", as_shot_neutral=(0.5, 1, 0.75), black_level=256, white_level=4095
+    )
+    path = DNGWriter().write(tmp_path / "reference.dng", np.full((48, 64), 1024, dtype=np.uint16), records)
+    sample = CameraProfileManager().build().sensor["conversion_gain_e_per_dn"]
+    assert sample.provenance == Provenance.MEASURED
+    gain = CameraProfileManager().build(source="REFERENCE_RAW", reference_raw=path).sensor["conversion_gain_e_per_dn"]
+    assert gain.value == pytest.approx(33000.0 / (4095 - 256))
+    assert gain.provenance == Provenance.FABRICATED
+    assert "reference RAW" in gain.method

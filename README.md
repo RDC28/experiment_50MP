@@ -86,8 +86,8 @@ uses the PRD class names, and by the tests in `tests/synthraw/`.
 | `raw/` | `synthetic_50mp.dng`: a CFA DNG with `Make = "Synthetic"` and a NoiseProfile matching the simulated ADC; `synthetic_50mp_realisation_NNN.dng` for each further noise realisation |
 | `masters/` | `developed_50mp_16bit.tif` (LibRaw development, Adobe RGB), `scene_linear_50mp.exr`, `preview_8bit.png` |
 | `metadata/` | `metadata.json` and `provenance.json` (every field tagged D/I/F/M with its dependencies), `dng_metadata.json`, `sony_arw_emulation.json`, `sony_tag_registry.json` |
-| `intermediates/`, `confidence/` | stage arrays `01_` to `11_`, the SR tile seam residual map, source-supported and generated-area masks |
-| `validation/` | `validation_results.json`, `validation_report.html`, nine figures, `comparison_2k_vs_4k.html` and `.json`, `libraw_roundtrip.json`, `sensor_realisations.json`, `run_report.json` (`SUCCESS` or `FAILED`) |
+| `intermediates/`, `confidence/` | stage arrays `01_` to `11_`, the SR tile seam residual map, source-supported, outpaint-band and learned-SR-detail masks |
+| `validation/` | `validation_results.json`, `validation_report.html`, nine figures, `comparison_2k_vs_4k.html` and `.json`, `libraw_roundtrip.json`, `sensor_realisations.json`, `realism_comparison.json` and `.png` (only with a reference raw), `run_report.json` (`SUCCESS` or `FAILED`) |
 | `logs/` | environment, model manifest, checkpoints, bundle manifest |
 
 `validation_report.html` is self-contained. It answers the PRD's four questions, lists the hard gates and
@@ -97,11 +97,17 @@ white balance renders, determinism and seeds), and reports the generated and sou
 percentages. The hard gates include NoiseProfile agreement with the flat-field fit, the demosaic variants and
 the -4..+4 EV and white balance stress tests. If any hard gate fails, both the report and `run_report.json`
 say FAILED. QA targets that are missed (round trip, deltaE00, seams, the noise-fit R^2) are listed with the
-value measured, and thresholds are never adjusted to make a run pass.
+value measured, and thresholds are never adjusted to make a run pass. The report opens with a "Read this
+first" summary: the unaligned round trip next to the aligned one, the alignment gain, gates that passed within
+10 % of their threshold, and every skipped or no-op feature. The noise gates only check the simulator against
+its own model (self-consistency). Set `REFERENCE_RAW` in the validation cell to a real camera raw (or
+`"UPLOAD"`) to add report-only realism metrics against it; see
+[docs/reference-arw-comparison.md](docs/reference-arw-comparison.md) for the measured Sony ILCE-1M2 reference.
 
 The 2K/4K section runs a second source through the same settings and seeds, so source resolution is the only
 thing that changes. It compares the locked settings (a hard gate), the difference map, edge and texture
-agreement on named crops, the exposure posterior, white balance, HDR masks and DNG statistics, and sets
+agreement on named crops (full-resolution windows, with the share of spectral power above the low-resolution
+source's Nyquist frequency), the exposure posterior, white balance, HDR masks and DNG statistics, and sets
 `ESTIMATOR_UNSTABLE` when an estimate moves beyond its tolerance. Set `COMPARISON_SECOND_INPUT` to the
 other-resolution export of the same composition. If you leave it empty, the notebook makes a half-resolution
 copy of the input and the report labels it as derived. The second run doubles compute. It is written to
@@ -132,10 +138,10 @@ requires `GENERATE_SYNTHETIC_EXIF`.
 
 **Exposure.** The leading ISO hypothesis of the exposure posterior sets the analogue gain, so the DNG ISO and
 the simulated noise agree: a higher ISO collects fewer photoelectrons for the same DN and is noisier. The
-exposure scale maps the top of the reconstructed HDR headroom (`2^HDR_HIGHLIGHT_EV`) to full well divided by
-that gain (the ADC ceiling), so the reconstructed highlights stay below `WhiteLevel` in the DNG and the TIFF
-instead of surviving only in the EXR.
-The DNG therefore develops darker by default; raise exposure in the RAW developer to bring the midtones up.
+exposure scale places the brightest reconstructed HDR value 0.5 EV below full well divided by that gain (the
+ADC ceiling), so the highlights stay below `WhiteLevel` in the DNG and the TIFF instead of surviving only in
+the EXR, and the rest of the frame is exposed as brightly as that allows. The DNG `BaselineExposure` records
+the push that brings SDR white back to display white, and the TIFF development applies it.
 
 **Scientific boundary.** The output is a synthetic sensor reconstruction of a hypothetical exposure. It is
 never a genuine camera capture. Every metadata field carries a provenance class: D (deterministic),

@@ -43,7 +43,15 @@ PRD_CROP_NAMES = ("face_skin", "hair", "saree_fabric", "jewellery", "smoke", "bo
 INPUT_CONFIG_KEYS = frozenset({"INPUT_MODE", "INPUT_PATH", "DRIVE_MOUNT_PATH"})
 # Sensor-profile fields that follow the (compared, not locked) exposure posterior.
 EXPOSURE_DERIVED_FIELDS = frozenset(
-    {"applied_exposure_time_s", "applied_exposure_scale", "applied_analogue_gain", "applied_adc_analogue_gain"}
+    {
+        "applied_exposure_time_s",
+        "applied_exposure_scale",
+        "applied_analogue_gain",
+        "applied_adc_analogue_gain",
+        # Placed from each run's own reconstructed HDR peak, so they follow the content, not a setting.
+        "applied_hdr_peak",
+        "applied_baseline_exposure_ev",
+    }
 )
 GEOMETRY_KEYS = ("width", "height", "active_area", "default_crop_origin", "default_crop_size")
 DNG_COLOUR_FIELDS = (
@@ -280,6 +288,45 @@ def _analysis_view(master: np.ndarray, box: tuple[int, int, int, int] | None, ma
     return block_mean(master, factor) / 65535.0
 
 
+def full_resolution_window(box: tuple[int, int, int, int], side: int) -> tuple[int, int, int, int]:
+    """The centred ``side`` x ``side`` window (clipped to the box) analysed at 1:1 photosites inside ``box``."""
+    x0, y0, x1, y1 = box
+    width, height = min(side, x1 - x0), min(side, y1 - y0)
+    left, top = x0 + (x1 - x0 - width) // 2, y0 + (y1 - y0 - height) // 2
+    return left, top, left + width, top + height
+
+
+def detail_energy(luma: np.ndarray, cutoffs: Mapping[str, float]) -> dict[str, float | None]:
+    """Fraction of the non-DC spectral power of ``luma`` above each radial cutoff (cycles per pixel).
+
+    The window is plane-detrended and Hann-tapered first, so scene shading and the frame edge do not
+    leak power to high frequencies. Detail above a source's Nyquist frequency cannot come from that
+    source: it is upscaler output.
+    """
+    if min(luma.shape) < 8:
+        return dict.fromkeys(cutoffs)
+    values = np.asarray(luma, np.float64)
+    yy, xx = np.meshgrid(*(np.arange(n) - (n - 1) / 2 for n in values.shape), indexing="ij")
+    centred = values - values.mean()
+    centred -= (centred * yy).sum() / (yy**2).sum() * yy + (centred * xx).sum() / (xx**2).sum() * xx
+    taper = np.hanning(values.shape[0])[:, None] * np.hanning(values.shape[1])[None, :]
+    power = np.abs(np.fft.fft2(centred * taper)) ** 2
+    radius = np.hypot(*np.meshgrid(np.fft.fftfreq(values.shape[0]), np.fft.fftfreq(values.shape[1]), indexing="ij"))
+    power[0, 0] = 0.0
+    total = float(power.sum())
+    return {
+        name: float(power[radius > cutoff].sum() / total) if total > 0 else None for name, cutoff in cutoffs.items()
+    }
+
+
+def source_nyquist(facts: RunFacts, output_width: int) -> float:
+    """A source's Nyquist frequency in output cycles per pixel: 0.5 / (output pixels per source pixel)."""
+    scale = facts.geometry.get("scale_factor")
+    if not isinstance(scale, int | float) or scale <= 0:
+        scale = output_width / facts.source_size[0]
+    return 0.5 / max(float(scale), 1.0)
+
+
 def image_agreement(first: np.ndarray, second: np.ndarray) -> tuple[dict[str, float], dict[str, np.ndarray]]:
     """Difference, SSIM, edge and texture agreement between two [0, 1] RGB views on one grid."""
     from scipy.ndimage import gaussian_filter, sobel
@@ -406,7 +453,7 @@ class SourceResolutionComparator:
         tolerances: EstimatorTolerances | None = None,
         *,
         analysis_side: int = 1024,
-        crop_side: int = 384,
+        crop_side: int = 512,
         aspect_tolerance: float = 0.01,
     ) -> None:
         self.tolerances = tolerances or EstimatorTolerances()
@@ -618,7 +665,11 @@ class SourceResolutionComparator:
                 _heatmap(maps["edges_high"], float(np.percentile(maps["edges_high"], 99.5))), min_side=256
             ),
         }
-        common = {"analysed_shape": list(views[0].shape[:2]), "difference_display_max": scale}
+        common = {
+            "analysed_shape": list(views[0].shape[:2]),
+            "overview_area_average_factor": max(1, math.ceil(max(low.shape[:2]) / self.analysis_side)),
+            "difference_display_max": scale,
+        }
         result.checks += [
             ValidationCheck(
                 "final_difference_map",
@@ -647,25 +698,66 @@ class SourceResolutionComparator:
             ),
         ]
         height, width = low.shape[:2]
+        cutoffs = {
+            "above_low_source_nyquist": source_nyquist(result.low, width),
+            "above_high_source_nyquist": source_nyquist(result.high, width),
+        }
         for crop in crops:
             box = crop.pixels(width, height)
-            x0, y0, x1, y1 = box
-            pair = [_analysis_view(master, box, self.crop_side) for master in (low, high)]
+            # Crops are analysed and shown at 1:1 output pixels (factor 1): a downsampled crop would
+            # average away exactly the fine detail that differs between the two sources.
+            x0, y0, x1, y1 = window = full_resolution_window(box, self.crop_side)
+            pair = [master[y0:y1, x0:x1] / 65535.0 for master in (low, high)]
             crop_metrics, crop_maps = image_agreement(*pair)
+            energy = {
+                label: detail_energy(np.asarray(view, np.float64) @ _ADOBE_Y, cutoffs)
+                for label, view in (("low", pair[0]), ("high", pair[1]))
+            }
             result.crops.append(
                 {
                     "name": crop.name,
                     "box_fraction": [crop.x0, crop.y0, crop.x1, crop.y1],
-                    "box_pixels": [x0, y0, x1, y1],
+                    "box_pixels": list(box),
+                    "window_pixels": list(window),
+                    "analysis_factor": 1,
                     "analysed_shape": list(pair[0].shape[:2]),
                     "metrics": crop_metrics,
+                    "detail_energy": energy,
                     "images": {
-                        "low": _png(_encoded_to_srgb8(pair[0]), min_side=128),
-                        "high": _png(_encoded_to_srgb8(pair[1]), min_side=128),
-                        "difference": _png(_heatmap(crop_maps["difference"], scale), min_side=128),
+                        "low": _png(_encoded_to_srgb8(pair[0])),
+                        "high": _png(_encoded_to_srgb8(pair[1])),
+                        "difference": _png(_heatmap(crop_maps["difference"], scale)),
                     },
                 }
             )
+        if result.crops:
+            mean = {
+                f"{label}_{name}": _mean([crop["detail_energy"][label][name] for crop in result.crops])
+                for label in ("low", "high")
+                for name in cutoffs
+            }
+            result.checks.append(
+                ValidationCheck(
+                    "detail_above_low_source_nyquist",
+                    "Image agreement",
+                    None,
+                    measured={
+                        "low_source_nyquist_cycles_per_px": cutoffs["above_low_source_nyquist"],
+                        "high_source_nyquist_cycles_per_px": cutoffs["above_high_source_nyquist"],
+                        "crops": len(result.crops),
+                    }
+                    | mean,
+                    target=(
+                        "report only: share of full-resolution crop spectral power above the low-resolution "
+                        "source's Nyquist frequency, which that source cannot supply"
+                    ),
+                )
+            )
+
+
+def _mean(values: Iterable[float | None]) -> float | None:
+    finite = [value for value in values if value is not None and math.isfinite(value)]
+    return float(np.mean(finite)) if finite else None
 
 
 def _fixed(value: float | None, key: str) -> str:
@@ -680,7 +772,10 @@ def _data_uri(data: bytes) -> str:
 
 _EXTRA_CSS = """
 .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.grid figure{margin:0;min-width:0}
-.grid img{width:100%;image-rendering:pixelated}.banner.flag{background:#fff4e5;border:1px solid #b26a00;color:#7a4800}
+.grid img{width:100%;image-rendering:pixelated}
+.native{display:flex;gap:10px;overflow-x:auto}.native figure{margin:0;flex:none}
+.native img{width:auto;max-width:none;height:auto;image-rendering:pixelated}
+.banner.flag{background:#fff4e5;border:1px solid #b26a00;color:#7a4800}
 """
 
 
@@ -752,8 +847,10 @@ class ComparisonReportGenerator:
                 self._figure(result.images["edges_high"], "Edges, high-resolution source"),
             ]
             parts.append(
-                "</div><p class='info'>Views are area-averaged to the analysed shape and shown as sRGB; "
-                "metrics use Adobe RGB encoded values of the developed masters.</p>"
+                f"</div><p class='info'>This whole-frame overview is area-averaged by a factor of "
+                f"{scale['overview_area_average_factor']} to the analysed shape and shown as sRGB, so it hides fine "
+                "detail; the named crops below are analysed at full resolution. Metrics use Adobe RGB encoded "
+                "values of the developed masters.</p>"
             )
         parts += self._crops(result)
         parts += self._estimator_table(result)
@@ -845,20 +942,35 @@ class ComparisonReportGenerator:
         if not result.crops:
             return []
         parts = [
-            "<h2>Named crops</h2><table><tr><th>Crop</th><th>Box (px)</th><th>SSIM</th><th>Mean |diff|</th>"
-            "<th>Edge corr.</th><th>Texture corr.</th><th>Texture energy high/low</th></tr>"
+            "<h2>Named crops (full resolution, 1:1)</h2><p class='info'>Each crop is the centred window of its "
+            "box, analysed at the output pixel grid without any averaging (factor 1) and shown at 1:1 pixels. "
+            "Detail above the low-resolution source's Nyquist frequency is the share of the window's spectral "
+            "power that the low-resolution source cannot carry: in the low-resolution run it is invented by "
+            "the upscaler.</p>"
+            "<table><tr><th>Crop</th><th>Window (px)</th><th>SSIM</th><th>Mean |diff|</th>"
+            "<th>Edge corr.</th><th>Texture corr.</th><th>Texture energy high/low</th>"
+            "<th>Detail above low Nyquist, low run</th><th>Detail above low Nyquist, high run</th></tr>"
         ]
         for crop in result.crops:
             m = crop["metrics"]
-            values = (m["ssim"], m["mean_abs_difference"], m["edge_correlation"], m["texture_correlation"])
+            energy = crop["detail_energy"]
+            values = (
+                m["ssim"],
+                m["mean_abs_difference"],
+                m["edge_correlation"],
+                m["texture_correlation"],
+                m["texture_energy_ratio"],
+                energy["low"]["above_low_source_nyquist"],
+                energy["high"]["above_low_source_nyquist"],
+            )
             parts.append(
-                f"<tr><td>{esc(crop['name'])}</td><td>{esc(str(crop['box_pixels']))}</td>"
+                f"<tr><td>{esc(crop['name'])}</td><td>{esc(str(crop['window_pixels']))}</td>"
                 + "".join(f"<td class='num'>{format_measured(v)}</td>" for v in values)
-                + f"<td class='num'>{format_measured(m['texture_energy_ratio'])}</td></tr>"
+                + "</tr>"
             )
         parts.append("</table>")
         for crop in result.crops:
-            parts.append(f"<h3>{esc(crop['name'])}</h3><div class='grid'>")
+            parts.append(f"<h3>{esc(crop['name'])}</h3><div class='native'>")
             parts += [
                 self._figure(crop["images"][key], f"{crop['name']} - {label}")
                 for key, label in (

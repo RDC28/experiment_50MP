@@ -163,22 +163,47 @@ class ExposurePosteriorEstimator:
         return ExposurePosterior(candidates, records)
 
 
+# Headroom kept between the brightest reconstructed value and full well over gain.
+EXPOSURE_PEAK_MARGIN_EV = 0.5
+# LibRaw exp_shift spans 0.25..8, so a developer can undo between -2 and +3 stops of placement.
+MIN_DEVELOPMENT_SHIFT_EV = -2.0
+MAX_DEVELOPMENT_SHIFT_EV = 3.0
+
+
 def exposure_and_gain(
-    config: ExperimentConfig, exposure: Mapping[str, FieldRecord], camera: Mapping[str, FieldRecord]
+    config: ExperimentConfig,
+    exposure: Mapping[str, FieldRecord],
+    camera: Mapping[str, FieldRecord],
+    *,
+    hdr_peak: float | None = None,
+    peak_margin_ev: float = EXPOSURE_PEAK_MARGIN_EV,
 ) -> dict[str, FieldRecord]:
-    """Radiance-to-photoelectron scale and analogue gain applied by the sensor and ADC stages.
+    """Radiance-to-photoelectron scale, analogue gain and the BaselineExposure that undoes the placement.
 
     The leading ISO hypothesis over the profile base ISO (lowest standard ISO) is the analogue
-    gain, so the DNG ISO and the simulated shot/read noise agree. The scale maps the top of the
-    reconstructed HDR headroom (2^HDR_HIGHLIGHT_EV) to full well divided by that gain, which is
-    the ADC ceiling with the default full-well conversion gain: the reconstructed highlights
-    stay below WhiteLevel in the DNG and TIFF, and a higher ISO collects proportionally fewer
-    photoelectrons for the same DN.
+    gain, so the DNG ISO and the simulated shot/read noise agree. With ``hdr_peak`` (the largest
+    value entering the sensor, in units where 1.0 is SDR white) the scale places that peak
+    ``peak_margin_ev`` below full well divided by the gain, so the brightest reconstructed pixel
+    stays below WhiteLevel while the rest of the frame is exposed as brightly as that allows.
+    Without a peak the top of the nominal HDR headroom (2^HDR_HIGHLIGHT_EV) is placed there
+    instead. ``applied_baseline_exposure_ev`` is the push, in EV, that brings SDR white back to
+    display white after that placement; the DNG carries it as BaselineExposure. The placement is
+    clamped to the span a developer can undo (MIN/MAX_DEVELOPMENT_SHIFT_EV); see
+    ``placement_clamp_note`` for the fallback message when that happens.
     """
     iso = exposure["PhotographicSensitivity"]
     base_iso = camera["iso_standard_range"].value[0]
     gain = iso.value / base_iso
     headroom_ev = config.HDR_HIGHLIGHT_EV if config.HDR_ENABLED else 0.0
+    if hdr_peak is not None:
+        if not math.isfinite(hdr_peak) or hdr_peak <= 0:
+            raise ValueError("hdr_peak must be finite and positive")
+        peak = float(hdr_peak)
+        method = "the brightest value entering the sensor sits peak_margin_ev below full well / gain"
+    else:
+        peak = 2.0**headroom_ev
+        method = "2^HDR_HIGHLIGHT_EV over analogue gain: the top of the HDR headroom reaches full well / gain"
+    placement_ev = min(MAX_DEVELOPMENT_SHIFT_EV, max(MIN_DEVELOPMENT_SHIFT_EV, math.log2(peak) + peak_margin_ev))
     return {
         "applied_analogue_gain": FieldRecord(
             "applied_analogue_gain",
@@ -188,12 +213,50 @@ def exposure_and_gain(
             dependencies=["PhotographicSensitivity", "iso_standard_range"],
             disclaimer=iso.disclaimer,
         ),
+        "applied_hdr_peak": FieldRecord(
+            "applied_hdr_peak",
+            peak,
+            Provenance.DETERMINISTIC if hdr_peak is not None else Provenance.FABRICATED,
+            "Largest optical value placed by the exposure scale; 1.0 is SDR white"
+            if hdr_peak is not None
+            else "Nominal HDR headroom used because no reconstructed peak was supplied",
+        ),
         "applied_exposure_scale": FieldRecord(
             "applied_exposure_scale",
-            2.0**-headroom_ev / gain,
+            2.0**-placement_ev / gain,
             iso.provenance,
-            "2^-HDR_HIGHLIGHT_EV over analogue gain: the top of the HDR headroom reaches full well / gain",
-            dependencies=["applied_analogue_gain"],
+            method,
+            dependencies=["applied_analogue_gain", "applied_hdr_peak"],
             disclaimer=iso.disclaimer,
         ),
+        "applied_baseline_exposure_ev": FieldRecord(
+            "applied_baseline_exposure_ev",
+            placement_ev,
+            Provenance.DETERMINISTIC,
+            "log2(applied_hdr_peak) + margin, clamped to the developable shift span: the push that "
+            "returns SDR white to display white",
+            unit="EV",
+            dependencies=["applied_hdr_peak"],
+        ),
     }
+
+
+def placement_clamp_note(
+    gain_records: Mapping[str, FieldRecord], *, peak_margin_ev: float = EXPOSURE_PEAK_MARGIN_EV
+) -> str | None:
+    """Fallback message when ``exposure_and_gain`` clamped the placement, else None."""
+    peak = gain_records["applied_hdr_peak"].value
+    wanted = math.log2(peak) + peak_margin_ev
+    applied = gain_records["applied_baseline_exposure_ev"].value
+    if math.isclose(wanted, applied, abs_tol=1e-9):
+        return None
+    if wanted > applied:
+        clipped = 2.0**applied
+        return (
+            f"Exposure placement clamped from {wanted:.2f} to {applied:.2f} EV (developers undo at most "
+            f"{MAX_DEVELOPMENT_SHIFT_EV:g} EV): optical values above {clipped:.3g}x SDR white clip at full well"
+        )
+    return (
+        f"Exposure placement clamped from {wanted:.2f} to {applied:.2f} EV (developers undo at least "
+        f"{MIN_DEVELOPMENT_SHIFT_EV:g} EV): the frame is exposed darker than full well allows"
+    )

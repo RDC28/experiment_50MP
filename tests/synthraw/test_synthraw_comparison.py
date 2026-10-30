@@ -20,7 +20,9 @@ from synthraw.comparison import (
     SourceResolutionComparator,
     UserStudyPairSheet,
     compare_and_report,
+    detail_energy,
     dng_statistics,
+    full_resolution_window,
     grid_crops,
     image_agreement,
     make_downsampled_source,
@@ -84,12 +86,21 @@ def test_tiny_end_to_end_comparison_writes_a_self_contained_report(runs, reporte
         "final_difference_map",
         "edge_agreement",
         "texture_agreement",
+        "detail_above_low_source_nyquist",
     ]
     locked = result.checks[1]
     assert locked.passed and locked.measured["settings_compared"] > 100 and not result.locked_mismatches
     difference = result.checks[5].measured
     assert 0 < difference["mean_abs_difference"] < 0.1 and 0.9 < difference["ssim"] <= 1
     assert len(result.crops) == 6 and all(np.isfinite(crop["metrics"]["ssim"]) for crop in result.crops)
+    # Crops are analysed at full resolution (factor 1), so each window is a slice of the master itself.
+    for crop in result.crops:
+        x0, y0, x1, y1 = crop["window_pixels"]
+        assert crop["analysis_factor"] == 1 and crop["analysed_shape"] == [y1 - y0, x1 - x0]
+        assert crop["box_pixels"][0] <= x0 < x1 <= crop["box_pixels"][2]
+    detail = result.checks[8].measured
+    assert detail["low_source_nyquist_cycles_per_px"] < detail["high_source_nyquist_cycles_per_px"] <= 0.5
+    assert 0 < detail["high_above_low_source_nyquist"] < 1
     assert {row["mask"] for row in result.hdr_masks} >= {
         "generated_hdr_area_percentage",
         "Highlight radiance fabricated",
@@ -103,7 +114,7 @@ def test_tiny_end_to_end_comparison_writes_a_self_contained_report(runs, reporte
     for heading in (
         "Final 50 MP difference map",
         "Edge agreement",
-        "Named crops",
+        "Named crops (full resolution, 1:1)",
         "Exposure posterior",
         "HDR and confidence masks",
         "DNG statistics",
@@ -262,3 +273,23 @@ def test_user_study_pair_sheet_is_blinded_and_keyed(runs, tmp_path):
         [("2K-derived", low, "4K-derived", high)], tmp_path / "b", crops=grid_crops(1, 2)
     )
     assert json.loads((again.parent / USER_STUDY_KEY).read_text()) == key
+
+
+def test_detail_energy_separates_detail_above_and_below_a_nyquist_cutoff():
+    """Regression: the 2K/4K crops were judged at a 9x downsample, which hid all detail above the 2K Nyquist."""
+    rows, cols = np.mgrid[0:128, 0:128]
+    coarse = np.sin(2 * np.pi * 0.05 * cols)
+    fine = np.sin(2 * np.pi * 0.4 * cols)
+    cutoffs = {"above_2k": 0.25}
+    assert detail_energy(coarse, cutoffs)["above_2k"] < 0.01
+    assert detail_energy(fine, cutoffs)["above_2k"] > 0.99
+    mixed = detail_energy(coarse + fine, cutoffs)["above_2k"]
+    assert mixed == pytest.approx(0.5, abs=0.05)
+    # A smooth gradient is scene shading, not detail.
+    assert detail_energy(rows / 128.0 + coarse, cutoffs)["above_2k"] < 0.01
+    assert detail_energy(np.zeros((4, 4)), cutoffs) == {"above_2k": None}
+
+
+def test_full_resolution_window_is_centred_and_clipped_to_the_box():
+    assert full_resolution_window((100, 50, 1100, 1050), 512) == (344, 294, 856, 806)
+    assert full_resolution_window((0, 0, 40, 30), 512) == (0, 0, 40, 30)

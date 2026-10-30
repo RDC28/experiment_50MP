@@ -15,6 +15,7 @@ from synthraw.libraw_validator import HardValidationError, LibRawValidator
 def tiny_raw(tmp_path, phase="RGGB", bits=14):
     geometry = replace(
         TargetGeometryPlanner().plan(64, 48),
+        outpaint_bands=(),  # The bare test sensor has no planned outpaint bands.
         width=64,
         height=48,
         active_area=(0, 0, 48, 64),

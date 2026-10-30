@@ -14,11 +14,36 @@ def test_nonidentity_round_trip():
     camera = np.arange(18).reshape(2, 3, 3) / 5
     gains = np.array([2, 1, 1.5])
     rendered = (camera * gains * 1.7) @ matrix.T
-    result = InverseISPEngine().reconstruct(rendered, model, white_balance_gains=tuple(gains), digital_gain=1.7)
+    result = InverseISPEngine().reconstruct(
+        rendered, model, white_balance_gains=tuple(gains), digital_gain=1.7, user_override=True
+    )
     np.testing.assert_allclose(result.camera_rgb, camera, atol=1e-14)
     np.testing.assert_allclose(result.records["AsShotNeutral"].value, 1 / gains)
     assert result.records["camera_to_working"].provenance == Provenance.MEASURED
     assert result.records["inverse_isp_digital_gain"].user_override
+    assert not result.records["AsShotNeutral"].user_override
+    inferred = InverseISPEngine().reconstruct(rendered, model, white_balance_gains=tuple(gains))
+    assert not inferred.records["inverse_isp_white_balance_gains"].user_override
+
+
+def test_measured_xyz_matrix_gives_sony_neutrals_and_round_trips():
+    from synthraw.camera_profile import ILCE1M2_DAYLIGHT_NEUTRAL, ILCE1M2_XYZ_TO_CAMERA_D65
+
+    record = FieldRecord("xyz_to_camera_d65", ILCE1M2_XYZ_TO_CAMERA_D65, "M", "Sample fit", disclaimer="One frame")
+    model = CameraColourModel.from_xyz_to_camera(record)
+    written = np.array(model.metadata()["ColorMatrix2"].value)
+    measured = np.array(ILCE1M2_XYZ_TO_CAMERA_D65)
+    np.testing.assert_allclose(written, measured * written[1, 1] / measured[1, 1], atol=1e-12)
+    np.testing.assert_allclose(np.max(written @ [0.95047, 1.0, 1.08883]), 1, atol=1e-4)
+    # A D65 grey seen by the measured camera is the LibRaw daylight neutral: R and B below green.
+    neutral = model.camera_neutral(np.ones(3))
+    np.testing.assert_allclose(neutral, ILCE1M2_DAYLIGHT_NEUTRAL, atol=2e-3)
+    assert neutral[0] < 1 and neutral[2] < 1
+    gains = (1.2, 1.0, 0.8)
+    result = InverseISPEngine().reconstruct(np.ones((1, 1, 3)), model, white_balance_gains=gains)
+    written = result.camera_rgb[0, 0] / result.camera_rgb[0, 0, 1]
+    np.testing.assert_allclose(result.records["AsShotNeutral"].value, written)
+    assert result.records["camera_to_working"].provenance == Provenance.MEASURED
 
 
 def test_dng_matrix_direction_and_white_adaptation():
