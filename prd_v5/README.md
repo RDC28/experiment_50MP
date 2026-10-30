@@ -69,7 +69,7 @@ estimators/overrides are rejected; a visible control does not claim implementati
   The predictor receives the context window origin and owns physical-edge
   padding; its receptive field must fit the halo. No model seam guarantee is
   implied. RAW-Diffusion/SpiralDiff/RAW-Flow loaders and camera adaptation remain
-  deferred. Their absence is reported; strict learned mode fails without a
+  deferred (see EVALUATION.md for the verified artifact status of each). Their absence is reported; strict learned mode fails without a
   compatible adapter.
 - Private identity/history remains unresolved. Experimental acceptance defaults
   do not grant licence acceptance. No GPS, serial or timestamp is invented.
@@ -289,7 +289,7 @@ samples normal to an isolated straight edge, including both plateaus. Oversample
 profiles must declare their spacing in native pixels. Missing profiles/evidence,
 flat edges and absent threshold crossings are explicit unavailable measurements.
 This API does not select scene edges, establish calibrated lens MTF or claim
-ISO slanted-edge compliance. Notebook controls remain pending.
+ISO slanted-edge compliance. The notebook exposes `MTF_EDGE` (default `None`, not measured).
 
 For a selected axis-aligned edge in a developed uint16 sRGB TIFF, call
 `prd_v5.mtf.tiff_edge_mtf(path, region=(top, left, bottom, right),
@@ -299,7 +299,7 @@ luminance averaging, reads one bounded row at a time and limits the region to
 1,048,576 pixels. Missing selection/evidence and flat edges stay not measured.
 Selection is caller-attested; slanted edges, scene texture, sharpening and noise
 can bias this sampled response. It is not calibrated optical MTF or recovered
-detail truth. Pair reporting is available as described below; notebook controls remain pending.
+detail truth. Pair reporting is available as described below, and the notebook exposes `MTF_EDGE`.
 
 
 `run_analytic_pair(..., mtf_edge={"region": (top, left, bottom, right),
@@ -311,4 +311,29 @@ not-measured results. The caller must establish edge suitability in each output;
 shared coordinates do not certify registration. This is sampled response, not
 an acceptance pass or evidence of improved scene detail. Invalid selections or
 extraction failures prevent publication of pair completion. Controls remain
-external inputs rather than replay configuration; notebook wiring is pending.
+external inputs rather than replay configuration; the notebook passes `MTF_EDGE` to the pair run.
+
+## How to test on Colab
+
+Run these only on a Colab A100 runtime, never on the development Mac.
+
+1. Run the setup cell. It installs the repository with the `sr` and `metrics`
+   extras (the `metrics` extra pins `lpips==0.1.4`). It does not install Adobe
+   `dng_validate`: the SDK has no Linux build project, so that gate is a visible
+   skip (see EVALUATION.md).
+2. Maximum defaults request every stage: full 50 MP, HAT, HYBRID, HDR, sensor and
+   optics priors, all outputs, and the exposure (-3/-2/0/+2/+3 EV), WB,
+   highlight/shadow and demosaic edit sweeps.
+3. Set `COLOUR_REFERENCES` to independent aligned uint16 sRGB TIFFs plus evidence.
+   Calibrated CIEDE2000 and LPIPS (`LPIPS_OPTIONS`: patch 64-1024, `alex`, `cuda`)
+   use them. With no reference both stay `not measured`, never passed.
+4. Set `MTF_EDGE` to a native-pixel region and edge evidence to measure sampled MTF.
+   Leave it `None` to keep MTF `not measured`.
+5. To use learned weights, supply `SR_CHECKPOINT` (path, expected SHA-256, backend,
+   revision, source, licence, licence acceptance). No checkpoint is downloaded
+   automatically: no public artifact with a verified byte SHA-256 was found for
+   HAT, RAW-Flow or HDRUNet. RAW-Diffusion and SpiralDiff publish no usable
+   checkpoint. Without weights the Lanczos/analytic fallback is reported.
+6. Inspect `validation.json`, the pair JSON/HTML and the edit-sweep folders. The
+   RAW pre/post-noise comparison, frequency bands, metadata coherence and HDR
+   validity gate run automatically.
