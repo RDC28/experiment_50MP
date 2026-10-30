@@ -120,3 +120,11 @@ def test_notebook_wires_lpips_and_mtf_controls():
     text = "\n".join(c.source for c in notebook.cells if c.cell_type == "code")
     assert "lpips_options=LPIPS_OPTIONS" in text and "mtf_edge=MTF_EDGE" in text
     assert "[sr,metrics]" in text
+
+
+def test_notebook_wires_optional_hdrunet_checkpoint():
+    notebook, values = assignments()
+    assert values["HDRUNET_CHECKPOINT"] is None and values["HDRUNET_SHA256"] is None
+    assert values["HDRUNET_LICENCE_ACCEPTED"] is False
+    text = "\n".join(c.source for c in notebook.cells if c.cell_type == "code")
+    assert "load_hdrunet_adapter(" in text and "HDRUNET_SHA256," in text
