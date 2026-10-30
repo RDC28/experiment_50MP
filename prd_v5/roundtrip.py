@@ -352,3 +352,121 @@ def develop_demosaic_sweep(
         "detail_accuracy": "not measured",
         "limitations": "Developer response only; unchanged RAW, no ground truth or visual editability acceptance",
     }
+
+
+def develop_tone_sweep(
+    dng_path: str | Path,
+    output_directory: str | Path,
+    *,
+    baseline_exposure_ev: float = 0.0,
+    shadow_lifts_ev: tuple[float, float] = (0.5, 2.0),
+    max_working_bytes: int = 512 * 1024 * 1024,
+) -> dict:
+    """Export low/high highlight reconstruction and explicit post-develop shadow lifts.
+
+    LibRaw reconstruction levels 3/9 favor whites/colors respectively, not two
+    calibrated recovery strengths. Shadow edits use the monotone channel curve
+    y=g*x/(1+(g-1)*x), g=2**EV, on normalized linear RGB in bounded row strips.
+    This preserves black/white endpoints and cannot recover clipped information.
+    """
+    import math
+    import shutil
+
+    import rawpy
+
+    if type(max_working_bytes) is not int or max_working_bytes <= 0:
+        raise ValueError("max_working_bytes must be a positive integer")
+    if (
+        isinstance(baseline_exposure_ev, bool)
+        or not isinstance(baseline_exposure_ev, (int, float))
+        or not math.isfinite(baseline_exposure_ev)
+        or abs(baseline_exposure_ev) > 16
+    ):
+        raise ValueError("baseline_exposure_ev must be finite and between -16 and 16")
+    if not isinstance(shadow_lifts_ev, (tuple, list)) or len(shadow_lifts_ev) != 2:
+        raise ValueError("shadow_lifts_ev must contain two increasing positive EV values up to 4")
+    if (
+        any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0 < value <= 4
+            for value in shadow_lifts_ev
+        )
+        or shadow_lifts_ev[0] >= shadow_lifts_ev[1]
+    ):
+        raise ValueError("shadow_lifts_ev must contain two increasing positive EV values up to 4")
+    source, destination = Path(dng_path), Path(output_directory)
+    with rawpy.RawPy() as header:
+        header.open_file(str(source))
+        estimate = header.sizes.raw_width * header.sizes.raw_height * 64
+    if estimate > max_working_bytes:
+        raise ValueError("LibRaw tone sweep exceeds the configured memory budget")
+    entries = []
+    edits = (
+        ("highlights_low", 3, 0.0),
+        ("highlights_high", 9, 0.0),
+        ("shadows_low", 0, shadow_lifts_ev[0]),
+        ("shadows_high", 0, shadow_lifts_ev[1]),
+    )
+    destination.mkdir(parents=True, exist_ok=False)
+    try:
+        for name, highlight_level, lift_ev in edits:
+            with rawpy.imread(str(source)) as raw:
+                rgb = raw.postprocess(
+                    output_bps=16,
+                    use_camera_wb=True,
+                    use_auto_wb=False,
+                    no_auto_bright=True,
+                    bright=float(2**baseline_exposure_ev),
+                    user_flip=0,
+                    output_color=rawpy.ColorSpace.sRGB,
+                    gamma=(1, 1),
+                    highlight_mode=highlight_level,
+                    demosaic_algorithm=rawpy.DemosaicAlgorithm.LINEAR,
+                )
+                expected_shape = (raw.sizes.height, raw.sizes.width, 3)
+            if rgb.dtype != np.uint16 or rgb.shape != expected_shape:
+                raise HardValidationError("Unexpected tone sweep shape or precision")
+            if lift_ev:
+                gain = 2.0**lift_ev
+                for start in range(0, rgb.shape[0], 64):
+                    block = rgb[start : start + 64].astype(np.float64) / 65535
+                    block = gain * block / (1 + (gain - 1) * block)
+                    rgb[start : start + 64] = np.rint(block * 65535).astype(np.uint16)
+            path = destination / f"{name}.tiff"
+            tifffile.imwrite(path, rgb, photometric="rgb", compression=None, metadata=None)
+            entries.append(
+                {
+                    "name": name,
+                    "highlight_level": highlight_level,
+                    "shadow_lift_ev": lift_ev,
+                    "path": str(path),
+                    "shape": list(rgb.shape),
+                    "mean_rgb_code": np.mean(rgb, axis=(0, 1), dtype=np.float64).tolist(),
+                    "zero_samples": int(np.count_nonzero(rgb == 0)),
+                    "saturated_samples": int(np.count_nonzero(rgb == 65535)),
+                }
+            )
+            del rgb
+    except BaseException:
+        shutil.rmtree(destination)
+        raise
+    return {
+        "status": "measured",
+        "method": "LibRaw highlight levels 3/9; post-develop rational shadow curve; camera WB, linear demosaic",
+        "shadow_curve": "y=g*x/(1+(g-1)*x), g=2**shadow_lift_ev, x=linear RGB code/65535",
+        "baseline_exposure_ev": baseline_exposure_ev,
+        "working_bytes_estimate": estimate,
+        "rawpy_version": rawpy.__version__,
+        "libraw_version": list(rawpy.libraw_version),
+        "renders": entries,
+        "highlight_recovery_accuracy": "not measured",
+        "shadow_radiance_accuracy": "not measured",
+        "physical_dynamic_range": "not measured",
+        "limitations": (
+            "Developer response only; unchanged RAW, no recovered clipped-source truth or visual acceptance. "
+            "Levels 3/9 favor whites/colors, not calibrated recovery strength. "
+            "Shadow curve changes channel ratios and operates after uint16 development."
+        ),
+    }

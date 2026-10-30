@@ -336,3 +336,32 @@ checks pass. Integration fixtures cover real DNG edits, replay, nested hashes,
 paired propagation, disabled/unavailable states and failure completion policy.
 LibRaw's version tuple is normalized to a JSON list in sweep evidence so saved
 and in-memory reports agree. No background service, commit or push was started.
+
+### Generated-DNG highlight/shadow sweep API
+
+`develop_tone_sweep` now exports sequential low/high numbered LibRaw highlight
+reconstruction and low/high shadow-lift TIFFs from unchanged generated DNGs.
+The [official rawpy highlight contract](https://letmaik.github.io/rawpy/api/enums.html#rawpy.HighlightMode)
+identifies levels 3 and 9 as favoring whites and colors, not calibrated recovery
+strengths. The [Params API](https://letmaik.github.io/rawpy/api/rawpy.Params.html)
+provides highlight controls but no shadow-lift parameter. Shadow edits therefore
+explicitly apply a post-development rational channel curve
+`y=g*x/(1+(g-1)*x)`, `g=2**EV`, to normalized linear-light RGB in bounded row
+strips. Default low/high lifts are 0.5/2 EV; callers can supply an increasing pair
+up to 4 EV. Black/white endpoints are preserved. This curve changes channel
+ratios and cannot undo development quantization or clipping.
+
+Camera WB, linear demosaic, baseline brightness and output transfer are fixed.
+Only one render is retained at a time; header-only memory admission precedes
+unpacking, existing outputs are protected and failed sweeps remove partial
+outputs. Reports record settings, response statistics and library versions.
+Highlight accuracy, shadow-radiance accuracy and physical dynamic range stay
+not measured. No claim of recovered clipped-source truth is made. Automatic
+maximum-preset/notebook/report integration and full-size visual acceptance remain
+pending. No weights, models or notebook were downloaded or executed locally.
+
+Validation: all 38 roundtrip fixtures pass, including independent real LibRaw
+highlight renders, an equivalent independently evaluated shadow curve, increasing
+lift response, endpoint preservation, source immutability, memory admission,
+overwrite protection, invalid controls and partial-write cleanup. V5 lint,
+changed-Python formatting and diff whitespace checks pass.

@@ -204,3 +204,35 @@ response evidence in child manifests, paired summaries and JSON/HTML validation.
 The ISP-derived BaselineExposure and existing development memory budget apply.
 Unavailable methods retain precise skips; a runtime failure prevents completion.
 RAW editability remains not measured pending visual acceptance and truth data.
+
+Generated-DNG highlight/shadow sweep API (Colab; automatic notebook integration pending):
+
+```python
+from prd_v5.roundtrip import develop_tone_sweep
+
+edits = develop_tone_sweep(
+    "outputs/synthetic_50mp.dng",
+    "outputs/tone_edits",
+    baseline_exposure_ev=0.0,  # use the actual ISP BaselineExposure
+    shadow_lifts_ev=(0.5, 2.0),
+    max_working_bytes=8 * 1024**3,
+)
+```
+
+This exports four sequential uint16 TIFFs. LibRaw highlight reconstruction levels
+3 and 9 favor whites and colors respectively, as described in the
+[official rawpy documentation](https://letmaik.github.io/rawpy/api/enums.html#rawpy.HighlightMode).
+They are low/high numbered settings, not calibrated recovery strengths. Shadow
+edits use explicit post-development channel curves
+`y=g*x/(1+(g-1)*x)`, with `g=2**EV` and normalized linear-light RGB `x`.
+The curve preserves black and white endpoints, increases continuously with EV,
+and changes color ratios. It operates after uint16 development and cannot
+restore information already clipped or quantized. Camera WB, linear demosaic
+and baseline brightness are held fixed; shadow renders use highlight clipping.
+
+Header-only memory admission precedes pixel unpacking. The destination must be
+new; failures remove partial sweep outputs. Evidence includes exact settings,
+means, endpoint counts, paths and library versions. Highlight/shadow truth,
+physical dynamic range and visual editability remain not measured. Allow about
+1.2 GB extra disk per 50 MP DNG. Fixture check:
+`.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.
