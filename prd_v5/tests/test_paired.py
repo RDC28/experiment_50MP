@@ -252,3 +252,106 @@ def test_pair_raw_metrics_match_exported_electrons_with_sensor_noise(tmp_path):
         assert result["mae"] == pytest.approx(np.mean(np.abs(difference)))
         assert result["rmse"] == pytest.approx(np.sqrt(np.mean(difference**2)))
         assert result["rmse"] > 0
+
+
+def test_pair_calibrated_colour_references_reach_json_html_and_crops(tmp_path):
+    import numpy as np
+    import tifffile
+
+    from prd_v5.colour_metrics import calibrated_delta_e
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True, strip_rows=3)
+    contract = {
+        "camera_profile": "fixture camera and profile",
+        "trusted_development": "fixture black sRGB reference, not scientific truth",
+        "alignment": "fixture native coordinates",
+        "colour_space": "sRGB_D65_2deg",
+    }
+    reference = tmp_path / "reference.tiff"
+    tifffile.imwrite(reference, np.zeros((32, 32, 3), dtype=np.uint16), photometric="rgb")
+    output = tmp_path / "pair"
+    region = (2, 3, 10, 12)
+    report = run_analytic_pair(
+        source,
+        source,
+        output,
+        config,
+        comparison_region=region,
+        colour_references={"2k": {"path": reference, "calibration": contract}},
+    )
+    colour = report["colour_comparison"]
+    for name, crop in (("whole_raster", None), ("crop", region)):
+        independent = calibrated_delta_e(
+            output / "2k/developed.tiff", reference, calibration=contract, region=crop, strip_rows=1
+        )
+        assert colour["2k"][name]["pixels"] == independent["pixels"]
+        assert colour["2k"][name]["mean_delta_e2000"] == pytest.approx(independent["mean_delta_e2000"])
+        assert independent["mean_delta_e2000"] > 0
+        assert colour["4k"][name]["status"] == "not measured"
+        assert "mean_delta_e2000" not in colour["4k"][name]
+    assert colour["2k"]["reference"]["sha256"] == hashlib.sha256(reference.read_bytes()).hexdigest()
+    assert json.loads((output / "pair_manifest.json").read_text()) == report
+    page = (output / "2k_vs_4k_report.html").read_text()
+    assert "colour_comparison" in page
+    assert "measured reference colour difference" in page
+    assert "No aligned calibrated reference supplied" in page
+
+
+@pytest.mark.parametrize("references", [{"typo": {}}, {"2k": {}}, {"2k": {"path": "", "calibration": None}}])
+def test_pair_rejects_malformed_colour_reference_controls_before_io(tmp_path, references):
+    output = tmp_path / "pair"
+    with pytest.raises(ValueError, match="reference"):
+        run_analytic_pair("absent", "absent", output, AnalyticRunConfig(), colour_references=references)
+    assert not output.exists()
+
+
+def test_colour_measurement_failure_prevents_pair_completion(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+
+    def fail(*args, **kwargs):
+        raise OSError("colour reference unreadable")
+
+    monkeypatch.setattr("prd_v5.paired.calibrated_delta_e", fail)
+    output = tmp_path / "pair"
+    with pytest.raises(OSError, match="colour reference unreadable"):
+        run_analytic_pair(source, source, output, config)
+    assert (output / "2k/manifest.json").is_file()
+    assert not (output / "pair_manifest.json").exists()
+    assert not (output / "2k_vs_4k_report.html").exists()
+
+
+@pytest.mark.parametrize("calibrated", [False, True])
+def test_pair_colour_missing_calibration_and_unequal_truth_stay_unmeasured(tmp_path, calibrated):
+    import numpy as np
+    import tifffile
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    reference = tmp_path / "reference.tiff"
+    tifffile.imwrite(reference, np.zeros((16, 16, 3), dtype=np.uint16), photometric="rgb")
+    contract = (
+        {
+            "camera_profile": "fixture camera",
+            "trusted_development": "fixture sRGB",
+            "alignment": "fixture coordinates",
+            "colour_space": "sRGB_D65_2deg",
+        }
+        if calibrated
+        else None
+    )
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    report = run_analytic_pair(
+        source,
+        source,
+        tmp_path / "pair",
+        config,
+        colour_references={"4k": {"path": reference, "calibration": contract}},
+    )
+    result = report["colour_comparison"]["4k"]["whole_raster"]
+    assert result["status"] == "not measured"
+    assert "Unequal rasters" in result["reason"] if calibrated else "No calibration" in result["reason"]
+    assert "mean_delta_e2000" not in result

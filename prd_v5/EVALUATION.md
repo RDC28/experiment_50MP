@@ -523,3 +523,28 @@ colour differences, Sharma's published CIEDE2000 Lab pair, identity, crops,
 bounded conversion, malformed contracts, dimensions and types. No model, weights,
 notebook or full-size reconstruction was executed. V5 lint/format and whitespace
 checks pass.
+
+
+### Paired calibrated colour-reference reporting
+
+`run_analytic_pair` now accepts per-source `colour_references` records containing
+an aligned uint16 sRGB TIFF path and the explicit calibration contract. Each
+2K/4K developed output receives independent whole-raster and optional native
+crop CIEDE2000 evidence in the pair JSON/HTML. A supplied reference also records
+its path, byte count and SHA-256 using bounded streaming. Missing references or
+calibration and unequal raster shapes retain the API's not-measured state;
+invalid or unreadable supplied files fail without publishing pair completion.
+Unknown source labels and malformed controls fail before output creation.
+
+Calibration remains caller-attested. A measured colour difference establishes
+neither an acceptance pass nor recovered RAW/HDR truth. References are not
+resampled or silently shared between sources. Child bundle Colour gates,
+notebook controls and maximum-settings wiring remain deferred to a later unit
+of work. Tiny real DNG/TIFF fixtures verify metric propagation, independent
+numeric agreement, crop coverage, reference hashes, missing truth, malformed
+controls and completion failure behavior. No model, weights, notebook or
+full-size reconstruction was executed locally.
+
+Validation: 43 focused paired, colour-metric and delivery fixtures passed;
+v5 lint, all v5 Python formatting and diff whitespace checks passed. No full
+suite, background service, commit or push was started.

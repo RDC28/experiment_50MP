@@ -7,9 +7,10 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from prd_v5.colour_metrics import calibrated_delta_e
 from prd_v5.comparison import compare_bayer, compare_renders, validate_region
 from prd_v5.config import AnalyticRunConfig
-from prd_v5.delivery import write_pair_html
+from prd_v5.delivery import digest, write_pair_html
 from prd_v5.fidelity import SRCheckpoint
 from prd_v5.fields import validate_selections
 from prd_v5.geometry import GeometryPlanner
@@ -30,6 +31,7 @@ def run_analytic_pair(
     inverse_mode: str = "ANALYTIC",
     residual_adapter: ResidualAdapter | None = None,
     comparison_region: tuple[int, int, int, int] | None = None,
+    colour_references: dict | None = None,
 ) -> dict:
     """Run caller-labelled variants sequentially using exactly the same config.
 
@@ -39,11 +41,22 @@ def run_analytic_pair(
     Optional comparison_region adds native-pixel crop metrics alongside the whole
     visible raster comparison. Bounds must fit both planned rasters before any run.
     Existing output directories are never reused. Full-scale work is Colab-only.
+    Optional colour_references maps 2k/4k to {path, calibration} records for
+    independently trusted aligned uint16 sRGB TIFFs. Calibration is caller
+    attestation; pair disagreement is never used as colour truth.
     """
     if not isinstance(config, AnalyticRunConfig):
         raise ValueError("Expected one validated AnalyticRunConfig")
     learned_state = resolve_mode(inverse_mode, residual_adapter, config.camera)
     validate_region(comparison_region)
+    colour_references = {} if colour_references is None else colour_references
+    if not isinstance(colour_references, dict) or set(colour_references) - {"2k", "4k"}:
+        raise ValueError("colour_references must map only 2k/4k labels")
+    for record in colour_references.values():
+        if not isinstance(record, dict) or set(record) != {"path", "calibration"}:
+            raise ValueError("Each colour reference requires exactly path and calibration")
+        if not isinstance(record["path"], (str, Path)) or not str(record["path"]).strip():
+            raise ValueError("Colour reference path must be nonempty")
     camera_selections = tuple(camera_selections)
     isp_selections = tuple(isp_selections)
     validate_selections(config.camera, camera_selections)
@@ -117,7 +130,32 @@ def run_analytic_pair(
             raw_comparison[stage]["crop"] = compare_bayer(
                 *paths, cfa_pattern=config.camera.cfa_pattern, strip_rows=config.strip_rows, region=comparison_region
             )
+    colour_comparison = {}
+    for label in ("2k", "4k"):
+        reference = colour_references.get(label, {})
+        candidate = output / label / "developed.tiff"
+        evidence = {
+            "whole_raster": calibrated_delta_e(
+                candidate,
+                reference.get("path"),
+                calibration=reference.get("calibration"),
+                strip_rows=config.strip_rows,
+            ),
+        }
+        if comparison_region is not None:
+            evidence["crop"] = calibrated_delta_e(
+                candidate,
+                reference.get("path"),
+                calibration=reference.get("calibration"),
+                strip_rows=config.strip_rows,
+                region=comparison_region,
+            )
+        if reference:
+            path = Path(reference["path"])
+            evidence["reference"] = {"path": str(path), "sha256": digest(path), "size_bytes": path.stat().st_size}
+        colour_comparison[label] = evidence
     report = {
+        "colour_comparison": colour_comparison,
         "raw_comparison": raw_comparison,
         "schema_version": 1,
         "pipeline": "sequential experimental learned residual pair"

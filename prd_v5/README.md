@@ -255,5 +255,13 @@ colour conversion; arbitrary camera RGB, linear RGB and HDR are unsupported.
 The API computes native-pixel CIEDE2000 mean/RMS/maximum in bounded row strips,
 optionally over `region=(top,left,bottom,right)`. It performs no alignment or
 exposure fitting. Missing reference/calibration stays not measured; evidence is
-caller-attested rather than independently verified. Notebook/report integration
-is pending, so call this API explicitly on Colab benchmark references for now.
+caller-attested rather than independently verified. `run_analytic_pair` now accepts optional `colour_references`, keyed by `"2k"`
+and/or `"4k"`, each containing `{"path": reference_tiff, "calibration": contract}`.
+The pair JSON/HTML records independent whole-raster and optional
+`comparison_region` crop measurements for each generated `developed.tiff`, with
+reference path, byte count and streamed SHA-256. Omitted references remain
+explicitly not measured. References must match each output's native geometry;
+no reference is implicitly shared between sources. An unreadable or invalid
+reference prevents pair completion. These metrics do not set a scientific
+acceptance threshold. Child bundle gates and notebook controls remain pending;
+pass references explicitly to the paired API on Colab for now.
