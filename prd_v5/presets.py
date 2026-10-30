@@ -19,6 +19,7 @@ def full_quality_config():
         exposure_sweep=True,
         wb_sweep=True,
         demosaic_sweep=True,
+        tone_sweep=True,
         target_megapixels=50,
         assume_unprofiled_srgb=True,
         max_decode_bytes=1024**3,

@@ -120,6 +120,24 @@
       "minimum": 1.000001,
       "maximum": 4,
       "default": 1.25
+    },
+    "tone_sweep": {
+      "type": "boolean",
+      "default": false
+    },
+    "shadow_lifts_ev": {
+      "type": "array",
+      "items": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 4
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "default": [
+        0.5,
+        2.0
+      ]
     }
   },
   "$defs": {

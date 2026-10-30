@@ -365,3 +365,28 @@ highlight renders, an equivalent independently evaluated shadow curve, increasin
 lift response, endpoint preservation, source immutability, memory admission,
 overwrite protection, invalid controls and partial-write cleanup. V5 lint,
 changed-Python formatting and diff whitespace checks pass.
+
+
+### Automatic highlight/shadow sweep integration
+
+The maximum preset and notebook now request four sequential highlight/shadow
+edits for each generated DNG. Strict `tone_sweep` and validated increasing
+`shadow_lifts_ev` controls serialize for replay; notebook `ENABLE_TONE_SWEEP=True`
+and `SHADOW_LIFTS_EV=(0.5, 2.0)` expose them. Execution uses the actual ISP
+BaselineExposure and existing LibRaw memory admission. Disabled runs record that
+state, and runtime failures prevent a completion manifest.
+
+Child manifests, paired summaries and JSON/HTML RAW editability evidence retain
+response statistics, exact settings and library versions. Each nested TIFF has
+byte counts and SHA-256. Allow another 2.4 GB disk for the pair. These measured
+developer responses establish neither recovered clipped-source truth nor
+physical latitude. Highlight/shadow accuracy and RAW editability remain not
+measured pending aligned references and full-size Colab visual acceptance.
+No model, weights, notebook or full-size reconstruction was executed locally.
+
+Validation: 153 focused pipeline, configuration/schema, notebook-static, paired,
+roundtrip and delivery fixtures passed. V5 lint, all v5 Python formatting,
+notebook-cell formatting and diff whitespace checks pass. Fixtures verify real
+DNG exports, configurable lifts, baseline scaling, nested hashes, report
+propagation, disabled behavior and failure completion policy. No background
+service, commit or push was started.

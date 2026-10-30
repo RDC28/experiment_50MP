@@ -142,7 +142,7 @@ request these edits automatically via `exposure_sweep=True` and
 `ENABLE_EXPOSURE_SWEEP=True`. Conservative library defaults disable them. Each
 child bundle retains `exposure_edits/`, hashes all five TIFFs, and includes the
 response in its manifest and RAW editability validation evidence. A failed sweep
-prevents completion. Highlight/shadow sweeps and full-size visual
+prevents completion. Full-size visual
 review remain pending; RAW editability remains not measured. Test without models using
 `.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.
 
@@ -205,7 +205,7 @@ The ISP-derived BaselineExposure and existing development memory budget apply.
 Unavailable methods retain precise skips; a runtime failure prevents completion.
 RAW editability remains not measured pending visual acceptance and truth data.
 
-Generated-DNG highlight/shadow sweep API (Colab; automatic notebook integration pending):
+Generated-DNG highlight/shadow sweeps (Colab; automatic in the maximum notebook):
 
 ```python
 from prd_v5.roundtrip import develop_tone_sweep
@@ -236,3 +236,12 @@ means, endpoint counts, paths and library versions. Highlight/shadow truth,
 physical dynamic range and visual editability remain not measured. Allow about
 1.2 GB extra disk per 50 MP DNG. Fixture check:
 `.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.
+
+The maximum preset enables `tone_sweep=True`. Notebook `ENABLE_TONE_SWEEP=True`
+and `SHADOW_LIFTS_EV=(0.5, 2.0)` expose the switch and increasing shadow lifts
+(up to 4 EV). Both generated DNGs receive four sequential edits using the actual
+ISP BaselineExposure and development memory budget. Allow another 2.4 GB disk
+for the pair. Child manifests, paired summaries and JSON/HTML validation retain
+response evidence and hashes for each TIFF. Disabled runs record that state;
+runtime failures prevent completion. Recovery accuracy and RAW editability stay
+not measured pending aligned truth and full-size visual acceptance.

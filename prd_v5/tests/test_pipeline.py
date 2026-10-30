@@ -51,6 +51,7 @@ def test_complete_bundle(tmp_path):
     assert report["stages"]["exposure_sweep"]["status"] == "disabled"
     assert report["stages"]["wb_sweep"]["status"] == "disabled"
     assert report["stages"]["demosaic_sweep"]["status"] == "disabled"
+    assert report["stages"]["tone_sweep"]["status"] == "disabled"
     assert not (output / "demosaic_edits").exists()
     assert not (output / "exposure_edits").exists()
     assert report["stages"]["analytic"]["forward_consistency"]["status"] == "passed"
@@ -297,6 +298,8 @@ def test_config_runs_exposure_edits_and_hashes_nested_outputs(tmp_path):
         wb_sweep=True,
         wb_sweep_strength=1.5,
         demosaic_sweep=True,
+        tone_sweep=True,
+        shadow_lifts_ev=(1.0, 3.0),
         isp=AnalyticISP(hdr_max_radiance=2),
     )
     output = tmp_path / "edits"
@@ -343,9 +346,20 @@ def test_config_runs_exposure_edits_and_hashes_nested_outputs(tmp_path):
         assert report["artifacts"][path]["sha256"] == hashlib.sha256((output / path).read_bytes()).hexdigest()
         assert path in (output / "report.html").read_text()
     assert "demosaic_sweep" in (output / "validation_report.html").read_text()
+    tone = report["stages"]["tone_sweep"]
+    assert tone["status"] == "measured"
+    assert tone["baseline_exposure_ev"] == config.isp.baseline_exposure_ev
+    assert [r["shadow_lift_ev"] for r in tone["renders"]] == [0, 0, 1, 3]
+    assert validation["RAW editability"]["tone_sweep"] == tone
+    assert saved["tone_sweep"] is True and saved["shadow_lifts_ev"] == [1, 3]
+    for render in tone["renders"]:
+        path = f"tone_edits/{render['name']}.tiff"
+        assert report["artifacts"][path]["sha256"] == hashlib.sha256((output / path).read_bytes()).hexdigest()
+        assert path in (output / "report.html").read_text()
+    assert "tone_sweep" in (output / "validation_report.html").read_text()
 
 
-@pytest.mark.parametrize("stage", ["exposure", "wb", "demosaic"])
+@pytest.mark.parametrize("stage", ["exposure", "wb", "demosaic", "tone"])
 def test_edit_failure_prevents_completion(tmp_path, monkeypatch, stage):
     source = tmp_path / "source.png"
     Image.fromarray(np.full((32, 32, 3), 80, dtype=np.uint8)).save(source)

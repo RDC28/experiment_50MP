@@ -43,10 +43,22 @@ class AnalyticRunConfig:
     accept_experimental_optics: bool = False
     exposure_sweep: bool = False
     wb_sweep: bool = False
+    tone_sweep: bool = False
+    shadow_lifts_ev: tuple[float, float] = (0.5, 2.0)
     demosaic_sweep: bool = False
     wb_sweep_strength: float = 1.25
 
     def __post_init__(self):
+        if type(self.tone_sweep) is not bool:
+            raise ValueError("tone_sweep must be boolean")
+        if (
+            not isinstance(self.shadow_lifts_ev, (tuple, list))
+            or len(self.shadow_lifts_ev) != 2
+            or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 < v <= 4 for v in self.shadow_lifts_ev)
+            or self.shadow_lifts_ev[0] >= self.shadow_lifts_ev[1]
+        ):
+            raise ValueError("shadow_lifts_ev must contain two increasing positive EV values up to 4")
+        object.__setattr__(self, "shadow_lifts_ev", tuple(self.shadow_lifts_ev))
         if type(self.exposure_sweep) is not bool:
             raise ValueError("exposure_sweep must be boolean")
         if type(self.demosaic_sweep) is not bool:
@@ -180,5 +192,7 @@ class AnalyticRunConfig:
             exposure_sweep=self.exposure_sweep,
             wb_sweep=self.wb_sweep,
             demosaic_sweep=self.demosaic_sweep,
+            tone_sweep=self.tone_sweep,
+            shadow_lifts_ev=self.shadow_lifts_ev,
             wb_sweep_strength=self.wb_sweep_strength,
         )

@@ -194,9 +194,7 @@ def finish_bundle(output, report):
                 "SR value": "Requires genuine held-out RAW-derived truth and Lanczos reference",
                 "Colour": "Requires aligned calibrated colour truth",
                 "Noise validity": "Flat/dark sweep pending; existing tests establish simulator self-consistency only",
-                "RAW editability": (
-                    "Developer response only; highlight/shadow sweeps and Colab visual acceptance pending"
-                ),
+                "RAW editability": ("Developer response only; Colab visual acceptance pending"),
             }.items()
         },
         "HDR validity": hdr_validation,
@@ -213,6 +211,7 @@ def finish_bundle(output, report):
     validation["RAW editability"]["exposure_sweep"] = report["stages"]["exposure_sweep"]
     validation["RAW editability"]["wb_sweep"] = report["stages"]["wb_sweep"]
     validation["RAW editability"]["demosaic_sweep"] = report["stages"]["demosaic_sweep"]
+    validation["RAW editability"]["tone_sweep"] = report["stages"]["tone_sweep"]
     validation["Noise validity"] = photon_transfer(CameraHypothesis(**report["camera"]))
     (output / "validation.json").write_text(json.dumps(validation, indent=2) + "\n")
     report["validation"] = validation

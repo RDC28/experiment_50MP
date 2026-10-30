@@ -46,6 +46,10 @@ def test_schema_covers_every_implemented_setting(schema):
         {"exposure_sweep": 1},
         {"wb_sweep": 1},
         {"demosaic_sweep": 1},
+        {"tone_sweep": 1},
+        {"shadow_lifts_ev": [0, 2]},
+        {"shadow_lifts_ev": [1]},
+        {"shadow_lifts_ev": [True, 2]},
         {"wb_sweep_strength": True},
         {"wb_sweep_strength": 1},
         {"wb_sweep_strength": 4.1},
@@ -82,3 +86,9 @@ def test_structural_schema_does_not_claim_matrix_physics(schema):
     Draft202012Validator(schema).validate(value)
     with pytest.raises(ValueError, match="well-conditioned"):
         AnalyticRunConfig.from_json(json.dumps(value))
+
+
+@pytest.mark.parametrize("values", [(2, 1), (1, float("nan")), (1, 5), "12"])
+def test_shadow_lifts_semantic_validation(values):
+    with pytest.raises(ValueError, match="shadow_lifts_ev"):
+        AnalyticRunConfig(shadow_lifts_ev=values)
