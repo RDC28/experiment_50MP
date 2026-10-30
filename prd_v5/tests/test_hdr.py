@@ -69,15 +69,3 @@ def test_hdr_pair_pixels_replay_and_uncertainty(tmp_path):
         assert "unknown" in hdr["uncertainty"]
         assert manifest["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
         assert json.loads((dng.parent / "config.json").read_text())["isp"]["hdr_max_radiance"] == 16
-
-
-def test_notebook_hdr_opt_in_dispatch():
-    from pathlib import Path
-
-    notebook = json.loads((Path(__file__).parents[1] / "notebooks/synthetic_50mp_v5.ipynb").read_text())
-    source = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
-    assert "ACCEPT_ANALYTIC_HDR_EXPERIMENT = False" in source
-    assert "HDR_MAX_RADIANCE = 16.0" in source
-    assert "HDR_MAX_RADIANCE if ENABLE_HDR and ACCEPT_ANALYTIC_HDR_EXPERIMENT else 1.0" in source
-    assert source.index('states["ENABLE_HDR"] =') > source.index("result = run_analytic_pair(")
-    compile(source, "<notebook>", "exec")

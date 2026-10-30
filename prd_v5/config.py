@@ -12,6 +12,7 @@ from prd_v5.fidelity import SRCheckpoint
 from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.learned import ResidualAdapter
+from prd_v5.optical_effects import OpticalEffects
 from prd_v5.optics import Distortion, Vignetting
 from prd_v5.sensor import SensorEffects
 
@@ -24,7 +25,9 @@ class AnalyticRunConfig:
     inference. Paths are supplied at execution, outside the reusable config.
     """
 
+    optical_effects: OpticalEffects = field(default_factory=OpticalEffects)
     sensor_effects: SensorEffects = field(default_factory=SensorEffects)
+    resampling: str = "BILINEAR"
     schema_version: int = 1
     camera: CameraHypothesis = field(default_factory=CameraHypothesis)
     isp: AnalyticISP = field(default_factory=AnalyticISP)
@@ -40,6 +43,12 @@ class AnalyticRunConfig:
     accept_experimental_optics: bool = False
 
     def __post_init__(self):
+        if self.resampling not in ("BILINEAR", "LANCZOS"):
+            raise ValueError("resampling must be BILINEAR or LANCZOS")
+        if not isinstance(self.optical_effects, OpticalEffects):
+            raise ValueError("Expected OpticalEffects")
+        if any(self.optical_effects.states().values()) and not self.accept_experimental_optics:
+            raise ValueError("Explicit experimental acceptance is required for optics")
         if not isinstance(self.distortion, Distortion):
             raise ValueError("Expected validated Distortion")
         if not isinstance(self.vignetting, Vignetting):
@@ -103,6 +112,7 @@ class AnalyticRunConfig:
                 ("camera", CameraHypothesis),
                 ("isp", AnalyticISP),
                 ("sensor_effects", SensorEffects),
+                ("optical_effects", OpticalEffects),
                 ("vignetting", Vignetting),
                 ("distortion", Distortion),
             ):
@@ -133,7 +143,9 @@ class AnalyticRunConfig:
             output_dir,
             self.camera,
             self.isp,
+            resampling=self.resampling,
             sensor_effects=self.sensor_effects,
+            optical_effects=self.optical_effects,
             vignetting=self.vignetting,
             distortion=self.distortion,
             accept_experimental_optics=self.accept_experimental_optics,

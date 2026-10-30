@@ -28,7 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 # Phase 2 pretrained super-resolution (inference only). Colab preinstalls PyTorch.
 sr = ["torch>=2.1", "spandrel>=0.4.1"]
-dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.9", "nbclient>=0.10", "ipykernel>=6.29"]
+dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.9", "nbclient>=0.10", "ipykernel>=6.29", "jsonschema>=4.18"]
 
 [tool.setuptools]
 # PRD 4.4 keeps the modules directly in src/; they install as the synthetic_raw_lab package.
@@ -36,10 +36,10 @@ package-dir = { "synthetic_raw_lab" = "src", "synthraw" = "src/synthraw", "prd_v
 packages = ["synthetic_raw_lab", "synthraw", "prd_v5"]
 
 [tool.setuptools.package-data]
-prd_v5 = ["analytic-config.schema.json"]
+prd_v5 = ["analytic-config.schema.json", "field_catalogue.json"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "prd_v5/tests"]
 pythonpath = ["src"]
 addopts = "-ra"
 

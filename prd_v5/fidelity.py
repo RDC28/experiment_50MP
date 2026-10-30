@@ -74,7 +74,13 @@ def load_checkpoint(spec: SRCheckpoint):
         or descriptor.output_channels != 3
     ):
         raise ValueError("Checkpoint architecture, scale or RGB contract mismatch")
-    dtype = torch.float16 if descriptor.supports_half else torch.float32
+    dtype = (
+        torch.bfloat16
+        if getattr(descriptor, "supports_bfloat16", False) and torch.cuda.is_bf16_supported()
+        else torch.float16
+        if descriptor.supports_half
+        else torch.float32
+    )
     descriptor = descriptor.eval().to(device="cuda", dtype=dtype)
 
     def infer(patch):

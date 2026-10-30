@@ -67,3 +67,41 @@ def rasterize(source: np.ndarray, destination: np.memmap, support: np.memmap, pl
         "outpainting": "not_performed",
         "validation": "Geometry only; reconstruction fidelity not measured",
     }
+
+
+def rasterize_lanczos(source, destination, support, plan):
+    """Lanczos-3 baseline using the shared row-bounded resizer and CFA crop."""
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from synthraw.super_resolution import resize_exact
+
+    if plan.generated_bands:
+        raise ValueError("Outpainting required but no generator is available")
+    x, y = plan.default_crop_origin
+    width, height = plan.default_crop_size
+    destination[:] = 0
+    support[:] = False
+    with TemporaryDirectory(prefix="lanczos-", dir=Path(destination.filename).parent) as directory:
+        path = resize_exact(
+            source, Path(directory) / "resized.npy", width=width, height=height, source_box=plan.source_crop
+        )
+        resized = np.load(path, mmap_mode="r")
+        try:
+            for row in range(height):
+                destination[y + row, x : x + width] = resized[row]
+                support[y + row, x : x + width] = True
+        finally:
+            resized._mmap.close()
+    destination.flush()
+    support.flush()
+    return {
+        "method": "Lanczos-3 encoded sRGB baseline to Bayer-aligned source crop",
+        "geometry": plan.to_dict(),
+        "source_supported_pixels": width * height,
+        "sensor_margin_pixels": plan.width * plan.height - width * height,
+        "margin_signal": 0,
+        "learned_super_resolution": "not_requested_by_this_baseline_API",
+        "outpainting": "not_performed",
+        "validation": "Source crop rounding is explicit; fidelity needs truth",
+    }

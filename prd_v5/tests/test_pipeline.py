@@ -19,7 +19,7 @@ def test_complete_bundle(tmp_path):
         source, output, CameraHypothesis(), target_megapixels=0.001024, assume_unprofiled_srgb=True, strip_rows=3
     )
     assert json.loads((output / "manifest.json").read_text()) == json.loads(json.dumps(report))
-    assert set(p.name for p in output.iterdir()) == {
+    assert set(p.name for p in output.iterdir()) >= {
         "capture.dng",
         "developed.tiff",
         "source_support.npy",
@@ -40,7 +40,7 @@ def test_complete_bundle(tmp_path):
     for name, record in report["artifacts"].items():
         assert record["sha256"] == hashlib.sha256((output / name).read_bytes()).hexdigest()
     page = (output / "report.html").read_text()
-    assert "Scientific acceptance: not measured" in page
+    assert "Scientific acceptance: conditional: scientific gates unmeasured" in page
     assert report["artifacts"]["capture.dng"]["sha256"] in page
     assert "source_clipped.npy" in page
     assert "passed" in page

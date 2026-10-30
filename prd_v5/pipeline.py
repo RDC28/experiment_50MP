@@ -13,6 +13,7 @@ import numpy as np
 from prd_v5.analytic import AnalyticISP
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.decode import decode_source
+from prd_v5.delivery import export_arrays, finish_bundle
 from prd_v5.dng import write_dng
 from prd_v5.fidelity import SRCheckpoint, reconstruct
 from prd_v5.fields import validate_selections
@@ -20,8 +21,9 @@ from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.inputs import InputInspector
 from prd_v5.learned import ResidualAdapter, apply_residual, resolve_mode
+from prd_v5.optical_effects import OpticalEffects
 from prd_v5.optics import Distortion, Vignetting
-from prd_v5.raster import rasterize
+from prd_v5.raster import rasterize, rasterize_lanczos
 from prd_v5.registry import analytic_registry
 from prd_v5.report import render_report
 from prd_v5.roundtrip import develop_roundtrip
@@ -35,7 +37,9 @@ def run_analytic(
     camera: CameraHypothesis,
     isp: AnalyticISP | None = None,
     *,
+    resampling: str = "BILINEAR",
     sensor_effects: SensorEffects | None = None,
+    optical_effects: OpticalEffects | None = None,
     vignetting: Vignetting | None = None,
     distortion: Distortion | None = None,
     accept_experimental_optics: bool = False,
@@ -64,6 +68,8 @@ def run_analytic(
     can be supplied to sequential source-resolution runs. Full-scale execution
     belongs in Colab with explicit memory budgets, never on the development Mac.
     """
+    if optical_effects is None:
+        optical_effects = OpticalEffects()
     if sensor_effects is None:
         sensor_effects = SensorEffects()
     if vignetting is None:
@@ -77,7 +83,9 @@ def run_analytic(
     # alone. Paths remain caller-supplied so bundles can be replayed elsewhere.
     config = AnalyticRunConfig(
         camera=camera,
+        resampling=resampling,
         sensor_effects=sensor_effects,
+        optical_effects=optical_effects,
         vignetting=vignetting,
         distortion=distortion,
         accept_experimental_optics=accept_experimental_optics,
@@ -140,11 +148,13 @@ def run_analytic(
                     geometry,
                     source_size=(source.width * sr_checkpoint.scale, source.height * sr_checkpoint.scale),
                     scale=geometry.scale / sr_checkpoint.scale,
+                    source_crop=tuple(v * sr_checkpoint.scale for v in geometry.source_crop),
                 )
             shape = (geometry.height, geometry.width)
             rgb = allocate("raster", np.float32, (*shape, 3))
             support = allocate("support", np.bool_, shape)
-            stages["raster"] = rasterize(raster_source, rgb, support, raster_plan)
+            resample = rasterize_lanczos if resampling == "LANCZOS" else rasterize
+            stages["raster"] = resample(raster_source, rgb, support, raster_plan)
             if sr_checkpoint is not None:
                 stages["raster"]["learned_super_resolution"] = sr_checkpoint.backend
             clean = allocate("clean", np.float32, (*shape, 3))
@@ -171,10 +181,18 @@ def run_analytic(
                     "outside_source_pixels": 0,
                     "method": "identity bypass; no extra scratch allocation",
                 }
+            final_optical = allocate("final_optical", np.float32, (*shape, 3))
+            stages["optical_effects"] = optical_effects.process(
+                sensor_rgb,
+                final_optical,
+                aperture=camera.aperture,
+                pixel_pitch_um=35900 / geometry.width,
+                strip_rows=strip_rows,
+            )
             adc = allocate("adc", np.uint16, shape)
             defects = allocate("defects", np.uint8, shape)
             stages["sensor"] = BayerSensor(camera, sensor_effects).process(
-                sensor_rgb, adc, strip_rows=strip_rows, defect_mask=defects
+                final_optical, adc, strip_rows=strip_rows, defect_mask=defects
             )
             stages["dng"] = write_dng(output / "capture.dng", adc, camera, geometry, isp, strip_rows=strip_rows)
             stages["roundtrip"] = develop_roundtrip(
@@ -186,6 +204,7 @@ def run_analytic(
                 isp,
                 max_working_bytes=max_develop_bytes,
             )
+            export_arrays(output, final_optical, adc, camera, strip_rows=strip_rows)
             # Export only after the independent image gate, without materializing
             # the full mask in RAM. NPY preserves boolean dtype and raster shape.
             clipped_pixels = 0
@@ -195,7 +214,19 @@ def run_analytic(
             try:
                 for start in range(0, shape[0], strip_rows):
                     stop = start + strip_rows
-                    clipped = np.any(rgb[start:stop] >= 1, axis=-1) & support[start:stop]
+                    source_x = np.clip(
+                        ((np.arange(shape[1]) + 0.5 - geometry.offset_xy[0]) / geometry.scale).astype(int),
+                        0,
+                        source.width - 1,
+                    )
+                    source_y = np.clip(
+                        ((np.arange(start, min(stop, shape[0])) + 0.5 - geometry.offset_xy[1]) / geometry.scale).astype(
+                            int
+                        ),
+                        0,
+                        source.height - 1,
+                    )
+                    clipped = np.any(decoded[source_y[:, None], source_x] >= 1, axis=-1) & support[start:stop]
                     packaged_clipping[start:stop] = clipped
                     clipped_pixels += int(np.count_nonzero(clipped))
                 packaged_clipping.flush()
@@ -292,6 +323,22 @@ def run_analytic(
         "registry": {
             **analytic_registry(camera, source, geometry, isp),
             **sensor_effects.registry(),
+            **{
+                f"optics.{name}": asdict(
+                    CameraField(
+                        f"optics.{name}",
+                        value,
+                        None,
+                        "AUTO",
+                        "SYNTHETIC",
+                        None,
+                        None,
+                        "Explicit synthetic optical prior before CFA",
+                        "Uncalibrated approximate optical model",
+                    )
+                )
+                for name, value in asdict(optical_effects).items()
+            },
             **optics_registry,
             **selections,
         },
@@ -317,13 +364,12 @@ def run_analytic(
                 "dtype": "bool",
                 "shape": [geometry.height, geometry.width],
                 "coordinates": "full sensor raster, before DNG crop or TIFF development",
-                "true": "source-supported resampled sRGB pixel has at least one channel at 1",
+                "true": "nearest original source sample has an encoded endpoint in a source-supported location",
                 "false": "no endpoint detected, or unsupported sensor margin",
                 "clipped_pixels": clipped_pixels,
                 "limitations": (
-                    "Endpoint indicator after ICC and bilinear resampling, not recovered highlight truth; "
-                    "resampling can dilute source endpoints and below-endpoint clipping is undetected; "
-                    "with SR this describes reconstructed samples, not original endpoints"
+                    "Original source endpoint proxy after ICC; below-endpoint clipping may be undetected. "
+                    "Coordinates use the geometry transform, independent of model-generated SR endpoints."
                 ),
             },
             "source_support": {
@@ -353,6 +399,7 @@ def run_analytic(
             "Colab full-scale validation",
         ],
     }
+    finish_bundle(output, report)
     # Render before the completion marker. Hash the HTML in the manifest without
     # making the report depend on its own digest.
     report_path = output / "report.html"
@@ -361,5 +408,7 @@ def run_analytic(
         "sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
         "size_bytes": report_path.stat().st_size,
     }
+    (output / "validation_report.html").write_text(report_path.read_text(), encoding="utf-8")
+    report["artifacts"]["validation_report.html"] = dict(report["artifacts"]["report.html"])
     (output / "manifest.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     return report

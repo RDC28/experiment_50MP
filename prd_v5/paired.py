@@ -9,6 +9,7 @@ from pathlib import Path
 
 from prd_v5.comparison import compare_renders, validate_region
 from prd_v5.config import AnalyticRunConfig
+from prd_v5.delivery import write_pair_html
 from prd_v5.fidelity import SRCheckpoint
 from prd_v5.fields import validate_selections
 from prd_v5.hypothesis import CameraField
@@ -120,5 +121,6 @@ def run_analytic_pair(
             **crop_comparison,
             "limitations": report["comparison"]["limitations"],
         }
+    write_pair_html(output, report)
     (output / "pair_manifest.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return report

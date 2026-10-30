@@ -66,7 +66,7 @@ def test_registry_is_json_serializable_honest_and_detached():
         {"seed": True},
         {"seed": -1},
         {"seed": 2**64},
-        {"adc_bits": 16},
+        {"adc_bits": 17},
         {"black_level": 16383},
         {"black_level": -1},
         {"black_level": False},

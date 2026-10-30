@@ -24,3 +24,13 @@ def test_runtime_records_are_detached():
     first = runtime_record()
     first["libraries"]["numpy"] = "altered"
     assert runtime_record()["libraries"]["numpy"] != "altered"
+
+
+def test_installed_wheel_revision_is_explicit_and_constrained(monkeypatch):
+    from prd_v5.runtime import software_identity
+
+    revision = "a" * 40
+    monkeypatch.setenv("SYNTHRAW_SOURCE_REVISION", revision)
+    assert software_identity().endswith("git:" + revision)
+    monkeypatch.setenv("SYNTHRAW_SOURCE_REVISION", "not-a-public-commit-identifier")
+    assert "not-a-public-commit-identifier" not in software_identity()

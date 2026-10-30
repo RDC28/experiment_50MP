@@ -46,7 +46,7 @@ def test_config_roundtrip_and_execution(tmp_path):
         '{"unknown":1}',
         '{"camera":{"unknown":1}}',
         '{"camera":[]}',
-        '{"camera":{"adc_bits":16}}',
+        '{"camera":{"adc_bits":17}}',
         '{"isp":{"white_balance":[0,1,1]}}',
         '{"strip_rows":1,"strip_rows":2}',
         '{"camera":{"iso":100,"iso":200}}',

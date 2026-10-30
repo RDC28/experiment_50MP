@@ -89,7 +89,7 @@ def test_catalogue_profile_reaches_paired_dng_and_selection_evidence(tmp_path):
         camera_selections=camera_records,
         isp_selections=isp_records,
     )
-    dngs = list(output.rglob("*.dng"))
+    dngs = list(output.rglob("capture.dng"))
     assert len(dngs) == 2
     for path in dngs:
         with tifffile.TiffFile(path) as handle:

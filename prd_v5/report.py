@@ -44,8 +44,8 @@ def render_report(report: dict) -> str:
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>Analytic MVP run report</title><style>{_CSS}</style></head><body>"
-        "<h1>Analytic MVP run report</h1>"
+        f"<title>Synthetic capture validation report</title><style>{_CSS}</style></head><body>"
+        "<h1>Synthetic capture validation report</h1>"
         "<p class='notice'>Synthetic camera hypothesis. This output does not establish recovered scene "
         "radiance, measured Sony calibration or learned-model inference.</p>"
         f"<p>{escape(report['pipeline'])}</p>"

@@ -140,7 +140,7 @@ def test_checkpoint_pixels_reach_independent_raw_roundtrip(tmp_path, monkeypatch
     assert report["stages"]["raster"]["learned_super_resolution"] == "HAT"
     assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
     assert report["replay"]["additional_checkpoint_required"] is True
-    assert report["scientific_acceptance"] == "not measured"
+    assert report["scientific_acceptance"].startswith("conditional:")
     with rawpy.imread(str(tmp_path / "baseline/capture.dng")) as original:
         before = original.raw_image.copy()
     with rawpy.imread(str(tmp_path / "sr/capture.dng")) as reconstructed:

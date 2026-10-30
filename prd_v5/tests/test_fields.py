@@ -118,11 +118,11 @@ def test_camera_resolution_validates_selected_domains_and_explicit_empty_candida
     from prd_v5.fields import resolve_camera
 
     with pytest.raises(ValueError, match="ISO"):
-        resolve_camera(CameraHypothesis(), {"iso": "USER"}, {"iso": [evidence("USER_SET", 50, units="ISO")]})
+        resolve_camera(CameraHypothesis(), {"iso": "USER"}, {"iso": [evidence("USER_SET", 102401, units="ISO")]})
     with pytest.raises(ValueError, match="Unresolved"):
         resolve_camera(CameraHypothesis(), {}, {"iso": []})
     camera, records = resolve_camera(CameraHypothesis(), {})
-    assert camera == CameraHypothesis() and len(records) == 11
+    assert camera == CameraHypothesis() and len(records) == 12
 
 
 def test_resolved_camera_drives_tiny_adc(tmp_path):

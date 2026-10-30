@@ -9,6 +9,7 @@ import numpy as np
 from prd_v5.analytic import AnalyticISP
 from prd_v5.geometry import GeometryPlan
 from prd_v5.hypothesis import CameraHypothesis
+from prd_v5.runtime import software_identity
 from synthraw.config import ExperimentConfig
 from synthraw.dng_metadata import DNGFieldRecord, DNGMetadataBuilder
 from synthraw.dng_writer import DNGWriter
@@ -31,7 +32,7 @@ def build_metadata(camera: CameraHypothesis, geometry: GeometryPlan, isp: Analyt
     not invented physical exposure estimates. Returned records use the legacy
     writer's serialization contract, not the complete v5 provenance registry.
     """
-    config = ExperimentConfig(ADC_BITS=camera.adc_bits, DNG_COMPRESSION="UNCOMPRESSED")
+    config = ExperimentConfig(ADC_BITS=14 if camera.adc_bits <= 14 else 16, DNG_COMPRESSION="UNCOMPRESSED")
     xyz_to_camera = np.linalg.inv(np.asarray(SRGB_TO_XYZ_D65) @ np.asarray(isp.camera_to_srgb))
     neutral = 1 / np.asarray(isp.white_balance)
     neutral /= neutral[1]
@@ -53,9 +54,11 @@ def build_metadata(camera: CameraHypothesis, geometry: GeometryPlan, isp: Analyt
         color_matrix2=xyz_to_camera,
         as_shot_neutral=tuple(neutral),
         noise_profile=camera.noise_profile,
-        software_version="prd-v5",
+        software_version=software_identity(),
         exposure=exposure,
     )
+    records["Model"].value = f"{camera.profile} Synthetic Sensor"
+    records["UniqueCameraModel"].value = f"Synthetic PRD v5 {camera.profile}"
     for index in (1, 2):
         records[f"CalibrationIlluminant{index}"].value = 21
         records[f"ColorMatrix{index}"].method = "Virtual D65 XYZ-to-camera derived from analytic camera_to_srgb"
@@ -78,7 +81,8 @@ def write_dng(
     check does not establish independent LibRaw decode or Adobe conformance.
     """
     records = build_metadata(camera, geometry, isp)
-    destination = DNGWriter().write(path, mosaic, records, rows_per_strip=strip_rows)
+    writer_config = ExperimentConfig(ADC_BITS=14 if camera.adc_bits <= 14 else 16, DNG_COMPRESSION="UNCOMPRESSED")
+    destination = DNGWriter().write(path, mosaic, records, writer_config, rows_per_strip=strip_rows)
     return {
         "path": str(destination),
         "structural_validation": "passed: serialized tags and exact samples",

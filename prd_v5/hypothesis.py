@@ -63,6 +63,7 @@ class CameraHypothesis:
     normalized black-subtracted temporal signal before clipping, excluding FPN.
     """
 
+    profile: str = "SONY_A1II_LIKE"
     seed: int = 42
     adc_bits: int = 14
     black_level: int = 512
@@ -76,11 +77,13 @@ class CameraHypothesis:
     read_noise: bool = True
 
     def __post_init__(self) -> None:
+        if self.profile not in ("SONY_A1II_LIKE", "GENERIC", "CUSTOM"):
+            raise ValueError("Unknown synthetic profile")
         if type(self.seed) is not int or not 0 <= self.seed < 2**64:
             raise ValueError("seed must be a uint64 integer")
-        if type(self.adc_bits) is not int or self.adc_bits != 14:
-            raise ValueError("This Sony-like hypothesis requires 14-bit ADC in uint16 storage")
-        if type(self.black_level) is not int or not 0 <= self.black_level < self.white_level:
+        if type(self.adc_bits) is not int or not 12 <= self.adc_bits <= 16:
+            raise ValueError("ADC must be 12..16 bits in uint16 storage")
+        if type(self.black_level) is not int or not 0 <= self.black_level < (1 << self.adc_bits) - 1:
             raise ValueError("Black level must fit below white level")
         for name in ("full_well_e", "read_noise_e", "shutter_s", "aperture"):
             value = getattr(self, name)
@@ -88,8 +91,8 @@ class CameraHypothesis:
                 raise ValueError(f"{name} must be finite")
             if value < 0 or (name != "read_noise_e" and value == 0):
                 raise ValueError(f"{name} outside physical domain")
-        if type(self.iso) is not int or not 100 <= self.iso <= 32000:
-            raise ValueError("ISO must lie in the synthetic standard range 100..32000")
+        if type(self.iso) is not int or not 50 <= self.iso <= 102400:
+            raise ValueError("ISO must lie in the synthetic search range 50..102400")
         if self.cfa_pattern not in ("RGGB", "BGGR", "GRBG", "GBRG"):
             raise ValueError("Expected a Bayer CFA pattern")
         if type(self.shot_noise) is not bool or type(self.read_noise) is not bool:
@@ -111,11 +114,13 @@ class CameraHypothesis:
 
     @property
     def white_level(self) -> int:
-        return (1 << self.adc_bits) - 1
+        # Below base ISO the well saturates before the ADC's largest code.
+        span = ((1 << self.adc_bits) - 1) - self.black_level
+        return self.black_level + round(span * min(1.0, self.analogue_gain))
 
     @property
     def conversion_gain_e_per_dn(self) -> float:
-        return self.full_well_e / (self.white_level - self.black_level)
+        return self.full_well_e / (((1 << self.adc_bits) - 1) - self.black_level)
 
     @property
     def analogue_gain(self) -> float:
@@ -123,13 +128,13 @@ class CameraHypothesis:
 
     @property
     def saturation_e(self) -> float:
-        return self.full_well_e / self.analogue_gain
+        return min(self.full_well_e, self.full_well_e / self.analogue_gain)
 
     @property
     def noise_profile(self) -> tuple[float, ...] | None:
         if not self.shot_noise:
             return None  # DNG requires a positive shot slope; never fabricate it.
-        scale = self.analogue_gain / self.full_well_e
+        scale = self.analogue_gain / (self.conversion_gain_e_per_dn * (self.white_level - self.black_level))
         read_sigma = self.read_noise_e if self.read_noise else 0.0
         offset = (read_sigma * scale) ** 2 + 1 / (12 * (self.white_level - self.black_level) ** 2)
         return (scale, offset) * 3
@@ -153,6 +158,7 @@ class CameraHypothesis:
             result[name] = asdict(CameraField(name, value, units, mode, provenance, None, None, method, validation))
 
         for name, units in (
+            ("profile", None),
             ("seed", None),
             ("adc_bits", "bits"),
             ("black_level", "DN"),

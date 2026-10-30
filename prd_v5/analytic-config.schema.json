@@ -93,6 +93,15 @@
           "default": 0
         }
       }
+    },
+    "optical_effects": {
+      "$ref": "#/$defs/optical_effects"
+    },
+    "resampling": {
+      "enum": [
+        "BILINEAR",
+        "LANCZOS"
+      ]
     }
   },
   "$defs": {
@@ -123,7 +132,8 @@
         },
         "adc_bits": {
           "type": "integer",
-          "const": 14
+          "minimum": 12,
+          "maximum": 16
         },
         "black_level": {
           "type": "integer",
@@ -139,8 +149,8 @@
         },
         "iso": {
           "type": "integer",
-          "minimum": 100,
-          "maximum": 32000
+          "minimum": 50,
+          "maximum": 102400
         },
         "shutter_s": {
           "$ref": "#/$defs/positiveNumber"
@@ -161,6 +171,13 @@
         },
         "read_noise": {
           "type": "boolean"
+        },
+        "profile": {
+          "enum": [
+            "SONY_A1II_LIKE",
+            "GENERIC",
+            "CUSTOM"
+          ]
         }
       }
     },
@@ -260,6 +277,39 @@
           "default": 0.0,
           "minimum": 0,
           "maximum": 1
+        }
+      }
+    },
+    "optical_effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lateral_ca_px": {
+          "type": "number"
+        },
+        "axial_ca_sigma_px": {
+          "type": "number"
+        },
+        "psf_center_sigma_px": {
+          "type": "number"
+        },
+        "psf_edge_sigma_px": {
+          "type": "number"
+        },
+        "diffraction": {
+          "type": "boolean"
+        },
+        "wavelength_nm": {
+          "type": "number"
+        },
+        "defocus_radius_px": {
+          "type": "number"
+        },
+        "motion_length_px": {
+          "type": "number"
+        },
+        "motion_angle_deg": {
+          "type": "number"
         }
       }
     }
