@@ -17,6 +17,7 @@ from prd_v5.geometry import GeometryPlanner
 from prd_v5.hypothesis import CameraField
 from prd_v5.inputs import InputInspector
 from prd_v5.learned import ResidualAdapter, resolve_mode
+from prd_v5.lpips_metric import lpips_distance
 from prd_v5.mtf import tiff_edge_mtf
 
 
@@ -34,6 +35,7 @@ def run_analytic_pair(
     comparison_region: tuple[int, int, int, int] | None = None,
     colour_references: dict | None = None,
     mtf_edge: dict | None = None,
+    lpips_options: dict | None = None,
 ) -> dict:
     """Run caller-labelled variants sequentially using exactly the same config.
 
@@ -46,6 +48,9 @@ def run_analytic_pair(
     Optional colour_references maps 2k/4k to {path, calibration} records for
     independently trusted aligned uint16 sRGB TIFFs. Calibration is caller
     attestation; pair disagreement is never used as colour truth.
+    LPIPS reuses the colour reference records and contracts; without a
+    reference it is reported as not measured. lpips_options may set patch,
+    net, device and an injected distance callable.
     Optional mtf_edge supplies the same native region, normal_axis and
     edge_evidence for each developed TIFF; it does not certify registration.
     """
@@ -61,6 +66,9 @@ def run_analytic_pair(
             raise ValueError("Each colour reference requires exactly path and calibration")
         if not isinstance(record["path"], (str, Path)) or not str(record["path"]).strip():
             raise ValueError("Colour reference path must be nonempty")
+    lpips_options = {} if lpips_options is None else dict(lpips_options)
+    if set(lpips_options) - {"patch", "net", "device", "distance"}:
+        raise ValueError("lpips_options allows only patch, net, device and distance")
     if mtf_edge is not None:
         if not isinstance(mtf_edge, dict) or set(mtf_edge) != {"region", "normal_axis", "edge_evidence"}:
             raise ValueError("mtf_edge requires exactly region, normal_axis and edge_evidence")
@@ -171,7 +179,18 @@ def run_analytic_pair(
     mtf_comparison = {
         label: tiff_edge_mtf(output / label / "developed.tiff", **(mtf_edge or {})) for label in ("2k", "4k")
     }
+    lpips_comparison = {}
+    for label in ("2k", "4k"):
+        reference = colour_references.get(label, {})
+        lpips_comparison[label] = lpips_distance(
+            output / label / "developed.tiff",
+            reference.get("path"),
+            calibration=reference.get("calibration"),
+            region=comparison_region,
+            **lpips_options,
+        )
     report = {
+        "lpips_comparison": lpips_comparison,
         "mtf_comparison": mtf_comparison,
         "colour_comparison": colour_comparison,
         "raw_comparison": raw_comparison,

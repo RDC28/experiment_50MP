@@ -444,3 +444,46 @@ def test_mtf_failure_prevents_pair_completion(tmp_path, monkeypatch):
     assert (output / "4k/manifest.json").exists()
     assert not (output / "pair_manifest.json").exists()
     assert not (output / "2k_vs_4k_report.html").exists()
+
+
+def test_pair_lpips_uses_references_and_reports_missing_truth(tmp_path):
+    import numpy as np
+    import tifffile
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (128, 128), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.016384, assume_unprofiled_srgb=True, strip_rows=3)
+    contract = {
+        "camera_profile": "fixture camera and profile",
+        "trusted_development": "fixture reference, not scientific truth",
+        "alignment": "fixture native coordinates",
+        "colour_space": "sRGB_D65_2deg",
+    }
+    reference = tmp_path / "reference.tiff"
+    tifffile.imwrite(reference, np.zeros((128, 128, 3), dtype=np.uint16), photometric="rgb")
+    calls = []
+
+    def fake(a, b):
+        calls.append(a.shape)
+        return np.array([0.25])
+
+    output = tmp_path / "pair"
+    report = run_analytic_pair(
+        source,
+        source,
+        output,
+        config,
+        colour_references={"2k": {"path": reference, "calibration": contract}},
+        lpips_options={"patch": 64, "distance": fake},
+    )
+    measured = report["lpips_comparison"]["2k"]
+    assert measured["status"] == "measured reference perceptual distance"
+    assert measured["mean_lpips"] == 0.25 and measured["patches"] == 4
+    assert len(calls) == 4
+    assert report["lpips_comparison"]["4k"]["status"] == "not measured"
+    assert "lpips_comparison" in (output / "2k_vs_4k_report.html").read_text()
+
+
+def test_pair_rejects_unknown_lpips_options_before_io(tmp_path):
+    with pytest.raises(ValueError, match="lpips_options"):
+        run_analytic_pair("absent", "absent", tmp_path / "o", AnalyticRunConfig(), lpips_options={"x": 1})
