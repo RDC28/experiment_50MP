@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from prd_v5.coherence import metadata_coherence
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.physics import photon_transfer
 
@@ -180,10 +181,9 @@ def finish_bundle(output, report):
     validation = {
         "DNG parse": {"status": "passed", "evidence": report["stages"]["roundtrip"]},
         "CFA integrity": {"status": "passed", "evidence": report["stages"]["dng"]["structural_validation"]},
-        "Metadata coherence": {
-            "status": "not measured",
-            "reason": "No full registry-versus-DNG coherence check runs; DNG fields derive from executed configuration",
-        },
+        "Metadata coherence": metadata_coherence(
+            output / "capture.dng", report["registry"], report["stages"]["dng"]["tags"]
+        ),
         "Provenance": {"status": "passed", "fields": len(report["registry"])},
         **{
             name: {"status": "not measured", "reason": reason}

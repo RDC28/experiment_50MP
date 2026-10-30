@@ -108,3 +108,5 @@ python -m ruff check .
 The root pytest configuration includes legacy and v5 tests. New code is isolated
 under `prd_v5`; existing notebooks and root PRDs are unchanged. Development-only
 proof/logs/checkpoints belong outside Git. Never commit ARW files or large binaries.
+
+The Colab bundle's Metadata coherence gate now compares exported DNG tags with the manifest and complete registry, including AsShotNeutral, exposure aliases and matrix groups. Inspect `checked`, `mismatches` and `unmapped_registry_fields` in `validation.json`: passing covers emitted standard metadata, not physical calibration or all simulator dependencies. Scientific truth gates remain conditional. Small local fixtures for this path: `.venv/bin/python -m pytest prd_v5/tests/test_coherence.py prd_v5/tests/test_delivery.py -q` (no model execution).

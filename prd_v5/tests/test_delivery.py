@@ -86,7 +86,10 @@ def test_full_quality_fixture_outputs_registry_and_decodable_adc(tmp_path, adc_b
     assert report["validation"]["acceptance"].startswith("conditional")
     assert np.asarray(Image.open(output / "uncertainty_map.png"))[0, 0] == 255
     validation = json.loads((output / "validation.json").read_text())
-    assert validation["HDR validity"]["status"] == validation["Metadata coherence"]["status"] == "not measured"
+    assert validation["HDR validity"]["status"] == "not measured"
+    assert validation["Metadata coherence"]["status"] == "passed"
+    assert "AsShotNeutral" in validation["Metadata coherence"]["checked"]
+    assert "Full-well capacity" in validation["Metadata coherence"]["unmapped_registry_fields"]
     assert registry["Checkpoint hashes"]["value"] is None
     assert registry["Checkpoint hashes"]["provenance"] == "UNSPECIFIED"
     page = (output / "validation_report.html").read_text()
