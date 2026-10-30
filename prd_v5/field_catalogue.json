@@ -1,0 +1,1632 @@
+[
+  {
+    "name": "Sensor width/height px",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "exact dimensions",
+    "prd_contract": [
+      "Bayer-active raster",
+      "No; configured",
+      "target geometry",
+      "native profile or aspect-preserving 50 MP",
+      "exact dimensions"
+    ]
+  },
+  {
+    "name": "Sensor physical size",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "geometry consistency",
+    "prd_contract": [
+      "silicon imaging area",
+      "Not identifiable",
+      "camera-profile prior",
+      "full-frame profile default: 35.9×24.0 mm for α1 II-like",
+      "geometry consistency"
+    ]
+  },
+  {
+    "name": "Pixel pitch",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "arithmetic",
+    "prd_contract": [
+      "physical sensor pitch",
+      "Derived",
+      "sensor mm ÷ pixels",
+      "profile-derived",
+      "arithmetic"
+    ]
+  },
+  {
+    "name": "CFA pattern",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "DNG parse and plane test",
+    "prd_contract": [
+      "R/G/B photosite arrangement",
+      "Not inferable from rendered RGB",
+      "profile/user",
+      "RGGB default; BGGR/GRBG/GBRG alternatives",
+      "DNG parse and plane test"
+    ]
+  },
+  {
+    "name": "CFA phase/origin",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "round-trip",
+    "prd_contract": [
+      "location of CFA tile origin",
+      "No",
+      "profile",
+      "2×2 phase",
+      "round-trip"
+    ]
+  },
+  {
+    "name": "ADC bit depth",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "code range",
+    "prd_contract": [
+      "converter precision",
+      "No",
+      "camera profile",
+      "12–16 synthetic; 14 default Sony-like",
+      "code range"
+    ]
+  },
+  {
+    "name": "Black level",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "dark-stat test",
+    "prd_contract": [
+      "DN corresponding to zero light",
+      "No",
+      "profile/prior",
+      "per-plane sampled constrained positive",
+      "dark-stat test"
+    ]
+  },
+  {
+    "name": "White level",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "saturation test",
+    "prd_contract": [
+      "saturation code",
+      "No",
+      "ADC/profile",
+      "`<2^bits`",
+      "saturation test"
+    ]
+  },
+  {
+    "name": "Full-well capacity",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "photon-transfer consistency",
+    "prd_contract": [
+      "maximum electrons before saturation",
+      "No",
+      "sensor prior",
+      "log-normal camera-family prior",
+      "photon-transfer consistency"
+    ]
+  },
+  {
+    "name": "Conversion gain",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "PTC consistency",
+    "prd_contract": [
+      "electrons per digital code",
+      "No",
+      "derived/prior",
+      "positive",
+      "PTC consistency"
+    ]
+  },
+  {
+    "name": "Analogue gain",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "ISO/noise consistency",
+    "prd_contract": [
+      "pre-ADC signal amplification",
+      "Partially tied to ISO, not observable uniquely",
+      "exposure hypothesis",
+      "piecewise monotonic",
+      "ISO/noise consistency"
+    ]
+  },
+  {
+    "name": "Digital gain",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "pipeline trace",
+    "prd_contract": [
+      "post-ADC scaling",
+      "Not identifiable",
+      "profile",
+      "≈1 by default",
+      "pipeline trace"
+    ]
+  },
+  {
+    "name": "Sensor non-linearity",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "flat-field sweep",
+    "prd_contract": [
+      "pre-ADC deviation from linearity",
+      "No",
+      "optional LUT",
+      "identity by default",
+      "flat-field sweep"
+    ]
+  },
+  {
+    "name": "Quantisation",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "code histogram",
+    "prd_contract": [
+      "ADC mapping",
+      "No",
+      "uniform",
+      "selected bits",
+      "code histogram"
+    ]
+  },
+  {
+    "name": "Clipping behaviour",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "saturated pixels",
+    "prd_contract": [
+      "saturation handling",
+      "No",
+      "hard clip default",
+      "at white level",
+      "saturated pixels"
+    ]
+  },
+  {
+    "name": "Dual conversion gain",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "USER: explicit accepted DualConversionProfile dictionary, selected after ISO",
+    "validation": "ISO discontinuity test",
+    "prd_contract": [
+      "multiple gain regimes",
+      "No",
+      "optional fabricated model",
+      "profile-dependent",
+      "ISO discontinuity test"
+    ]
+  },
+  {
+    "name": "Rolling/global shutter",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "metadata consistency",
+    "prd_contract": [
+      "sensor readout style",
+      "Weak cues only",
+      "prior/user",
+      "mechanical/electronic synthetic modes",
+      "metadata consistency"
+    ]
+  },
+  {
+    "name": "Sensor temperature",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "no claim of truth",
+    "prd_contract": [
+      "sensor thermal state",
+      "No",
+      "fabricated only",
+      "e.g. −10–60 °C experimental prior",
+      "no claim of truth"
+    ]
+  },
+  {
+    "name": "Shot noise",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "variance vs mean",
+    "prd_contract": [
+      "No actual noise can be recovered",
+      "Poisson electron draw",
+      "physically signal-dependent",
+      "variance vs mean"
+    ]
+  },
+  {
+    "name": "Read noise",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "dark histogram",
+    "prd_contract": [
+      "At most weakly inferred",
+      "Gaussian / heavy-tail electronic prior",
+      "positive e⁻ RMS, profile conditioned",
+      "dark histogram"
+    ]
+  },
+  {
+    "name": "PRNU",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "flat-field spatial statistics",
+    "prd_contract": [
+      "No",
+      "multiplicative pixel-response map",
+      "zero-mean small sigma",
+      "flat-field spatial statistics"
+    ]
+  },
+  {
+    "name": "DSNU",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "dark-frame emulation",
+    "prd_contract": [
+      "No",
+      "additive pixel dark-offset map",
+      "small DN/e⁻ distribution",
+      "dark-frame emulation"
+    ]
+  },
+  {
+    "name": "Row FPN",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "row PSD",
+    "prd_contract": [
+      "No",
+      "row-correlated offset field",
+      "low-amplitude Gaussian/1/f",
+      "row PSD"
+    ]
+  },
+  {
+    "name": "Column FPN",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "column PSD",
+    "prd_contract": [
+      "No",
+      "column-correlated offset",
+      "low amplitude",
+      "column PSD"
+    ]
+  },
+  {
+    "name": "Dark current",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "long-exposure scaling",
+    "prd_contract": [
+      "No",
+      "Poisson thermal electrons × exposure",
+      "exposure/temp conditioned",
+      "long-exposure scaling"
+    ]
+  },
+  {
+    "name": "Hot pixels",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "defect count",
+    "prd_contract": [
+      "No",
+      "sparse defect process",
+      "low-rate Bernoulli",
+      "defect count"
+    ]
+  },
+  {
+    "name": "Dead pixels",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "defect count",
+    "prd_contract": [
+      "No",
+      "sparse zero-response process",
+      "lower-rate Bernoulli",
+      "defect count"
+    ]
+  },
+  {
+    "name": "Blooming",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "saturated-source test",
+    "prd_contract": [
+      "Usually irrelevant for modern still model",
+      "optional saturated-charge spread",
+      "disabled default",
+      "saturated-source test"
+    ]
+  },
+  {
+    "name": "Quantisation noise",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "code histogram",
+    "prd_contract": [
+      "Derived",
+      "ADC rounding",
+      "determined by bits/gain",
+      "code histogram"
+    ]
+  },
+  {
+    "name": "NoiseProfile",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "compare DNG tags to simulation",
+    "prd_contract": [
+      "Derived",
+      "calculate from actual signal/read model",
+      "no independent guessing",
+      "compare DNG tags to simulation"
+    ]
+  },
+  {
+    "name": "Scene-linear RGB",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "forward-render consistency",
+    "prd_contract": [
+      "Partly",
+      "inverse transfer + inverse tone/HDR reconstruction",
+      "non-negative float",
+      "forward-render consistency"
+    ]
+  },
+  {
+    "name": "Camera-native RGB",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "re-render ΔE / LPIPS",
+    "prd_contract": [
+      "Ambiguous",
+      "analytic inverse colour transform + learned residual",
+      "matrix-conditioned",
+      "re-render ΔE / LPIPS"
+    ]
+  },
+  {
+    "name": "Sensor spectral sensitivity",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "spectral benchmark only",
+    "prd_contract": [
+      "**No unique inversion**",
+      "low-dimensional profile hypothesis only",
+      "smooth positive curves if experimental",
+      "spectral benchmark only"
+    ]
+  },
+  {
+    "name": "ColorMatrix1/2",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "USER: one precomposed 3x3 D65 XYZ-to-camera matrix for both tags; no dual illuminants",
+    "validation": "DNG render",
+    "prd_contract": [
+      "Approximate",
+      "constrained camera-profile solve or profile prior",
+      "invertible 3×3",
+      "DNG render"
+    ]
+  },
+  {
+    "name": "ForwardMatrix1/2",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "round trip",
+    "prd_contract": [
+      "Derived/profile",
+      "camera→XYZ calibration transform",
+      "DNG-constrained",
+      "round trip"
+    ]
+  },
+  {
+    "name": "CameraCalibration1/2",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "profile validity",
+    "prd_contract": [
+      "Optional",
+      "identity/default unless calibrated",
+      "close to identity",
+      "profile validity"
+    ]
+  },
+  {
+    "name": "CalibrationIlluminant1/2",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "WB interpolation",
+    "prd_contract": [
+      "Estimate/prior",
+      "profile illuminants",
+      "typically warm/daylight pair",
+      "WB interpolation"
+    ]
+  },
+  {
+    "name": "AnalogBalance",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "DNG parser",
+    "prd_contract": [
+      "Not uniquely inferable",
+      "profile prior",
+      "near-unity positive vector",
+      "DNG parser"
+    ]
+  },
+  {
+    "name": "AsShotNeutral",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "rendered WB",
+    "prd_contract": [
+      "Yes, uncertain",
+      "colour-constancy / WB estimator",
+      "positive, G-normalised",
+      "rendered WB"
+    ]
+  },
+  {
+    "name": "Colour temperature",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "held-out EXIF",
+    "prd_contract": [
+      "Approximate",
+      "illuminant estimator",
+      "**2500–9900 K** allowed by α1 II official range for Sony-like preset.",
+      "held-out EXIF"
+    ]
+  },
+  {
+    "name": "Tint",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "neutral-patch test",
+    "prd_contract": [
+      "Approximate",
+      "residual chromaticity fit",
+      "bounded",
+      "neutral-patch test"
+    ]
+  },
+  {
+    "name": "BaselineExposure",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "developer response",
+    "prd_contract": [
+      "Derived",
+      "chosen RAW headroom/development mapping",
+      "plausible EV offset",
+      "developer response"
+    ]
+  },
+  {
+    "name": "BaselineNoise",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "metadata",
+    "prd_contract": [
+      "Derived/profile",
+      "noise-model relative level",
+      "positive",
+      "metadata"
+    ]
+  },
+  {
+    "name": "BaselineSharpness",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "metadata",
+    "prd_contract": [
+      "Configured",
+      "render profile",
+      "positive",
+      "metadata"
+    ]
+  },
+  {
+    "name": "ISO",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Low–medium",
+    "prd_contract": [
+      "noise/exposure posterior",
+      "50–102400 synthetic search space",
+      "Low–medium"
+    ]
+  },
+  {
+    "name": "Shutter time",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Low",
+    "prd_contract": [
+      "motion-blur + exposure posterior",
+      "1/32000 s–30 s",
+      "Low"
+    ]
+  },
+  {
+    "name": "Aperture",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Low",
+    "prd_contract": [
+      "defocus/DOF + exposure posterior",
+      "f/1–f/22",
+      "Low"
+    ]
+  },
+  {
+    "name": "Exposure compensation",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Low",
+    "prd_contract": [
+      "rendered brightness vs metering hypothesis",
+      "−5…+5 EV",
+      "Low"
+    ]
+  },
+  {
+    "name": "Focal length",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Medium–low",
+    "prd_contract": [
+      "image FOV/intrinsics + sensor size",
+      "profile-conditioned",
+      "Medium–low"
+    ]
+  },
+  {
+    "name": "35 mm equivalent",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Medium",
+    "prd_contract": [
+      "derived",
+      "exact after focal/sensor hypothesis",
+      "Medium"
+    ]
+  },
+  {
+    "name": "Focus distance",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Low",
+    "prd_contract": [
+      "monocular depth/defocus",
+      "0.2 m–∞",
+      "Low"
+    ]
+  },
+  {
+    "name": "Lens model",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Very low",
+    "prd_contract": [
+      "candidate or synthetic virtual lens",
+      "blank by default",
+      "Very low"
+    ]
+  },
+  {
+    "name": "Lens make",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "None",
+    "prd_contract": [
+      "profile/user",
+      "synthetic label",
+      "None"
+    ]
+  },
+  {
+    "name": "Radial distortion",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Medium in architectural scenes",
+    "prd_contract": [
+      "line geometry fit",
+      "near zero to modest",
+      "Medium in architectural scenes"
+    ]
+  },
+  {
+    "name": "Tangential distortion",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Low",
+    "prd_contract": [
+      "geometry fit",
+      "near zero",
+      "Low"
+    ]
+  },
+  {
+    "name": "Vignetting",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Low",
+    "prd_contract": [
+      "radial low-frequency fit after scene-mask",
+      "0–2 EV edge fall-off",
+      "Low"
+    ]
+  },
+  {
+    "name": "Lateral CA",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Medium",
+    "prd_contract": [
+      "channel displacement around edges",
+      "subpixel–few px at final scale",
+      "Medium"
+    ]
+  },
+  {
+    "name": "Longitudinal CA",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Very low",
+    "prd_contract": [
+      "depth-dependent coloured blur",
+      "optional fabricated",
+      "Very low"
+    ]
+  },
+  {
+    "name": "PSF",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Medium",
+    "prd_contract": [
+      "edge spread estimation",
+      "spatially varying optional",
+      "Medium"
+    ]
+  },
+  {
+    "name": "Diffraction",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "depends on aperture uncertainty",
+    "prd_contract": [
+      "derived from aperture/wavelength",
+      "optical calculation",
+      "depends on aperture uncertainty"
+    ]
+  },
+  {
+    "name": "Lens MTF",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "High uncertainty",
+    "prd_contract": [
+      "approximate from PSF",
+      "inferred, not manufacturer MTF",
+      "High uncertainty"
+    ]
+  },
+  {
+    "name": "Motion blur",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "Medium",
+    "prd_contract": [
+      "PSF/kernel estimate",
+      "local/global",
+      "Medium"
+    ]
+  },
+  {
+    "name": "Stabilisation",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "None",
+    "prd_contract": [
+      "cannot reliably infer",
+      "unspecified/fabricated",
+      "None"
+    ]
+  },
+  {
+    "name": "Make",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "`Synthetic`",
+    "prd_contract": [
+      "`Synthetic`"
+    ]
+  },
+  {
+    "name": "Model",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "selected synthetic profile",
+    "prd_contract": [
+      "selected synthetic profile"
+    ]
+  },
+  {
+    "name": "UniqueCameraModel",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "explicit synthetic identifier",
+    "prd_contract": [
+      "explicit synthetic identifier"
+    ]
+  },
+  {
+    "name": "ImageDescription",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "mandatory synthetic-capture disclosure",
+    "prd_contract": [
+      "mandatory synthetic-capture disclosure"
+    ]
+  },
+  {
+    "name": "Software",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "notebook version + git hash",
+    "prd_contract": [
+      "notebook version + git hash"
+    ]
+  },
+  {
+    "name": "DNGVersion",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "writer-controlled",
+    "prd_contract": [
+      "writer-controlled"
+    ]
+  },
+  {
+    "name": "DNGBackwardVersion",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "writer-controlled",
+    "prd_contract": [
+      "writer-controlled"
+    ]
+  },
+  {
+    "name": "PhotometricInterpretation",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "CFA",
+    "prd_contract": [
+      "CFA"
+    ]
+  },
+  {
+    "name": "SamplesPerPixel",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "1",
+    "prd_contract": [
+      "1"
+    ]
+  },
+  {
+    "name": "BitsPerSample",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "sensor container/ADC representation",
+    "prd_contract": [
+      "sensor container/ADC representation"
+    ]
+  },
+  {
+    "name": "Compression",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "uncompressed or lossless DNG",
+    "prd_contract": [
+      "uncompressed or lossless DNG"
+    ]
+  },
+  {
+    "name": "CFARepeatPatternDim",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "2×2",
+    "prd_contract": [
+      "2×2"
+    ]
+  },
+  {
+    "name": "CFAPattern",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "selected Bayer layout",
+    "prd_contract": [
+      "selected Bayer layout"
+    ]
+  },
+  {
+    "name": "CFAPlaneColor",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "derived",
+    "prd_contract": [
+      "derived"
+    ]
+  },
+  {
+    "name": "CFALayout",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "derived",
+    "prd_contract": [
+      "derived"
+    ]
+  },
+  {
+    "name": "ActiveArea",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "generated raster",
+    "prd_contract": [
+      "generated raster"
+    ]
+  },
+  {
+    "name": "DefaultCropOrigin",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "geometry policy",
+    "prd_contract": [
+      "geometry policy"
+    ]
+  },
+  {
+    "name": "DefaultCropSize",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "image-supported crop",
+    "prd_contract": [
+      "image-supported crop"
+    ]
+  },
+  {
+    "name": "BlackLevelRepeatDim",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "CFA-based",
+    "prd_contract": [
+      "CFA-based"
+    ]
+  },
+  {
+    "name": "BlackLevel",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "simulator values",
+    "prd_contract": [
+      "simulator values"
+    ]
+  },
+  {
+    "name": "WhiteLevel",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "simulator saturation",
+    "prd_contract": [
+      "simulator saturation"
+    ]
+  },
+  {
+    "name": "ExposureTime",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "exposure hypothesis",
+    "prd_contract": [
+      "exposure hypothesis"
+    ]
+  },
+  {
+    "name": "FNumber",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "exposure hypothesis",
+    "prd_contract": [
+      "exposure hypothesis"
+    ]
+  },
+  {
+    "name": "FocalLength",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "optics hypothesis",
+    "prd_contract": [
+      "optics hypothesis"
+    ]
+  },
+  {
+    "name": "LensModel",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "blank or synthetic label",
+    "prd_contract": [
+      "blank or synthetic label"
+    ]
+  },
+  {
+    "name": "MeteringMode",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "unspecified unless fabricated",
+    "prd_contract": [
+      "unspecified unless fabricated"
+    ]
+  },
+  {
+    "name": "Flash",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "estimate only with strong evidence",
+    "prd_contract": [
+      "estimate only with strong evidence"
+    ]
+  },
+  {
+    "name": "FocusMode",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "unspecified/fabricated",
+    "prd_contract": [
+      "unspecified/fabricated"
+    ]
+  },
+  {
+    "name": "DriveMode",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "unspecified/fabricated",
+    "prd_contract": [
+      "unspecified/fabricated"
+    ]
+  },
+  {
+    "name": "Timestamp",
+    "value": null,
+    "units": null,
+    "mode": "USER",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "blank unless user supplies or fabrication enabled",
+    "prd_contract": [
+      "blank unless user supplies or fabrication enabled"
+    ]
+  },
+  {
+    "name": "GPS",
+    "value": null,
+    "units": null,
+    "mode": "USER",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "**blank unless user supplies it**",
+    "prd_contract": [
+      "**blank unless user supplies it**"
+    ]
+  },
+  {
+    "name": "Camera serial",
+    "value": null,
+    "units": null,
+    "mode": "USER",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "blank",
+    "prd_contract": [
+      "blank"
+    ]
+  },
+  {
+    "name": "Lens serial",
+    "value": null,
+    "units": null,
+    "mode": "USER",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "blank",
+    "prd_contract": [
+      "blank"
+    ]
+  },
+  {
+    "name": "Battery",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "blank unless experimental fabrication enabled",
+    "prd_contract": [
+      "blank unless experimental fabrication enabled"
+    ]
+  },
+  {
+    "name": "Shutter count",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "blank",
+    "prd_contract": [
+      "blank"
+    ]
+  },
+  {
+    "name": "Orientation",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "observed/derived",
+    "prd_contract": [
+      "observed/derived"
+    ]
+  },
+  {
+    "name": "Source SHA-256",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "measured",
+    "prd_contract": [
+      "measured"
+    ]
+  },
+  {
+    "name": "Random seed",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "measured/configured",
+    "prd_contract": [
+      "measured/configured"
+    ]
+  },
+  {
+    "name": "Checkpoint hashes",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "measured",
+    "prd_contract": [
+      "measured"
+    ]
+  },
+  {
+    "name": "Synthetic-capture flag",
+    "value": null,
+    "units": null,
+    "mode": "AUTO",
+    "provenance": "UNSPECIFIED",
+    "confidence": null,
+    "posterior": null,
+    "method": "Not resolved; catalogue only, not an executable override",
+    "validation": "always true",
+    "prd_contract": [
+      "always true"
+    ]
+  }
+]

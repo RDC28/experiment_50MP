@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PRD v5 implemented analytic MVP configuration",
+  "description": "AnalyticRunConfig schema version 1, not the complete PRD panel. Omitted properties use Python defaults. Structural validation must be followed by AnalyticRunConfig.from_json: finite arithmetic, matrix conditioning, duplicate keys and runtime memory admission require executable checks. No learned inference is requested by this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "camera": {
+      "$ref": "#/$defs/camera"
+    },
+    "isp": {
+      "$ref": "#/$defs/isp"
+    },
+    "geometry_mode": {
+      "enum": [
+        "PRESERVE_SOURCE_ASPECT_50MP",
+        "SONY_A1II_NATIVE"
+      ]
+    },
+    "native_fit_policy": {
+      "enum": [
+        "LETTERBOX_SENSOR_MARGIN",
+        "CROP_HORIZONTAL",
+        "OUTPAINT_VERTICAL"
+      ]
+    },
+    "target_megapixels": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1000
+    },
+    "assume_unprofiled_srgb": {
+      "type": "boolean"
+    },
+    "strip_rows": {
+      "$ref": "#/$defs/positiveInteger"
+    },
+    "max_decode_bytes": {
+      "$ref": "#/$defs/positiveInteger"
+    },
+    "max_develop_bytes": {
+      "$ref": "#/$defs/positiveInteger"
+    },
+    "sensor_effects": {
+      "$ref": "#/$defs/sensor_effects"
+    },
+    "vignetting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "corner_strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0
+        }
+      }
+    },
+    "accept_experimental_optics": {
+      "type": "boolean",
+      "default": false
+    },
+    "distortion": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "k1": {
+          "type": "number",
+          "minimum": -0.25,
+          "maximum": 0.25,
+          "default": 0
+        },
+        "k2": {
+          "type": "number",
+          "minimum": -0.25,
+          "maximum": 0.25,
+          "default": 0
+        },
+        "p1": {
+          "type": "number",
+          "minimum": -0.25,
+          "maximum": 0.25,
+          "default": 0
+        },
+        "p2": {
+          "type": "number",
+          "minimum": -0.25,
+          "maximum": 0.25,
+          "default": 0
+        }
+      }
+    },
+    "optical_effects": {
+      "$ref": "#/$defs/optical_effects"
+    },
+    "resampling": {
+      "enum": [
+        "BILINEAR",
+        "LANCZOS"
+      ]
+    }
+  },
+  "$defs": {
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "positiveNumber": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "triple": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "number"
+      }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "adc_bits": {
+          "type": "integer",
+          "minimum": 12,
+          "maximum": 16
+        },
+        "black_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16382
+        },
+        "full_well_e": {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "read_noise_e": {
+          "type": "number",
+          "minimum": 0
+        },
+        "iso": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 102400
+        },
+        "shutter_s": {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "aperture": {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "cfa_pattern": {
+          "enum": [
+            "RGGB",
+            "BGGR",
+            "GRBG",
+            "GBRG"
+          ]
+        },
+        "shot_noise": {
+          "type": "boolean"
+        },
+        "read_noise": {
+          "type": "boolean"
+        },
+        "profile": {
+          "enum": [
+            "SONY_A1II_LIKE",
+            "GENERIC",
+            "CUSTOM"
+          ]
+        }
+      }
+    },
+    "isp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "camera_to_srgb": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/triple"
+          }
+        },
+        "white_balance": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/positiveNumber"
+          }
+        },
+        "exposure_gain": {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "inverse_smoothstep": {
+          "type": "boolean"
+        },
+        "hdr_max_radiance": {
+          "description": "Analytic HDR peak radiance mapped to sensor saturation. Capped at 32 so 18% grey stays well above one DN after headroom scaling.",
+          "type": "number",
+          "minimum": 1,
+          "maximum": 32
+        }
+      }
+    },
+    "sensor_effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prnu_sigma": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0,
+          "maximum": 1
+        },
+        "dsnu_e": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0
+        },
+        "row_fpn_e": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0
+        },
+        "column_fpn_e": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0
+        },
+        "dark_current_e_per_s": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0
+        },
+        "temperature_c": {
+          "type": "number",
+          "default": 20.0,
+          "minimum": -100,
+          "maximum": 100
+        },
+        "temperature_doubling_c": {
+          "type": "number",
+          "default": 6.0,
+          "minimum": 1
+        },
+        "hot_pixel_fraction": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0,
+          "maximum": 1
+        },
+        "dead_pixel_fraction": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0,
+          "maximum": 1
+        },
+        "hot_pixel_e_per_s": {
+          "type": "number",
+          "default": 1000.0,
+          "minimum": 0
+        },
+        "nonlinearity_compression": {
+          "type": "number",
+          "default": 0.0,
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "optical_effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lateral_ca_px": {
+          "type": "number"
+        },
+        "axial_ca_sigma_px": {
+          "type": "number"
+        },
+        "psf_center_sigma_px": {
+          "type": "number"
+        },
+        "psf_edge_sigma_px": {
+          "type": "number"
+        },
+        "diffraction": {
+          "type": "boolean"
+        },
+        "wavelength_nm": {
+          "type": "number"
+        },
+        "defocus_radius_px": {
+          "type": "number"
+        },
+        "motion_length_px": {
+          "type": "number"
+        },
+        "motion_angle_deg": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,101 @@
+"""Lightweight verification of joint exposure selection and actual sensor effects."""
+
+import json
+import math
+from dataclasses import replace
+
+import numpy as np
+import pytest
+
+from prd_v5.exposure import resolve_exposure
+from prd_v5.hypothesis import CameraHypothesis
+from prd_v5.sensor import BayerSensor
+
+
+def test_joint_exposure_is_normalized_reproducible_and_preserves_camera():
+    base = CameraHypothesis(seed=123, full_well_e=48000)
+    camera, records, report = resolve_exposure(base, scene_ev100=4)
+    again = resolve_exposure(base, scene_ev100=4)
+    assert (camera, records, report) == again
+    assert base.iso == 100
+    assert camera.seed == base.seed and camera.full_well_e == base.full_well_e
+    assert camera.cfa_pattern == base.cfa_pattern
+    assert math.isclose(sum(c["weight"] for c in report["joint_candidates"]), 1)
+    assert camera.iso == report["selected"]["iso"]
+    assert camera.shutter_s == report["selected"]["exposure_time"]
+    assert camera.aperture == report["selected"]["f_number"]
+    selected = {r.name: r for r in records}
+    for name in ("iso", "shutter_s", "aperture"):
+        assert selected[name].provenance == "ESTIMATED"
+        assert selected[name].confidence is None
+        assert selected[name].posterior["joint_candidates"] == report["joint_candidates"]
+    json.dumps(report, allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"scene_ev100": float("nan")},
+        {"scene_ev100": True},
+        {"scene_ev100": 4, "candidate_count": 1},
+        {"scene_ev100": 4, "electronic_shutter": 1},
+    ],
+)
+def test_invalid_exposure_requests_fail(kwargs):
+    with pytest.raises(ValueError):
+        resolve_exposure(CameraHypothesis(), **kwargs)
+
+
+def test_scene_ev_moves_joint_exposure():
+    dark, _, _ = resolve_exposure(CameraHypothesis(), scene_ev100=0)
+    bright, _, _ = resolve_exposure(CameraHypothesis(), scene_ev100=16)
+
+    def ev(camera):
+        return math.log2(camera.aperture**2 / camera.shutter_s) - math.log2(camera.iso / 100)
+
+    assert ev(bright) > ev(dark) + 10
+
+
+def test_selected_iso_trades_exposure_for_gain(tmp_path):
+    base = CameraHypothesis()
+    camera, _, _ = resolve_exposure(base, scene_ev100=-8)
+    assert camera.iso > base.iso and camera.analogue_gain > base.analogue_gain
+
+    def codes(hypothesis, signal, shape):
+        dest = np.memmap(tmp_path / "codes", mode="w+", shape=shape, dtype=np.uint16)
+        try:
+            BayerSensor(hypothesis).process(np.full((*shape, 3), signal, dtype=np.float32), dest)
+            return dest.astype(np.float64) - hypothesis.black_level
+        finally:
+            dest._mmap.close()
+
+    quiet = [replace(h, shot_noise=False, read_noise=False) for h in (base, camera)]
+    np.testing.assert_array_equal(codes(quiet[0], 0.2, (4, 4)), codes(quiet[1], 0.2, (4, 4)))
+    low, high = (codes(h, 0.2, (128, 128)) for h in (base, camera))
+    assert high.mean() == pytest.approx(low.mean(), rel=0.01)
+    assert high.mean() / high.std() < 0.5 * low.mean() / low.std()
+
+
+def test_exposure_selection_survives_real_dng_tiff_bundle(tmp_path):
+    from PIL import Image
+
+    from prd_v5.pipeline import run_analytic
+
+    camera, records, report = resolve_exposure(CameraHypothesis(), scene_ev100=4)
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((32, 32, 3), 64, dtype=np.uint8)).save(source)
+    result = run_analytic(
+        source,
+        tmp_path / "run",
+        camera,
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+        camera_selections=records,
+    )
+    assert result["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+    for name in ("iso", "shutter_s", "aperture"):
+        field = result["registry"][name]
+        assert field["value"] == getattr(camera, name)
+        assert field["provenance"] == "ESTIMATED"
+        assert field["posterior"]["joint_candidates"] == report["joint_candidates"]
+    assert result["registry"]["iso"]["confidence"] is None
