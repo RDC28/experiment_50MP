@@ -120,11 +120,7 @@ def test_strict_load_strips_module_prefix_and_runs_bounded_residual(checkpoint, 
     # every inference tile is padded to a multiple of the network stride
     assert all(shape[2] % 4 == 0 and shape[3] % 4 == 0 for shape in model.shapes)
     # +0.1 encoded at 0.4 is brighter in linear light; confidence 1 - 0.1/0.25 = 0.6 passes the gate
-    expected = float(
-        (hdrunet._srgb_to_linear(np.float64(0.5)) - hdrunet._srgb_to_linear(np.float64(0.4)))
-        * camera.saturation_e
-        * 0.6
-    )
+    expected = float((hdrunet._srgb_to_linear(np.float64(0.5)) - hdrunet._srgb_to_linear(np.float64(0.4))) * 0.6)
     np.testing.assert_allclose(destination, expected, rtol=1e-4)
 
 
@@ -140,3 +136,16 @@ def test_nonfinite_output_rejected():
     predict = hdrunet.make_predictor(FakeModel(delta=np.nan), fake_torch({}), device="cpu", max_delta=0.25)
     with pytest.raises(ValueError, match="nonfinite"):
         predict(np.zeros((4, 4, 3), dtype=np.float32), None, (0, 0), CameraHypothesis())
+
+
+def test_residual_is_normalized_not_electrons():
+    camera = CameraHypothesis()
+    model = FakeModel(delta=0.1)
+    predict = hdrunet.make_predictor(model, fake_torch({}), device="cpu", max_delta=0.25)
+    encoded = np.full((4, 4, 3), 0.4, dtype=np.float32)
+    residual, _ = predict(encoded, None, (0, 0), camera)
+    delta_linear = float(hdrunet._srgb_to_linear(np.float64(0.5)) - hdrunet._srgb_to_linear(np.float64(0.4)))
+    # same order as the encoded delta, not scaled by saturation_e
+    assert camera.saturation_e > 100
+    np.testing.assert_allclose(residual, delta_linear, rtol=1e-4)
+    assert float(residual.max()) < 1.0

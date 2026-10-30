@@ -23,7 +23,8 @@ class ResidualAdapter:
     """Caller-loaded, deterministic tile predictor returning (residual, confidence).
 
     Inputs are encoded sRGB and clean camera RGB, both HxWx3; residual has
-    identical shape in camera.saturation_e units and confidence is HxW in [0,1].
+    identical shape in normalized units (1.0 = camera.saturation_e, like the clean buffer)
+    and confidence is HxW in [0,1].
     Predictors receive absolute (top,left) and the immutable camera. They must
     declare sufficient halo context and never add stochastic noise. Halo reads
     clip at the image boundary; predictors own their physical-edge padding.

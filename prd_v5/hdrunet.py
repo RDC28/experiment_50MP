@@ -132,9 +132,10 @@ def make_predictor(model, torch, *, device: str, max_delta: float):
     """Tile predictor: encoded-domain HDRUNet delta mapped to a linear camera residual.
 
     The (img, cond) pair is the same encoded sRGB tile, as in upstream LQ_condition_dataset.
-    Output minus input, in encoded units, becomes a linear-light difference scaled by
-    camera.saturation_e. Confidence falls linearly to zero as the per-pixel encoded change
-    approaches `max_delta`; the network's own mask is not a calibrated confidence.
+    Output minus input, in encoded units, becomes a linear-light difference in
+    normalized units (1.0 = camera.saturation_e), matching the clean buffer it is added to.
+    Confidence falls linearly to zero as the per-pixel encoded change approaches `max_delta`;
+    the network's own mask is not a calibrated confidence.
     """
 
     def predict(encoded, clean, origin, camera):
@@ -148,7 +149,7 @@ def make_predictor(model, torch, *, device: str, max_delta: float):
         if not np.isfinite(out).all():
             raise ValueError("HDRUNet produced nonfinite output")
         base = np.clip(encoded, 0.0, 1.0).astype(np.float64)
-        residual = (_srgb_to_linear(np.clip(out, 0.0, 1.0)) - _srgb_to_linear(base)) * camera.saturation_e
+        residual = _srgb_to_linear(np.clip(out, 0.0, 1.0)) - _srgb_to_linear(base)
         change = np.abs(np.clip(out, 0.0, 1.0) - base).max(axis=-1)
         return residual.astype(np.float32), np.clip(1.0 - change / max_delta, 0.0, 1.0)
 
