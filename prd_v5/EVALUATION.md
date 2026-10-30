@@ -183,6 +183,63 @@ licence acceptance. Do not replace this precise integrity reason with a claim
 that HAT weights are absent. No models, weights or notebook were executed, and
 no inference quality or full-size memory guarantee follows from this research.
 
+### RAW-Flow individual Drive artifacts and execution limits
+
+Metadata-only inspection on 2026-10-30 resolved the author-linked
+[Drive folder](https://drive.google.com/drive/folders/1pUWOdyogxZSumnRCv9HcffCR4sl4Ue60)
+to three individual files. Each preview returned HTTP 200 and its matching
+filename. Only HTML and source text were read; no checkpoint body was requested.
+
+| Camera/domain | Individual author preview | Download candidate |
+| --- | --- | --- |
+| FiveK Nikon D700 | [nikon_d700.pth](https://drive.google.com/file/d/1rzKzm5e3xwH7EBBOd8WmohHwIrD3067i/view) | [Download](https://drive.google.com/uc?export=download&id=1rzKzm5e3xwH7EBBOd8WmohHwIrD3067i) |
+| FiveK Canon EOS 5D | [canon_eos_5d.pth](https://drive.google.com/file/d/1rRaVxcsJpGM6UEdju4CqvmcGlua-PZA1/view) | [Download](https://drive.google.com/uc?export=download&id=1rRaVxcsJpGM6UEdju4CqvmcGlua-PZA1) |
+| PASCALRAW dataset domain | [pascalraw.pth](https://drive.google.com/file/d/1nAmBJHrUzGvPbC-BM5_hK5IjjpmiZswa/view) | [Download](https://drive.google.com/uc?export=download&id=1nAmBJHrUzGvPbC-BM5_hK5IjjpmiZswa) |
+
+These candidates identify mutable Drive files, not immutable byte pins. No
+SHA-256 label appeared in the folder or previews. For each ID, requesting
+`https://www.googleapis.com/drive/v3/files/FILE_ID?fields=id,name,size,sha256Checksum,md5Checksum,version`
+returned HTTP 403 `PERMISSION_DENIED`, requiring registered API consumer identity.
+Thus an authenticated checksum metadata response or independently supplied
+expected SHA-256 remains necessary. Public preview access does not establish
+checksum API access. No checkpoint SHA-256 is asserted.
+
+The author repository revision is `ddddedf1cc01830a5831f7e44d2d5991492c9e0a`.
+Its [complete recursive tree](https://api.github.com/repos/liuzhen03/RAW-Flow/git/trees/ddddedf1cc01830a5831f7e44d2d5991492c9e0a?recursive=1)
+returned `truncated: false`, with no checkpoint, `.gitattributes` or checksum
+sidecar; there is no checkpoint LFS pointer in that tree. The author releases
+API returned `[]`. The pinned [licence](https://github.com/liuzhen03/RAW-Flow/blob/ddddedf1cc01830a5831f7e44d2d5991492c9e0a/LICENSE)
+is MIT, copyright 2026 The RAWFlow Authors; no separate checkpoint terms were
+found. The camera labels above follow the author README, not Sony calibration.
+
+Source inspection of the [wrapper](https://github.com/liuzhen03/RAW-Flow/blob/ddddedf1cc01830a5831f7e44d2d5991492c9e0a/src/models/rawflow_wrapper.py)
+shows RGB input in [0,1], internal [-1,1] normalization and four-channel packed
+RAW output at half the input height and width. It builds RGB/RAW autoencoders,
+context guidance and a 20-step flow model. Loading uses `weights_only=True` but
+`strict=False`; a production adapter must reject missing/unexpected keys rather
+than accepting partially initialized models. The wrapper stacks all RGB patches,
+retains all predicted patches and overwrites overlaps during stitching. This
+does not satisfy bounded full-frame memory or seam-blending requirements.
+It also supplies no calibrated confidence output. A bounded adapter needs
+streamed patches, consistent global context, explicit CFA/normalization mapping
+and an independently justified confidence policy before pre-noise fusion.
+
+The pinned [Nikon evaluation configuration](https://github.com/liuzhen03/RAW-Flow/blob/ddddedf1cc01830a5831f7e44d2d5991492c9e0a/configs/eval/fivek_nikon.yaml)
+uses 512-pixel patches, 16-pixel overlap, 256-pixel global context and fusion
+disabled. These are upstream settings, not validated 50 MP defaults here.
+
+Disposition: **individual public artifacts identified; automatic pinned
+URL+SHA-256 download remains blocked by unavailable authenticated checksum
+metadata**. This does not mean weights are absent. Verified user paths remain
+supported by the generic residual contract, but that contract is not a real
+RAW-Flow architecture loader. Camera mapping, bounded architecture execution
+and Colab validation remain implementation work, separate from the digest
+blocker. Analytic fallback must remain visible and learned accuracy unmeasured.
+
+Validation: checked official source revision, release/tree metadata, all three
+preview filenames and checksum API errors; `git diff --check` passes. No model,
+notebook, checkpoint download, background service, commit or push was started.
+
 ### HDRUNet individual artifact and inference contract
 
 Metadata/source inspection on 2026-10-30 used `gh-axi api` with `--full` and raw-text Accept headers for source files only. The [recursive author tree](https://api.github.com/repos/chxy95/HDRUNet/git/trees/e9bd4b90a27d7531a38b8c97db05feb368b96dc2?recursive=1) was complete (`truncated: false`). No checkpoint body was requested, downloaded or executed.
