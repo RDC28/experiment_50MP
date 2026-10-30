@@ -548,3 +548,26 @@ full-size reconstruction was executed locally.
 Validation: 43 focused paired, colour-metric and delivery fixtures passed;
 v5 lint, all v5 Python formatting and diff whitespace checks passed. No full
 suite, background service, commit or push was started.
+
+### Notebook calibrated colour-reference controls
+
+The maximum-settings notebook now exposes `COLOUR_REFERENCES` alongside the
+source and native-pixel crop settings and passes it directly to
+`run_analytic_pair`. A commented per-source record shows the exact TIFF path and
+four calibration evidence fields. The default empty mapping preserves explicit
+not-measured results without fabricating reference data. Supplied records use
+the existing bounded CIEDE2000 measurement, reference hashing and pair JSON/HTML
+reporting; `COMPARISON_REGION` also applies to reference crops. References must
+already match each developed output's native geometry and trusted uint16 sRGB
+encoding. No alignment, colour calibration or source sharing is inferred.
+
+The README Colab steps now explain how to supply these records. Child bundle
+Colour gates remain separate pending work; measurements appear in the pair
+report and do not establish an acceptance threshold or recovered RAW/HDR truth.
+
+Validation: 38 focused notebook-static, colour-metric and paired fixtures passed,
+including real tiny DNG/TIFF reference measurement and missing-truth behavior.
+Static AST checks verify the empty default and direct reference/crop wiring
+without executing notebook cells. V5 lint, Python/notebook formatting and diff
+whitespace checks passed. No model, weights, notebook, full-size reconstruction,
+background service, commit or push was started.

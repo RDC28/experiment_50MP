@@ -26,7 +26,13 @@ original camera RAW, sensor calibration, spectra or private metadata.
    before loading. Actual inference is Colab/CUDA-only. No model is downloaded
    automatically. Without supplied weights, the allowed Lanczos/analytic fallback
    is prominently reported. Invalid supplied weights fail.
-5. Run all in Colab. Hardware/RAM/disk admission precedes reconstruction. Two
+5. For calibrated colour measurements, set `COLOUR_REFERENCES` using the example
+   in the settings cell. Supply independent native-output-size uint16 sRGB TIFFs
+   for `"2k"` and/or `"4k"` and actual camera/profile, trusted-development and
+   alignment evidence. The empty default requests reporting without inventing
+   truth: absent references stay not measured. `COMPARISON_REGION` also requests
+   native-pixel reference crop measurements. Allow disk for supplied references.
+6. Run all in Colab. Hardware/RAM/disk admission precedes reconstruction. Two
    sources execute sequentially with the same immutable camera/settings/seeds.
    Outputs go under `OUTPUT/pair/2k` and `OUTPUT/pair/4k`. The final cell displays
    the validation and comparison reports and prints DNG/TIFF paths.
@@ -263,5 +269,6 @@ reference path, byte count and streamed SHA-256. Omitted references remain
 explicitly not measured. References must match each output's native geometry;
 no reference is implicitly shared between sources. An unreadable or invalid
 reference prevents pair completion. These metrics do not set a scientific
-acceptance threshold. Child bundle gates and notebook controls remain pending;
-pass references explicitly to the paired API on Colab for now.
+acceptance threshold. Notebook `COLOUR_REFERENCES` passes these records directly to the paired API.
+Child bundle Colour gates remain pending; inspect the paired colour comparison
+for reference measurements.

@@ -71,6 +71,24 @@ def test_notebook_covers_prd_parameter_tables():
     assert expected == {field["name"] for field in values["FIELD_REQUESTS"]}
 
 
+def test_notebook_passes_optional_colour_truth_without_execution():
+    notebook, values = assignments()
+    assert values["COLOUR_REFERENCES"] == {}
+    calls = [
+        node
+        for cell in notebook.cells
+        if cell.cell_type == "code"
+        for node in ast.walk(ast.parse(cell.source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run_analytic_pair"
+    ]
+    assert len(calls) == 1
+    keywords = {keyword.arg: keyword.value for keyword in calls[0].keywords}
+    assert isinstance(keywords["colour_references"], ast.Name)
+    assert keywords["colour_references"].id == "COLOUR_REFERENCES"
+    assert isinstance(keywords["comparison_region"], ast.Name)
+    assert keywords["comparison_region"].id == "COMPARISON_REGION"
+
+
 def test_full_preset_values_are_executable_and_match_notebook():
     from dataclasses import asdict
 
