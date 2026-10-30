@@ -245,3 +245,15 @@ for the pair. Child manifests, paired summaries and JSON/HTML validation retain
 response evidence and hashes for each TIFF. Disabled runs record that state;
 runtime failures prevent completion. Recovery accuracy and RAW editability stay
 not measured pending aligned truth and full-size visual acceptance.
+
+Calibrated colour-reference API: `prd_v5.colour_metrics.calibrated_delta_e`
+accepts a candidate and supplied aligned reference as uncompressed, memory-mappable
+uint16 RGB TIFFs. Pass `calibration` with exactly `camera_profile`,
+`trusted_development`, `alignment` (nonempty evidence descriptions), and
+`colour_space="sRGB_D65_2deg"`. Both images must already have trusted sRGB
+colour conversion; arbitrary camera RGB, linear RGB and HDR are unsupported.
+The API computes native-pixel CIEDE2000 mean/RMS/maximum in bounded row strips,
+optionally over `region=(top,left,bottom,right)`. It performs no alignment or
+exposure fitting. Missing reference/calibration stays not measured; evidence is
+caller-attested rather than independently verified. Notebook/report integration
+is pending, so call this API explicitly on Colab benchmark references for now.

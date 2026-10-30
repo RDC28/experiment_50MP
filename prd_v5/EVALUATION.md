@@ -500,3 +500,26 @@ notebook-cell formatting and diff whitespace checks pass. Fixtures verify real
 DNG exports, configurable lifts, baseline scaling, nested hashes, report
 propagation, disabled behavior and failure completion policy. No background
 service, commit or push was started.
+
+### Calibrated CIEDE2000 reference API
+
+Added `colour_metrics.calibrated_delta_e` for supplied aligned trusted-development
+uint16 sRGB TIFF references. The implementation uses the existing scikit-image
+dependency: its [official colour API](https://scikit-image.org/docs/stable/api/skimage.color.html)
+defines sRGB-to-Lab conversion and CIEDE2000 with explicit parametric factors.
+This API fixes D65, 2-degree observer and kL=kC=kH=1. Calibration requires caller
+records identifying the camera/profile pair, trusted development and alignment,
+plus the exact `sRGB_D65_2deg` encoding declaration. No calibration, alignment,
+exposure normalization, ICC conversion or HDR validity is inferred from pixels.
+
+Bounded row strips yield native-pixel mean/RMS/maximum DeltaE, including optional
+crops. Missing reference/calibration and unequal raster shapes remain not
+measured; invalid contracts fail clearly. A supplied record is an attestation,
+not independent validation of calibration. No acceptance threshold or recovered
+RAW/HDR truth is claimed. Automatic notebook/bundle integration remains pending.
+
+Validation: 12 small fixtures pass, including actual TIFF black/white and red
+colour differences, Sharma's published CIEDE2000 Lab pair, identity, crops,
+bounded conversion, malformed contracts, dimensions and types. No model, weights,
+notebook or full-size reconstruction was executed. V5 lint/format and whitespace
+checks pass.
