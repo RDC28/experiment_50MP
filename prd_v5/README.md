@@ -270,8 +270,7 @@ explicitly not measured. References must match each output's native geometry;
 no reference is implicitly shared between sources. An unreadable or invalid
 reference prevents pair completion. These metrics do not set a scientific
 acceptance threshold. Notebook `COLOUR_REFERENCES` passes these records directly to the paired API.
-Child bundle Colour gates remain pending; inspect the paired colour comparison
-for reference measurements.
+Child bundle Colour gates are populated from these references, as described below.
 
 
 Calibrated references also populate each child bundle's Colour gate in
@@ -329,7 +328,13 @@ Run these only on a Colab A100 runtime, never on the development Mac.
    use them. With no reference both stay `not measured`, never passed.
 4. Set `MTF_EDGE` to a native-pixel region and edge evidence to measure sampled MTF.
    Leave it `None` to keep MTF `not measured`.
-5. To use learned weights, supply `SR_CHECKPOINT` (path, expected SHA-256, backend,
+5. To use a HDRUNet residual, call `prd_v5.hdrunet.load_hdrunet_adapter(path,
+   expected_sha256, camera, licence_accepted=True, experimental_accepted=True)` and assign
+   the result to `RESIDUAL_ADAPTER`. It verifies the digest before unpickling, loads with
+   `weights_only=True` and strict keys, and pads tiles to multiples of four. Output is mapped
+   to a linear residual by encoded-domain difference and gated by a change-size confidence;
+   it is NTIRE2021 HDR, not Sony calibration or clipped-highlight truth.
+6. To use learned weights, supply `SR_CHECKPOINT` (path, expected SHA-256, backend,
    revision, source, licence, licence acceptance). No checkpoint is downloaded
    automatically: no public artifact with a verified byte SHA-256 was found for
    HAT, RAW-Flow or HDRUNet. RAW-Diffusion and SpiralDiff publish no usable
