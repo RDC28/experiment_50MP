@@ -122,19 +122,16 @@ def resolve_analytic_panel(
     """
     import numpy as np
 
+    from prd_v5.colour import neutral_white_balance
     from prd_v5.fields import resolve_isp
 
     names = [field["name"] for field in requests]
     if len(set(names)) != len(names) or set(modes) != set(names):
         raise ValueError("Panel requires unique fields and exactly one mode per field")
-    colour_records = ()
     if colour_source is not None:
-        from prd_v5.colour import resolve_gray_world
-
         neutral_fields = [field for field in requests if field["name"] == "AsShotNeutral"]
         if not neutral_fields or modes["AsShotNeutral"] != "ESTIMATE" or neutral_fields[0]["value"] is not None:
             raise ValueError("Colour evidence requires AsShotNeutral in ESTIMATE mode without a value")
-        _, colour_records, _ = resolve_gray_world(isp, colour_source, strip_rows=colour_strip_rows)
     profile_modes = {}
     profile_candidates = {}
     for field in requests:
@@ -151,6 +148,16 @@ def resolve_analytic_panel(
                 isp, field["value"], label="Notebook ColorMatrix1/2 single-D65 user hypothesis"
             )
             profile_candidates = {r.name: (r,) for r in records if r.name == "camera_to_srgb"}
+    profile = profile_candidates["camera_to_srgb"][0].value if profile_candidates else isp.camera_to_srgb
+    colour_records = ()
+    if colour_source is not None:
+        from dataclasses import replace
+
+        from prd_v5.colour import resolve_gray_world
+
+        _, colour_records, _ = resolve_gray_world(
+            replace(isp, camera_to_srgb=profile), colour_source, strip_rows=colour_strip_rows
+        )
     camera_requests = [field for field in requests if field["name"] not in {"AsShotNeutral", "ColorMatrix1/2"}]
     camera, camera_records = resolve_camera_panel(
         camera,
@@ -172,12 +179,10 @@ def resolve_analytic_panel(
             neutral = np.asarray(field["value"], dtype=np.float64)
             if neutral.shape != (3,) or not np.isfinite(neutral).all() or np.any(neutral <= 0) or neutral[1] != 1:
                 raise ValueError("AsShotNeutral must contain three positive finite values with green equal to 1")
-            profile = candidates["camera_to_srgb"][0].value if "camera_to_srgb" in candidates else isp.camera_to_srgb
-            white = np.linalg.solve(np.asarray(profile, dtype=np.float64), np.ones(3))
             candidates["white_balance"] = (
                 CameraField(
                     "white_balance",
-                    tuple(white / neutral / white[1]),
+                    tuple(neutral_white_balance(profile, neutral)),
                     "ratio",
                     "USER",
                     "USER_SET",

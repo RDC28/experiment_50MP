@@ -293,6 +293,44 @@ def test_colour_panel_shared_estimate_drives_paired_raw(tmp_path):
         assert manifest["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
 
 
+def test_colour_estimate_with_user_profile_matches_written_neutral(tmp_path):
+    import json
+
+    import numpy as np
+    import tifffile
+    from PIL import Image
+
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.config import AnalyticRunConfig
+    from prd_v5.panel import resolve_analytic_panel
+    from prd_v5.dng import SRGB_TO_XYZ_D65
+
+    matrix = np.linalg.inv(np.asarray(SRGB_TO_XYZ_D65) @ np.diag([0.8, 1, 1.2]))
+    proxy = np.full((2, 2, 3), [0.2, 0.4, 0.6], dtype=np.float32)
+    means = ((proxy[0, 0].astype(np.float64) + 0.055) / 1.055) ** 2.4
+    camera, isp, camera_records, records = resolve_analytic_panel(
+        CameraHypothesis(shot_noise=False, read_noise=False),
+        AnalyticISP(),
+        [
+            {"name": "ColorMatrix1/2", "mode": "AUTO", "value": matrix.tolist()},
+            {"name": "AsShotNeutral", "mode": "AUTO", "value": None},
+        ],
+        {"ColorMatrix1/2": "USER", "AsShotNeutral": "ESTIMATE"},
+        colour_source=proxy,
+    )
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (128, 128, 128)).save(source)
+    output = tmp_path / "run"
+    AnalyticRunConfig(camera=camera, isp=isp, target_megapixels=0.001024, assume_unprofiled_srgb=True).run(
+        source, output, camera_selections=camera_records, isp_selections=records
+    )
+    recorded = json.loads((output / "manifest.json").read_text())["registry"]["isp.white_balance"]["posterior"]
+    np.testing.assert_allclose(recorded["as_shot_neutral"], means / means[1], rtol=1e-6)
+    with tifffile.TiffFile(output / "capture.dng") as handle:
+        written = np.asarray(handle.pages[0].tags["AsShotNeutral"].value).reshape(3, 2)
+    np.testing.assert_allclose(written[:, 0] / written[:, 1], recorded["as_shot_neutral"], atol=1e-6)
+
+
 @pytest.mark.parametrize("change", ["missing", "auto", "user", "value"])
 def test_colour_panel_rejects_conflicting_evidence(change):
     import numpy as np

@@ -7,6 +7,12 @@ from prd_v5.fields import resolve_isp
 from prd_v5.hypothesis import CameraField
 
 
+def neutral_white_balance(camera_to_srgb, neutral) -> np.ndarray:
+    """Analytic gains whose DNG AsShotNeutral equals the green-normalized neutral."""
+    white = np.linalg.solve(np.asarray(camera_to_srgb, dtype=np.float64), np.ones(3))
+    return white / np.asarray(neutral, dtype=np.float64) / white[1]
+
+
 def resolve_gray_world(
     base: AnalyticISP, source: np.ndarray, *, strip_rows: int = 64
 ) -> tuple[AnalyticISP, tuple[CameraField, ...], dict]:
@@ -18,8 +24,10 @@ def resolve_gray_world(
     It is opt-in evidence, not a learned model or recovered capture illuminant.
     Every pixel is examined in bounded strips; endpoint pixels are excluded in
     all channels. Empty/degenerate evidence fails without a unity fallback.
-    Returned gains drive the declared analytic forward model, whose inverse
-    divides by those gains. They do not white-balance the input rendered image.
+    The estimate is the AsShotNeutral; gains map it through base.camera_to_srgb
+    exactly as the DNG writer inverts them. Returned gains drive the declared
+    analytic forward model, whose inverse divides by those gains. They do not
+    white-balance the input rendered image.
     """
     if not isinstance(base, AnalyticISP):
         raise ValueError("base must be an AnalyticISP")
@@ -44,7 +52,7 @@ def resolve_gray_world(
         raise ValueError("No nondegenerate gray-world evidence")
     means = sums / count
     neutral = means / means[1]
-    gains = 1 / neutral
+    gains = neutral_white_balance(base.camera_to_srgb, neutral)
     if not np.isfinite(gains).all() or np.any(gains <= 0):
         raise ValueError("Gray-world evidence produced invalid gains")
     limitations = (
