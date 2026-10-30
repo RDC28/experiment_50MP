@@ -128,3 +128,10 @@ def test_notebook_wires_optional_hdrunet_checkpoint():
     assert values["HDRUNET_LICENCE_ACCEPTED"] is False
     text = "\n".join(c.source for c in notebook.cells if c.cell_type == "code")
     assert "load_hdrunet_adapter(" in text and "HDRUNET_SHA256," in text
+
+
+def test_notebook_hdrunet_tiling_goes_through_loader_validation():
+    notebook, _ = assignments()
+    text = "\n".join(c.source for c in notebook.cells if c.cell_type == "code")
+    assert "tile=RAW_TILE," in text and "halo=RAW_OVERLAP," in text
+    assert "HDRUNET_LOADED" in text
