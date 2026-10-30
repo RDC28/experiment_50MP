@@ -130,6 +130,59 @@ Rechecked the actual author READMEs through the GitHub API before the completion
 
 A missing digest stays unknown. A Git blob SHA-1, a Drive MD5, or a locally invented digest must never be recorded as checkpoint SHA-256. The completion build below must distinguish runnable models from access-limited or unverified artifacts.
 
+### HAT individual Drive artifacts and remaining checksum blocker
+
+Metadata-only author-source inspection on 2026-10-30 resolved the
+[official model folder](https://drive.google.com/drive/folders/1HpmReFfoUqUbnAOQ7rvOeNU3uf_m69w0)
+to the following individual files. The folder HTML identifies each filename and
+file ID; both individual preview pages also return the matching filename.
+Only HTML metadata and GitHub source text were read, never checkpoint bodies.
+
+| Variant | Author file preview | Individual download candidate | Folder modification date |
+| --- | --- | --- | --- |
+| HAT ImageNet-pretrained x4 | [HAT_SRx4_ImageNet-pretrain.pth](https://drive.google.com/file/d/1cxls85ZE7kalhNy47eBJI_L_Lwf9hxRI/view) | [Drive file download](https://drive.google.com/uc?export=download&id=1cxls85ZE7kalhNy47eBJI_L_Lwf9hxRI) | 20 May 2022 |
+| HAT-L ImageNet-pretrained x4 | [HAT-L_SRx4_ImageNet-pretrain.pth](https://drive.google.com/file/d/1uefIctjoNE3Tg6GTzelesTTshVogQdUf/view) | [Drive file download](https://drive.google.com/uc?export=download&id=1uefIctjoNE3Tg6GTzelesTTshVogQdUf) | 2 March 2023 |
+
+The download links are candidates constructed from verified Drive IDs, not
+tested byte downloads or immutable content pins. Drive file IDs and modification
+dates do not establish byte identity. Neither preview page exposed a SHA-256
+label or a 64-hex digest. A metadata request to
+`https://www.googleapis.com/drive/v3/files/FILE_ID?fields=id,name,size,sha256Checksum,md5Checksum,version`
+for each file returned HTTP 403 `PERMISSION_DENIED`, explicitly rejecting
+unregistered callers and requiring an API key or other API consumer identity.
+This is a metadata authentication blocker, not evidence that the files are
+private or that Drive has no checksum. An authorized metadata response containing
+`sha256Checksum` could resolve integrity without a local weight download.
+No byte size or SHA-256 is asserted here.
+
+The author repository at revision `1638a9a822581657811867bf670717f8371fc3e5`
+has no GitHub releases (`releases` API returned `[]`); its complete recursive
+tree (`truncated: false`) contains no `.pth`, `.gitattributes` or file named for
+SHA/checksum metadata. Consequently there is no Git LFS checkpoint pointer to
+inspect in that tree. Repository terms remain
+[Apache-2.0](https://github.com/XPixelGroup/HAT/blob/1638a9a822581657811867bf670717f8371fc3e5/LICENSE);
+no separate weight licence was established by these metadata checks.
+
+The pinned author test configurations for
+[HAT](https://github.com/XPixelGroup/HAT/blob/1638a9a822581657811867bf670717f8371fc3e5/options/test/HAT_SRx4_ImageNet-pretrain.yml)
+and [HAT-L](https://github.com/XPixelGroup/HAT/blob/1638a9a822581657811867bf670717f8371fc3e5/options/test/HAT-L_SRx4_ImageNet-pretrain.yml)
+both specify RGB input, x4 PixelShuffle output, image range 1, window size 16,
+embedding dimension 180, strict loading and checkpoint key `params_ema`.
+HAT has six groups of depth six; HAT-L has twelve, so filenames cannot safely be
+interchanged with a fixed six-group architecture. These are rendered-RGB SR
+models evaluated on bicubic-downsampled image benchmarks, with no camera-specific
+Sony RAW calibration. The existing spandrel loader validates architecture, scale
+and RGB channels from a verified user checkpoint, rather than treating the
+filename as an architecture guarantee.
+
+Disposition: individual official HAT and HAT-L artifacts are now identified;
+automatic Colab download remains skipped because the required independently
+verified SHA-256 is unavailable through the inspected unauthenticated metadata.
+Continue supporting user checkpoint paths with expected SHA-256 and explicit
+licence acceptance. Do not replace this precise integrity reason with a claim
+that HAT weights are absent. No models, weights or notebook were executed, and
+no inference quality or full-size memory guarantee follows from this research.
+
 ### HDRUNet individual artifact and inference contract
 
 Metadata/source inspection on 2026-10-30 used `gh-axi api` with `--full` and raw-text Accept headers for source files only. The [recursive author tree](https://api.github.com/repos/chxy95/HDRUNet/git/trees/e9bd4b90a27d7531a38b8c97db05feb368b96dc2?recursive=1) was complete (`truncated: false`). No checkpoint body was requested, downloaded or executed.
