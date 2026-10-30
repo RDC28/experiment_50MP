@@ -57,11 +57,14 @@ estimators/overrides are rejected; a visible control does not claim implementati
   spatial Gaussian PSF, approximate diffraction/defocus, and global line motion.
   Axial CA has no reconstructed depth field; PSFs are not measured lens MTF.
 - A caller-loaded `ResidualAdapter` can add camera-bound confidence-gated learned
-  residuals. RAW-Diffusion/SpiralDiff/RAW-Flow loaders, camera adaptation and halo
-  inference remain deferred. Their absence is reported; strict learned mode
-  fails without a compatible adapter. A supplied residual currently requires
-  `RAW_TILE=1024`, `RAW_OVERLAP=0`; the default requested overlap of 128 is rejected
-  when such an adapter is supplied, until its halo loader is implemented.
+  residuals with bounded halo context and core-only writes. `RAW_TILE=1024`
+  controls core size and `RAW_OVERLAP=128` supplies context on each side in the
+  notebook. Library adapters expose `tile` and `halo` with those same defaults.
+  The predictor receives the context window origin and owns physical-edge
+  padding; its receptive field must fit the halo. No model seam guarantee is
+  implied. RAW-Diffusion/SpiralDiff/RAW-Flow loaders and camera adaptation remain
+  deferred. Their absence is reported; strict learned mode fails without a
+  compatible adapter.
 - Private identity/history remains unresolved. Experimental acceptance defaults
   do not grant licence acceptance. No GPS, serial or timestamp is invented.
 

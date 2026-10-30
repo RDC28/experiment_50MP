@@ -18,6 +18,7 @@ def adapter_for(tmp_path, camera, predict=None):
     checkpoint = tmp_path / "double.bin"
     checkpoint.write_bytes(b"test double, not a research checkpoint")
     return ResidualAdapter(
+        halo=0,
         predict=predict or (lambda rgb, clean, origin, camera: (np.full_like(clean, 0.1), np.ones(clean.shape[:2]))),
         checkpoint_path=str(checkpoint),
         sha256=hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
@@ -133,7 +134,7 @@ def test_paired_residual_adc_effect_and_provenance(tmp_path):
     baseline = tmp_path / "baseline"
     output = tmp_path / "learned"
     run_analytic_pair(source, source, baseline, config)
-    adapter = adapter_for(tmp_path, camera)
+    adapter = replace(adapter_for(tmp_path, camera), tile=8, halo=2)
     result = run_analytic_pair(source, source, output, config, inverse_mode="LEARNED_RGB2RAW", residual_adapter=adapter)
     import rawpy
 
@@ -147,6 +148,7 @@ def test_paired_residual_adc_effect_and_provenance(tmp_path):
         child = json.loads((output / label / "manifest.json").read_text())
         stage = child["stages"]["learned_raw"]
         assert stage["changed_samples"] == 32 * 32 * 3
+        assert (stage["tile"], stage["halo"]) == (8, 2)
         assert stage["checkpoint"]["sha256"] == adapter.sha256
         assert child["registry"]["Checkpoint hashes"]["value"] == {"sr": None, "residual": adapter.sha256}
         assert child["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
@@ -190,3 +192,48 @@ def test_residual_never_reaches_sensor_margins(tmp_path):
         mosaic = raw.raw_image.copy()
     assert np.all(mosaic[~support] == camera.black_level)
     assert np.all(mosaic[support] > camera.black_level)
+
+
+@pytest.mark.parametrize("tile,halo", [(1, 1), (4, 1), (5, 3), (32, 2)])
+def test_halo_prediction_matches_whole_image_neighborhood(tmp_path, tile, halo):
+    """A deterministic spatial filter exposes lost context at tile boundaries."""
+    from scipy.ndimage import uniform_filter
+
+    camera = CameraHypothesis()
+    clean = np.random.default_rng(12).uniform(0.1, 0.3, (9, 11, 3)).astype(np.float32)
+    encoded = np.random.default_rng(13).uniform(0, 1, clean.shape).astype(np.float32)
+    support = np.ones(clean.shape[:2], dtype=bool)
+    support[-1] = False
+    calls = []
+
+    def predict(rgb, baseline, origin, supplied_camera):
+        top, left = origin
+        h, w = baseline.shape[:2]
+        assert h <= tile + 2 * halo and w <= tile + 2 * halo
+        np.testing.assert_array_equal(baseline, clean[top : top + h, left : left + w])
+        np.testing.assert_array_equal(rgb, encoded[top : top + h, left : left + w])
+        assert not baseline.flags.writeable and not rgb.flags.writeable
+        calls.append(origin)
+        return uniform_filter(rgb, size=(3, 3, 1), mode="reflect") * 0.1, np.full((h, w), 0.75)
+
+    adapter = replace(adapter_for(tmp_path, camera, predict), tile=tile, halo=halo)
+    destination = np.memmap(tmp_path / "result", mode="w+", dtype="float32", shape=clean.shape)
+    try:
+        report = apply_residual(encoded, clean, support, destination, camera, adapter)
+        residual = uniform_filter(encoded, size=(3, 3, 1), mode="reflect") * 0.1
+        expected = clean.astype(np.float64) + np.where(support[..., None], residual * 0.75, 0)
+        np.testing.assert_allclose(destination, expected, atol=3e-8, rtol=0)
+        assert report["accepted_pixels"] == int(support.sum())
+        assert (report["tile"], report["halo"]) == (tile, halo)
+        assert report["seam_validation"].startswith("not measured")
+        assert calls
+    finally:
+        destination._mmap.close()
+
+
+@pytest.mark.parametrize("settings", [{"halo": -1}, {"halo": True}, {"tile": 0}, {"tile": 1.5}])
+def test_invalid_adapter_context_rejected_before_checkpoint_io(tmp_path, settings):
+    camera = CameraHypothesis()
+    adapter = replace(adapter_for(tmp_path, camera), checkpoint_path="absent", **settings)
+    with pytest.raises(ValueError, match="tile.*halo"):
+        resolve_mode("HYBRID", adapter, camera)

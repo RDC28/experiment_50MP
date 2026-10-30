@@ -25,7 +25,9 @@ class ResidualAdapter:
     Inputs are encoded sRGB and clean camera RGB, both HxWx3; residual has
     identical shape in camera.saturation_e units and confidence is HxW in [0,1].
     Predictors receive absolute (top,left) and the immutable camera. They must
-    supply their own receptive-field handling and never add stochastic noise.
+    declare sufficient halo context and never add stochastic noise. Halo reads
+    clip at the image boundary; predictors own their physical-edge padding.
+    Only the core is written, so no context prediction is averaged into it.
     No RAW-Flow/SpiralDiff compatibility or scientific calibration is implied.
     """
 
@@ -38,6 +40,8 @@ class ResidualAdapter:
     licence_accepted: bool = False
     experimental_accepted: bool = False
     normalization: str = "clean_camera_rgb_saturation"
+    tile: int = 1024
+    halo: int = 128
 
     def verify(self, camera: CameraHypothesis) -> dict:
         if not callable(self.predict) or self.experimental_accepted is not True or self.licence_accepted is not True:
@@ -46,6 +50,8 @@ class ResidualAdapter:
             raise ValueError("Adapter source and licence required")
         if self.normalization != "clean_camera_rgb_saturation" or self.camera_sha256 != camera_domain(camera):
             raise ValueError("Adapter normalization or camera domain mismatch")
+        if type(self.tile) is not int or self.tile < 1 or type(self.halo) is not int or self.halo < 0:
+            raise ValueError("Residual tile must be positive and halo nonnegative integers")
         digest = hashlib.sha256()
         with Path(self.checkpoint_path).open("rb") as stream:
             while block := stream.read(1024 * 1024):
@@ -84,7 +90,7 @@ def resolve_mode(mode, adapter, camera) -> dict:
 
 
 def apply_residual(
-    rgb, clean, support, destination, camera, adapter, *, mode="HYBRID", tile=1024, threshold=0.5
+    rgb, clean, support, destination, camera, adapter, *, mode="HYBRID", tile=None, halo=None, threshold=0.5
 ) -> dict:
     """Write corrected clean expectation in bounded tiles before CFA/noise.
 
@@ -92,6 +98,10 @@ def apply_residual(
     to supported source pixels; sensor margins are copied unchanged.
     """
     report = resolve_mode(mode, adapter, camera)
+    tile = tile if tile is not None else adapter.tile if adapter is not None else 1024
+    halo = halo if halo is not None else adapter.halo if adapter is not None else 128
+    if type(halo) is not int or halo < 0:
+        raise ValueError("Residual halo must be a nonnegative integer")
     if type(tile) is not int or tile < 1 or not np.isfinite(threshold) or not 0 <= threshold <= 1:
         raise ValueError("Invalid residual tile or confidence threshold")
     if adapter is None:
@@ -110,11 +120,20 @@ def apply_residual(
     for top in range(0, clean.shape[0], tile):
         for left in range(0, clean.shape[1], tile):
             region = np.s_[top : top + tile, left : left + tile]
-            baseline = np.array(clean[region], copy=True)
-            encoded = np.array(rgb[region], copy=True)
+            context_top, context_left = max(0, top - halo), max(0, left - halo)
+            context = np.s_[
+                context_top : min(clean.shape[0], top + tile + halo),
+                context_left : min(clean.shape[1], left + tile + halo),
+            ]
+            core = np.s_[
+                top - context_top : min(clean.shape[0], top + tile) - context_top,
+                left - context_left : min(clean.shape[1], left + tile) - context_left,
+            ]
+            baseline = np.array(clean[context], copy=True)
+            encoded = np.array(rgb[context], copy=True)
             baseline.setflags(write=False)
             encoded.setflags(write=False)
-            residual, confidence = adapter.predict(encoded, baseline, (top, left), camera)
+            residual, confidence = adapter.predict(encoded, baseline, (context_top, context_left), camera)
             residual, confidence = np.asarray(residual), np.asarray(confidence)
             if residual.shape != baseline.shape or confidence.shape != baseline.shape[:2]:
                 raise ValueError("Residual/confidence shape mismatch")
@@ -122,6 +141,7 @@ def apply_residual(
                 raise ValueError("Nonfinite residual/confidence")
             if np.any(confidence < 0) or np.any(confidence > 1):
                 raise ValueError("Confidence must be in [0,1]")
+            residual, confidence, baseline = residual[core], confidence[core], baseline[core]
             gate = (confidence >= threshold) & support[region]
             corrected = baseline.astype(np.float64) + np.where(gate[..., None], residual * confidence[..., None], 0)
             if not np.isfinite(corrected).all() or np.any(corrected > np.finfo(np.float32).max):
@@ -140,6 +160,9 @@ def apply_residual(
         "zero_effect": changed == 0,
         "floored_samples": floored,
         "tile": tile,
+        "halo": halo,
+        "context_policy": "clipped halo read; core-only write; predictor owns physical-edge padding",
+        "seam_validation": "not measured; sufficient receptive field remains predictor responsibility",
         "confidence_threshold": threshold,
         "sensor_noise_in_network": False,
     }
