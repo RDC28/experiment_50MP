@@ -571,3 +571,27 @@ Static AST checks verify the empty default and direct reference/crop wiring
 without executing notebook cells. V5 lint, Python/notebook formatting and diff
 whitespace checks passed. No model, weights, notebook, full-size reconstruction,
 background service, commit or push was started.
+
+### Child bundle calibrated colour evidence
+
+Per-source notebook colour references now also reach each child bundle's Colour
+validation gate. Single-source callers can pass `colour_reference={"path": ...,
+"calibration": ...}` to `AnalyticRunConfig.run` or `run_analytic`, using the same
+aligned uint16 sRGB calibration contract as the pair runner. Bounded whole-raster
+CIEDE2000 evidence, calibration records and streamed reference hashes appear in
+`validation.json`, the child manifest and HTML colour evidence. No reference,
+missing calibration or unequal geometry stays not measured. The pair report
+continues to retain optional crop measurements independently.
+
+A measured difference is not a threshold pass, WB angular validation or recovered
+RAW/HDR truth; overall scientific acceptance stays conditional. Malformed
+reference controls fail before source I/O, and measurement failure prevents child
+and pair completion manifests. External reference paths remain caller inputs,
+not copied or executable replay configuration. No model, weights, notebook or
+full-size reconstruction was executed locally.
+
+Validation: 71 focused paired, report, delivery, pipeline and colour fixtures
+passed, including actual tiny DNG development, calibrated reference propagation,
+missing truth, HTML numeric evidence and failure completion policy. V5 lint,
+all v5 Python formatting and diff whitespace checks pass. No full suite,
+background service, commit or push was started.

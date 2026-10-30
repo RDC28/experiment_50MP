@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 
 from prd_v5.coherence import metadata_coherence
+from prd_v5.colour_metrics import calibrated_delta_e
 from prd_v5.hdr_validation import validate_hdr_claims
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.physics import photon_transfer
@@ -142,7 +143,7 @@ def complete_registry(report):
     return registry
 
 
-def finish_bundle(output, report):
+def finish_bundle(output, report, *, colour_reference=None):
     """Write canonical names, complete registry, masks, hashes and gate records."""
     import shutil
 
@@ -207,6 +208,21 @@ def finish_bundle(output, report):
             "clean_bayer.npy": "expected electrons before body/noise effects",
             "noisy_bayer.npy": "ADC-referred electrons including clipping and quantisation",
         },
+    }
+    reference = {} if colour_reference is None else colour_reference
+    colour = calibrated_delta_e(
+        output / "developed.tiff",
+        reference.get("path"),
+        calibration=reference.get("calibration"),
+        strip_rows=report["limits"]["strip_rows"],
+    )
+    if reference:
+        path = Path(reference["path"])
+        colour["reference"] = {"path": str(path), "sha256": digest(path), "size_bytes": path.stat().st_size}
+    validation["Colour"] = {
+        "status": colour["status"],
+        "reason": colour.get("reason", "Measured difference only; no acceptance threshold or WB angular validation"),
+        "evidence": colour,
     }
     validation["RAW editability"]["exposure_sweep"] = report["stages"]["exposure_sweep"]
     validation["RAW editability"]["wb_sweep"] = report["stages"]["wb_sweep"]

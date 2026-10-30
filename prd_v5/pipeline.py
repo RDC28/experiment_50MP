@@ -67,6 +67,7 @@ def run_analytic(
     sr_checkpoint: SRCheckpoint | None = None,
     inverse_mode: str = "ANALYTIC",
     residual_adapter: ResidualAdapter | None = None,
+    colour_reference: dict | None = None,
 ) -> dict:
     """Run explicit bilinear/analytic MVP, never an implicit learned fallback.
 
@@ -80,6 +81,11 @@ def run_analytic(
     can be supplied to sequential source-resolution runs. Full-scale execution
     belongs in Colab with explicit memory budgets, never on the development Mac.
     """
+    if colour_reference is not None:
+        if not isinstance(colour_reference, dict) or set(colour_reference) != {"path", "calibration"}:
+            raise ValueError("Colour reference requires exactly path and calibration")
+        if not isinstance(colour_reference["path"], (str, Path)) or not str(colour_reference["path"]).strip():
+            raise ValueError("Colour reference path must be nonempty")
     if optical_effects is None:
         optical_effects = OpticalEffects()
     if sensor_effects is None:
@@ -466,7 +472,7 @@ def run_analytic(
             "Colab full-scale validation",
         ],
     }
-    finish_bundle(output, report)
+    finish_bundle(output, report, colour_reference=colour_reference)
     # Render before the completion marker. Hash the HTML in the manifest without
     # making the report depend on its own digest.
     report_path = output / "report.html"

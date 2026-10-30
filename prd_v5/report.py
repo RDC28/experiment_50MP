@@ -61,7 +61,8 @@ def render_report(report: dict) -> str:
         "<h2>Acceptance gates</h2><table><thead><tr><th scope='col'>Gate</th>"
         "<th scope='col'>Status</th><th scope='col'>Reason</th></tr></thead>"
         f"<tbody>{gates}</tbody></table>"
-        "<h2>Artifacts</h2><table><thead><tr><th scope='col'>File</th>"
+        + detail("Colour reference evidence", report["validation"].get("Colour", {}))
+        + "<h2>Artifacts</h2><table><thead><tr><th scope='col'>File</th>"
         "<th scope='col'>Bytes</th><th scope='col'>SHA-256</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
         f"<h2>Stage evidence</h2>{stages}<h2>Mask semantics</h2>{masks}"

@@ -162,6 +162,7 @@ class AnalyticRunConfig:
         sr_checkpoint: SRCheckpoint | None = None,
         inverse_mode: str = "ANALYTIC",
         residual_adapter: ResidualAdapter | None = None,
+        colour_reference: dict | None = None,
     ) -> dict:
         """Execute the bounded analytic pipeline with exactly these settings."""
         from prd_v5.pipeline import run_analytic
@@ -182,6 +183,7 @@ class AnalyticRunConfig:
             sr_checkpoint=sr_checkpoint,
             inverse_mode=inverse_mode,
             residual_adapter=residual_adapter,
+            colour_reference=colour_reference,
             target_megapixels=self.target_megapixels,
             geometry_mode=self.geometry_mode,
             native_fit_policy=self.native_fit_policy,

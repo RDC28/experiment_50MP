@@ -282,6 +282,19 @@ def test_pair_calibrated_colour_references_reach_json_html_and_crops(tmp_path):
         colour_references={"2k": {"path": reference, "calibration": contract}},
     )
     colour = report["colour_comparison"]
+    for label in ("2k", "4k"):
+        child = json.loads((output / label / "manifest.json").read_text())
+        gate = child["validation"]["Colour"]
+        assert gate["status"] == report["colour_comparison"][label]["whole_raster"]["status"]
+        assert child["scientific_acceptance"].startswith("conditional")
+        assert json.loads((output / label / "validation.json").read_text())["Colour"] == gate
+        assert gate["status"] in (output / label / "validation_report.html").read_text()
+        if label == "2k":
+            assert "mean_delta_e2000" in (output / label / "validation_report.html").read_text()
+            assert gate["evidence"]["mean_delta_e2000"] > 0
+            assert gate["evidence"]["reference"]["sha256"] == hashlib.sha256(reference.read_bytes()).hexdigest()
+        else:
+            assert "mean_delta_e2000" not in gate["evidence"]
     for name, crop in (("whole_raster", None), ("crop", region)):
         independent = calibrated_delta_e(
             output / "2k/developed.tiff", reference, calibration=contract, region=crop, strip_rows=1
@@ -355,3 +368,28 @@ def test_pair_colour_missing_calibration_and_unequal_truth_stay_unmeasured(tmp_p
     assert result["status"] == "not measured"
     assert "Unequal rasters" in result["reason"] if calibrated else "No calibration" in result["reason"]
     assert "mean_delta_e2000" not in result
+
+
+def test_child_colour_failure_cannot_publish_completion(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+
+    def fail(*args, **kwargs):
+        raise OSError("colour reference unreadable")
+
+    monkeypatch.setattr("prd_v5.delivery.calibrated_delta_e", fail)
+    output = tmp_path / "pair"
+    with pytest.raises(OSError, match="colour reference unreadable"):
+        run_analytic_pair(source, source, output, config)
+    assert not (output / "2k/manifest.json").exists()
+    assert not (output / "pair_manifest.json").exists()
+    assert not (output / "2k/validation_report.html").exists()
+
+
+@pytest.mark.parametrize("reference", [{}, {"path": "", "calibration": None}, []])
+def test_single_bundle_rejects_malformed_colour_reference_before_io(tmp_path, reference):
+    output = tmp_path / "single"
+    with pytest.raises(ValueError, match="reference"):
+        AnalyticRunConfig().run("absent", output, colour_reference=reference)
+    assert not output.exists()

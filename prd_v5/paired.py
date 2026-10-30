@@ -87,6 +87,7 @@ def run_analytic_pair(
             sr_checkpoint=sr_checkpoint,
             inverse_mode=inverse_mode,
             residual_adapter=residual_adapter,
+            colour_reference=colour_references.get(label),
         )
         manifest = output / label / "manifest.json"
         runs[label] = {

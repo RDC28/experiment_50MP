@@ -272,3 +272,11 @@ reference prevents pair completion. These metrics do not set a scientific
 acceptance threshold. Notebook `COLOUR_REFERENCES` passes these records directly to the paired API.
 Child bundle Colour gates remain pending; inspect the paired colour comparison
 for reference measurements.
+
+
+Calibrated references also populate each child bundle's Colour gate in
+`validation.json`, its manifest and HTML reports, including the reference hash.
+Single-source callers use `config.run(..., colour_reference={"path": reference,
+"calibration": contract})`. Whole-raster measurement does not imply an acceptance
+pass or WB accuracy; overall scientific acceptance stays conditional. References
+remain external caller inputs and are not stored in replay configuration.
