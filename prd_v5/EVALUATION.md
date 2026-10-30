@@ -667,3 +667,23 @@ TIFF extraction, verify actual tiny DNG development, JSON/HTML evidence, explici
 missing measurements, invalid controls and failure completion policy. No model,
 weights, notebook, full-size inference, background service, commit or push was
 started.
+
+### LPIPS metric API
+
+`lpips_metric.lpips_distance` measures mean LPIPS (v0.1, alex/vgg/squeeze) over
+non-overlapping patches (64 to 1024 px, at most 4096 patches) of aligned uint16
+sRGB TIFFs under the same attested-alignment contract as `calibrated_delta_e`.
+It loads the official [lpips](https://pypi.org/project/lpips/) package lazily
+via `load_lpips` (never imported on the Mac). Metadata-only checks on 2026-10-30:
+PyPI lpips 0.1.4, wheel sha256 `fd537af5828b69d2e6ffc0a397bd506dbc28ca183543617690844c08e102ec5e`
+(53,763 bytes), source `3846331df6c69688aec3d300a5eeef6c529435bc8460bd58201c3d62e56188fa`;
+repo licence BSD-2-Clause; linear heads ship in the wheel (GitHub `lpips/weights/v0.1`:
+alex.pth 6,009 B, vgg.pth 7,289 B, squeeze.pth 10,811 B). The AlexNet ImageNet backbone is
+fetched by torchvision from `download.pytorch.org/models/alexnet-owt-7be5be79.pth`
+(HTTP 200, 244,408,911 bytes; filename carries torchvision's hash prefix, full
+SHA256 not published by metadata, so no digest is recorded). Missing reference or
+contract stays not measured; unequal rasters give no implicit registration. Perceptual
+distance to a reference is not recovered-detail truth. Fixtures use a stand-in
+distance and fake `lpips`/`torch` modules only to test tiling, contract and loader
+wiring; no LPIPS network ran. Pair report, notebook controls and `lpips` pip
+install in the Colab setup cell remain pending.
