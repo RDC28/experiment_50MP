@@ -166,3 +166,103 @@ def test_wb_sweep_write_failure_cleanup(tmp_path, monkeypatch):
         develop_wb_sweep(source, tmp_path / "wb")
     assert not (tmp_path / "wb").exists()
     assert source.is_file()
+
+
+def test_demosaic_sweep_real_dng(tmp_path):
+    import rawpy
+
+    from prd_v5.roundtrip import develop_demosaic_sweep
+
+    plan = GeometryPlanner().plan(64, 48, target_megapixels=0.003072)
+    source = tmp_path / "source.dng"
+    y, x = np.indices((48, 64))
+    mosaic = (800 + 100 * ((x + y) % 7) + x * 15).astype(np.uint16)
+    write_dng(source, mosaic, CameraHypothesis(), plan, AnalyticISP())
+    original = source.read_bytes()
+    report = develop_demosaic_sweep(source, tmp_path / "edits", baseline_exposure_ev=-1)
+    json.dumps(report, allow_nan=False)
+    assert report["status"] == "measured"
+    assert [entry["algorithm"] for entry in report["renders"]] == ["LINEAR", "VNG", "AHD"]
+    images = []
+    for entry in report["renders"]:
+        rgb = tifffile.imread(entry["path"])
+        assert rgb.dtype == np.uint16 and rgb.shape == (48, 64, 3)
+        with rawpy.imread(str(source)) as raw:
+            expected = raw.postprocess(
+                output_bps=16,
+                use_camera_wb=True,
+                use_auto_wb=False,
+                no_auto_bright=True,
+                bright=0.5,
+                user_flip=0,
+                output_color=rawpy.ColorSpace.sRGB,
+                gamma=(1, 1),
+                highlight_mode=rawpy.HighlightMode.Clip,
+                demosaic_algorithm=rawpy.DemosaicAlgorithm[entry["algorithm"]],
+            )
+        np.testing.assert_array_equal(rgb, expected)
+        images.append(rgb)
+    assert not np.array_equal(images[0], images[-1])
+    assert source.read_bytes() == original
+    assert report["detail_accuracy"] == "not measured"
+    with pytest.raises(FileExistsError):
+        develop_demosaic_sweep(source, tmp_path / "edits")
+    with pytest.raises(ValueError, match="memory budget"):
+        develop_demosaic_sweep(source, tmp_path / "budget", max_working_bytes=1)
+    assert not (tmp_path / "budget").exists()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"baseline_exposure_ev": True},
+        {"baseline_exposure_ev": float("nan")},
+        {"baseline_exposure_ev": 17},
+        {"max_working_bytes": False},
+    ],
+)
+def test_demosaic_invalid_settings_before_io(tmp_path, kwargs):
+    from prd_v5.roundtrip import develop_demosaic_sweep
+
+    with pytest.raises(ValueError):
+        develop_demosaic_sweep(tmp_path / "absent", tmp_path / "edits", **kwargs)
+    assert not (tmp_path / "edits").exists()
+
+
+def test_demosaic_failure_cleanup(tmp_path, monkeypatch):
+    from prd_v5.roundtrip import develop_demosaic_sweep
+
+    plan = GeometryPlanner().plan(64, 48, target_megapixels=0.003072)
+    source = tmp_path / "source.dng"
+    write_dng(source, np.full((48, 64), 2500, np.uint16), CameraHypothesis(), plan, AnalyticISP())
+    original_write = tifffile.imwrite
+    calls = []
+
+    def fail_second(*args, **kwargs):
+        calls.append(args[0])
+        if len(calls) == 2:
+            raise OSError("fixture write failure")
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(tifffile, "imwrite", fail_second)
+    with pytest.raises(OSError, match="fixture write failure"):
+        develop_demosaic_sweep(source, tmp_path / "edits")
+    assert not (tmp_path / "edits").exists()
+    assert source.is_file()
+
+
+def test_demosaic_unavailable_algorithms_visible(tmp_path, monkeypatch):
+    import rawpy
+
+    from prd_v5.roundtrip import develop_demosaic_sweep
+
+    plan = GeometryPlanner().plan(64, 48, target_megapixels=0.003072)
+    source = tmp_path / "source.dng"
+    write_dng(source, np.full((48, 64), 2500, np.uint16), CameraHypothesis(), plan, AnalyticISP())
+    monkeypatch.setattr(rawpy.DemosaicAlgorithm, "isSupported", property(lambda self: False))
+    report = develop_demosaic_sweep(source, tmp_path / "edits")
+    assert report["status"] == "not measured"
+    assert report["renders"] == []
+    assert [entry["algorithm"] for entry in report["skipped"]] == ["LINEAR", "VNG", "AHD"]
+    assert all("Unavailable" in entry["reason"] for entry in report["skipped"])
+    assert list((tmp_path / "edits").iterdir()) == []

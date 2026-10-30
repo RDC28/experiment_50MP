@@ -174,3 +174,25 @@ disable the sweep. Both child bundles retain `wb_edits/`, per-TIFF hashes and
 WB response in manifest, pair and JSON/HTML validation reports. A failed sweep
 prevents completion. The existing development memory budget admits each render;
 RAW editability remains not measured.
+
+Generated-DNG demosaic sweep API (Colab; automatic notebook integration pending):
+
+```python
+from prd_v5.roundtrip import develop_demosaic_sweep
+
+edits = develop_demosaic_sweep(
+    dng_path,
+    output_directory / "demosaic_edits",  # fresh directory required
+    baseline_exposure_ev=baseline_exposure_ev,
+    max_working_bytes=8 * 1024**3,
+)
+```
+
+This sequentially exports LINEAR, VNG and AHD linear-light uint16 TIFFs with
+identical camera WB, brightness and highlight clipping. Unavailable algorithms
+are listed with reasons; execution/write errors abort and remove the new sweep
+directory. Reports retain algorithm names, library versions, channel means and
+clipping counts. Allow another 1.8 GB disk for two 50 MP inputs. Algorithm
+response does not prove detail accuracy or visual editability. Highlight/shadow
+sweeps and full-size visual review remain pending. Tiny fixtures:
+`.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.

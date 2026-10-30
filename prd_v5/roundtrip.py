@@ -266,3 +266,89 @@ def develop_wb_sweep(
         "white_balance_accuracy": "not measured",
         "limitations": "Relative developer edits only; no Kelvin calibration, illuminant truth or visual acceptance",
     }
+
+
+def develop_demosaic_sweep(
+    dng_path: str | Path,
+    output_directory: str | Path,
+    *,
+    baseline_exposure_ev: float = 0.0,
+    max_working_bytes: int = 512 * 1024 * 1024,
+) -> dict:
+    """Sequential LINEAR/VNG/AHD renders with otherwise identical development.
+
+    Unavailable LibRaw algorithms are visibly skipped. Successful development
+    measures algorithm response only, without certifying detail or editability.
+    """
+    import math
+    import shutil
+
+    import rawpy
+
+    if type(max_working_bytes) is not int or max_working_bytes <= 0:
+        raise ValueError("max_working_bytes must be a positive integer")
+    if (
+        isinstance(baseline_exposure_ev, bool)
+        or not isinstance(baseline_exposure_ev, (int, float))
+        or not math.isfinite(baseline_exposure_ev)
+        or abs(baseline_exposure_ev) > 16
+    ):
+        raise ValueError("baseline_exposure_ev must be finite and between -16 and 16")
+    source, destination = Path(dng_path), Path(output_directory)
+    with rawpy.RawPy() as header:
+        header.open_file(str(source))
+        estimate = header.sizes.raw_width * header.sizes.raw_height * 64
+    if estimate > max_working_bytes:
+        raise ValueError("LibRaw demosaic sweep exceeds the configured memory budget")
+    entries, skipped = [], []
+    destination.mkdir(parents=True, exist_ok=False)
+    try:
+        for name in ("LINEAR", "VNG", "AHD"):
+            algorithm = rawpy.DemosaicAlgorithm[name]
+            if not algorithm.isSupported:
+                skipped.append({"algorithm": name, "reason": "Unavailable in this LibRaw build"})
+                continue
+            with rawpy.imread(str(source)) as raw:
+                rgb = raw.postprocess(
+                    output_bps=16,
+                    use_camera_wb=True,
+                    use_auto_wb=False,
+                    no_auto_bright=True,
+                    bright=float(2**baseline_exposure_ev),
+                    user_flip=0,
+                    output_color=rawpy.ColorSpace.sRGB,
+                    gamma=(1, 1),
+                    highlight_mode=rawpy.HighlightMode.Clip,
+                    demosaic_algorithm=algorithm,
+                )
+                expected_shape = (raw.sizes.height, raw.sizes.width, 3)
+            if rgb.dtype != np.uint16 or rgb.shape != expected_shape:
+                raise HardValidationError("Unexpected demosaic sweep shape or precision")
+            path = destination / f"demosaic_{name.lower()}.tiff"
+            tifffile.imwrite(path, rgb, photometric="rgb", compression=None, metadata=None)
+            entries.append(
+                {
+                    "algorithm": name,
+                    "path": str(path),
+                    "shape": list(rgb.shape),
+                    "mean_linear_rgb_code": np.mean(rgb, axis=(0, 1), dtype=np.float64).tolist(),
+                    "zero_samples": int(np.count_nonzero(rgb == 0)),
+                    "saturated_samples": int(np.count_nonzero(rgb == 65535)),
+                }
+            )
+            del rgb
+    except BaseException:
+        shutil.rmtree(destination)
+        raise
+    return {
+        "status": "measured" if entries else "not measured",
+        "method": "LibRaw demosaic sweep; camera WB, linear light, fixed highlight clipping, no auto brightness",
+        "baseline_exposure_ev": baseline_exposure_ev,
+        "working_bytes_estimate": estimate,
+        "rawpy_version": rawpy.__version__,
+        "libraw_version": rawpy.libraw_version,
+        "renders": entries,
+        "skipped": skipped,
+        "detail_accuracy": "not measured",
+        "limitations": "Developer response only; unchanged RAW, no ground truth or visual editability acceptance",
+    }

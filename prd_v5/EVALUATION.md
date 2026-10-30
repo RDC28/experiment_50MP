@@ -294,3 +294,22 @@ Validation: 122 focused pipeline, configuration/schema, notebook-static, deliver
 pair and roundtrip fixtures passed. After formatting the README and notebook,
 all four notebook-static fixtures passed again. V5 lint, formatting and diff
 whitespace checks pass. No background service, commit or push was started.
+
+### Generated-DNG demosaic sweep API
+
+`develop_demosaic_sweep` sequentially exports LINEAR/VNG/AHD linear-light uint16
+TIFFs from unchanged generated DNG samples. Camera WB, baseline brightness,
+highlight clipping, output space and orientation are held fixed. Algorithm
+availability is queried from the installed rawpy/LibRaw build and unavailable
+methods receive explicit skip reasons. An entirely unavailable sweep stays not
+measured. Runtime errors are not disguised as unavailable dependencies.
+
+Header-only memory admission precedes unpacking and output creation; existing
+outputs are protected, and failed sweeps remove only their new directory.
+Reports retain versions, methods, means and clipping counts. Independent tiny
+DNG renders verify exact algorithm output and a textured fixture confirms that
+LINEAR and AHD differ. These are developer response measurements, not detail
+accuracy or visual editability acceptance. Automatic maximum preset/notebook
+and bundle-report integration remains deferred, along with highlight/shadow
+sweeps and full-size Colab visual acceptance. No model, weights or notebook was
+executed locally.
