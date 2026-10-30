@@ -117,3 +117,27 @@ under `prd_v5`; existing notebooks and root PRDs are unchanged. Development-only
 proof/logs/checkpoints belong outside Git. Never commit ARW files or large binaries.
 
 The Colab bundle's Metadata coherence gate now compares exported DNG tags with the manifest and complete registry, including AsShotNeutral, exposure aliases and matrix groups. Inspect `checked`, `mismatches` and `unmapped_registry_fields` in `validation.json`: passing covers emitted standard metadata, not physical calibration or all simulator dependencies. Scientific truth gates remain conditional. Small local fixtures for this path: `.venv/bin/python -m pytest prd_v5/tests/test_coherence.py prd_v5/tests/test_delivery.py -q` (no model execution).
+
+Generated-DNG exposure edit fixture/API:
+
+```python
+from prd_v5.roundtrip import develop_exposure_sweep
+
+edits = develop_exposure_sweep(
+    "capture.dng",
+    "exposure_edits",  # must be a new directory
+    baseline_exposure_ev=0.0,  # use the run's isp.baseline_exposure_ev
+    max_working_bytes=8 * 1024**3,  # explicitly admit full-size Colab development
+)
+```
+
+This sequentially exports full-resolution linear-light uint16 TIFFs at
+-3/-2/0/+2/+3 EV using camera WB, linear demosaicing and fixed highlight clipping.
+The JSON-safe return value records brightness multipliers, mean code and
+zero/saturation counts. These are developer response measurements, not recovered
+highlight truth or physical dynamic range. Files have linear transfer, unlike
+the ordinary sRGB-transfer `developed.tiff`. Allow approximately 1.5 GB extra
+storage per 50 MP capture. The reusable API is fixture-tested; automatic notebook
+and bundle integration, WB/highlight/shadow/demosaic sweeps and full-size visual
+review remain pending. Test without models using
+`.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.

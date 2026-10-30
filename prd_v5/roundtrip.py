@@ -88,3 +88,84 @@ def develop_roundtrip(
         "adobe_conformance": "not measured",
         "scientific_colour_accuracy": "not measured",
     }
+
+
+def develop_exposure_sweep(
+    dng_path: str | Path,
+    output_directory: str | Path,
+    *,
+    baseline_exposure_ev: float = 0.0,
+    max_working_bytes: int = 512 * 1024 * 1024,
+) -> dict:
+    """Develop five linear-light brightness edits sequentially from one DNG.
+
+    This uses LibRaw brightness scaling, including -3 EV which is outside
+    rawpy's documented exp_shift range. It measures developer response, not
+    sensor exposure changes or recovered dynamic range. No automatic exposure,
+    highlight reconstruction, or output transfer curve obscures the scaling.
+    A fresh output directory is required and removed on any failed sweep.
+    """
+    import math
+    import shutil
+
+    import rawpy
+
+    if type(max_working_bytes) is not int or max_working_bytes <= 0:
+        raise ValueError("max_working_bytes must be a positive integer")
+    if isinstance(baseline_exposure_ev, bool) or not isinstance(baseline_exposure_ev, (int, float)):
+        raise ValueError("baseline_exposure_ev must be finite and between -16 and 16")
+    if not math.isfinite(baseline_exposure_ev) or abs(baseline_exposure_ev) > 16:
+        raise ValueError("baseline_exposure_ev must be finite and between -16 and 16")
+    source, destination = Path(dng_path), Path(output_directory)
+    entries = []
+    # Admission precedes directory creation and pixel unpacking.
+    with rawpy.RawPy() as header:
+        header.open_file(str(source))
+        estimate = header.sizes.raw_width * header.sizes.raw_height * 64
+    if estimate > max_working_bytes:
+        raise ValueError("LibRaw exposure sweep exceeds the configured memory budget")
+    destination.mkdir(parents=True, exist_ok=False)
+    try:
+        for ev in (-3, -2, 0, 2, 3):
+            with rawpy.imread(str(source)) as raw:
+                rgb = raw.postprocess(
+                    output_bps=16,
+                    use_camera_wb=True,
+                    no_auto_bright=True,
+                    bright=float(2 ** (baseline_exposure_ev + ev)),
+                    user_flip=0,
+                    output_color=rawpy.ColorSpace.sRGB,
+                    gamma=(1, 1),
+                    highlight_mode=rawpy.HighlightMode.Clip,
+                    demosaic_algorithm=rawpy.DemosaicAlgorithm.LINEAR,
+                )
+                expected_shape = (raw.sizes.height, raw.sizes.width, 3)
+            if rgb.dtype != np.uint16 or rgb.shape != expected_shape:
+                raise HardValidationError("Unexpected exposure sweep shape or precision")
+            path = destination / f"exposure_{ev:+d}EV.tiff"
+            tifffile.imwrite(path, rgb, photometric="rgb", compression=None, metadata=None)
+            entries.append(
+                {
+                    "ev": ev,
+                    "brightness_multiplier": float(2 ** (baseline_exposure_ev + ev)),
+                    "path": str(path),
+                    "shape": list(rgb.shape),
+                    "mean_linear_code": float(np.mean(rgb, dtype=np.float64)),
+                    "zero_samples": int(np.count_nonzero(rgb == 0)),
+                    "saturated_samples": int(np.count_nonzero(rgb == 65535)),
+                }
+            )
+            del rgb
+    except BaseException:
+        shutil.rmtree(destination)
+        raise
+    return {
+        "status": "measured",
+        "method": "LibRaw linear-light brightness sweep; camera WB, linear demosaic, highlight clipping",
+        "baseline_exposure_ev": baseline_exposure_ev,
+        "working_bytes_estimate": estimate,
+        "renders": entries,
+        "highlight_recovery": "not measured",
+        "physical_dynamic_range": "not measured",
+        "limitations": "Developer edits only; unchanged sensor samples, no calibrated truth or visual acceptance",
+    }

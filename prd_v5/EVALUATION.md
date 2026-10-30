@@ -203,3 +203,28 @@ passed; v5 lint and changed-Python formatting checks passed. Fixtures cover
 clipped/unsupported overlaps, strip-size invariance, read-only memmaps, malformed
 masks, missing claims and unsupported truth assertions. No notebook, model,
 checkpoint download or full-size reconstruction was executed.
+
+### Generated-DNG exposure sweep API
+
+`develop_exposure_sweep` now independently opens a generated DNG and sequentially
+exports -3/-2/0/+2/+3 EV linear-light uint16 TIFFs. Camera WB, linear demosaicing,
+fixed highlight clipping, no automatic brightness and a caller-supplied baseline
+EV keep the edit contract explicit. Memory admission uses the RAW raster before
+unpacking, one render is retained at a time, an existing destination is never
+overwritten, and a failed sweep removes its newly created directory. Reports
+record output paths, multipliers, mean code and zero/saturation sample counts.
+
+Inspection of the installed rawpy Params documentation establishes that
+`exp_shift` supports only 0.25 to 8 (-2 to +3 EV). The sweep therefore uses
+`bright=2**(baseline_EV+edit_EV)` consistently with gamma=(1,1), rather than passing
+an unsupported -3 EV shift. This is developer brightness scaling of unchanged
+RAW samples, not a new physical exposure or proof of recovered highlights.
+Linear output differs from the ordinary sRGB-transfer development. Highlight
+recovery and physical dynamic range remain not measured.
+
+Twelve focused roundtrip tests pass, including actual tiny DNG development,
+independent linear scaling checks, source immutability, memory admission,
+existing-directory protection, invalid settings and partial-write cleanup.
+Automatic bundle/notebook invocation and WB/highlight/shadow/demosaic sweeps
+remain deferred. Full 50 MP execution and visual edit acceptance require Colab;
+no model, checkpoint download or notebook execution occurred locally.
