@@ -47,6 +47,10 @@ addopts = "-ra"
 line-length = 120
 target-version = "py310"
 
+[tool.ruff.format]
+# The supplied PRD is kept verbatim, including its embedded code blocks.
+exclude = ["prd_v5/PRD_v5.md"]
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 

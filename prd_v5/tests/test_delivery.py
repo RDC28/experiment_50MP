@@ -109,9 +109,7 @@ def test_portrait_pitch_and_clean_electrons_match_adc(tmp_path, iso):
     Image.fromarray(np.full((40, 30, 3), 90, dtype=np.uint8)).save(source)
     camera = CameraHypothesis(iso=iso, shot_noise=False, read_noise=False)
     output = tmp_path / "run"
-    report = AnalyticRunConfig(camera=camera, target_megapixels=0.0012, assume_unprofiled_srgb=True).run(
-        source, output
-    )
+    report = AnalyticRunConfig(camera=camera, target_megapixels=0.0012, assume_unprofiled_srgb=True).run(source, output)
     width, height = report["geometry"]["width"], report["geometry"]["height"]
     assert height > width
     registry = json.loads((output / "field_registry.json").read_text())

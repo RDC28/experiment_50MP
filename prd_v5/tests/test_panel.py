@@ -302,8 +302,8 @@ def test_colour_estimate_with_user_profile_matches_written_neutral(tmp_path):
 
     from prd_v5.analytic import AnalyticISP
     from prd_v5.config import AnalyticRunConfig
-    from prd_v5.panel import resolve_analytic_panel
     from prd_v5.dng import SRGB_TO_XYZ_D65
+    from prd_v5.panel import resolve_analytic_panel
 
     matrix = np.linalg.inv(np.asarray(SRGB_TO_XYZ_D65) @ np.diag([0.8, 1, 1.2]))
     proxy = np.full((2, 2, 3), [0.2, 0.4, 0.6], dtype=np.float32)

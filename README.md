@@ -8,7 +8,10 @@ Outputs are **synthetic camera-grade masters**: 16-bit TIFF and linear-light Ope
 a rendered source. They are never camera RAW captures, and every report keeps preserved, interpolated,
 inferred, simulated and encoded information apart.
 
-**Current target: [PRD_v3.md](PRD_v3.md)** ("Final PRD: Synthetic Sony-like 50 MP RAW Reconstruction Colab"),
+**Next experiment: [PRD v5](prd_v5/PRD_v5.md)** ("Final Single-Colab Synthetic 50 MP RAW Camera
+Reconstruction"). Its notebook, code and tests live in `prd_v5/`; see [prd_v5/README.md](prd_v5/README.md).
+
+**Previous target: [PRD_v3.md](PRD_v3.md)** ("Final PRD: Synthetic Sony-like 50 MP RAW Reconstruction Colab"),
 the target that follows cycle 1. It specifies one notebook, `synthetic_camera_raw_50mp_colab.ipynb`, that
 builds a synthetic DNG and a 50 MP 16-bit TIFF through an explicit radiance, camera and sensor chain.
 [PRD.md](PRD.md) remains the specification of the cycle 1 notebooks described below, which keep working unchanged.
@@ -253,6 +256,7 @@ src/                           the shared package, imported as synthetic_raw_lab
   evaluation_report.py         Markdown reports of the ablation and reference-test runs
   final_report.py              the final experiment report: PRD 34 answers, PRD 33 outcome, best Colab configuration
 src/synthraw/                  the PRD_v3 package, imported as synthraw (PRD_v3 class names)
+prd_v5/                        PRD v5 experiment: notebook, prd_v5 package and tests (see prd_v5/README.md)
 tests/                         pytest suite; cycle 1 notebook execution and real-network tests are opt-in
 inputs/{human,night,universal}/  read-only copies of ingested sources (not in Git)
 outputs/{human,night,universal}/  full-resolution masters per run (not in Git)

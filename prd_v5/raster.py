@@ -96,9 +96,7 @@ def rasterize_lanczos(source, destination, support, plan):
     destination[:] = 0
     support[:] = False
     with TemporaryDirectory(prefix="lanczos-", dir=Path(destination.filename).parent) as directory:
-        path = resize_exact(
-            source, Path(directory) / "resized.npy", width=width, height=height, source_box=source_box
-        )
+        path = resize_exact(source, Path(directory) / "resized.npy", width=width, height=height, source_box=source_box)
         resized = np.load(path, mmap_mode="r")
         try:
             for row in range(height):
