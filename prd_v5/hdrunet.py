@@ -125,14 +125,16 @@ def build_hdrunet(torch, nf: int = 64):
 
 
 def make_predictor(model, torch, *, device: str, max_delta: float):
-    """Tile predictor: HDRUNet's HDR estimate mapped to a linear camera residual.
+    """Tile predictor: HDRUNet's HDR estimate as a source-relative linear sRGB residual.
 
     The (img, cond) pair is the same encoded sRGB tile, as in upstream LQ_condition_dataset.
     Upstream trains against unbounded gamma-2.24 NTIRE2021 HDR targets on the input's scale
     and clips its output only at zero, so values above 1 assert radiance above the source
     clip level. Output and input are both linearized with GAMMA; their difference is the
-    residual in normalized units (1.0 = camera.saturation_e), matching the clean buffer it is
-    added to. Confidence falls linearly to zero as the per-pixel linear change approaches
+    residual in linear sRGB with 1.0 at the source clip level ("source_linear_srgb_clip").
+    apply_residual maps it into clean camera units through the run's AnalyticISP, so it
+    stacks over the analytic baseline including HDR headroom (1/M), camera matrix and
+    gains. Confidence falls linearly to zero as the per-pixel linear change approaches
     `max_delta`; the network's own mask is not a calibrated confidence.
     """
 
@@ -202,6 +204,7 @@ def load_hdrunet_adapter(
         licence=licence,
         licence_accepted=licence_accepted,
         experimental_accepted=experimental_accepted,
+        normalization="source_linear_srgb_clip",
         tile=tile,
         halo=halo,
     )

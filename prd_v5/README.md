@@ -336,7 +336,9 @@ Run these only on a Colab A100 runtime, never on the development Mac.
    licence_accepted=True, experimental_accepted=True)` and uses the result as
    `RESIDUAL_ADAPTER`. It verifies the digest before unpickling, loads with
    `weights_only=True` and strict keys, and pads tiles to multiples of four. Its unbounded
-   gamma-2.24 output is linearized into a residual and gated by a change-size confidence;
+   gamma-2.24 output is linearized into a source-clip-relative residual, mapped into clean
+   camera units by the run's analytic model (HDR headroom, matrix, gains) and gated by a
+   change-size confidence;
    it is NTIRE2021 HDR, not Sony calibration or clipped-highlight truth.
 6. To use learned weights, supply `SR_CHECKPOINT` (path, expected SHA-256, backend,
    revision, source, licence, licence acceptance). No checkpoint is downloaded

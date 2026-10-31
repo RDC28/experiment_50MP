@@ -184,7 +184,15 @@ def run_analytic(
             stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows, claims=hdr_claims)
             learned = None if residual_adapter is None else allocate("learned", np.float32, (*shape, 3))
             stages["learned_raw"] = apply_residual(
-                rgb, clean, support, learned, camera, residual_adapter, mode=inverse_mode, claims=hdr_claims
+                rgb,
+                clean,
+                support,
+                learned,
+                camera,
+                residual_adapter,
+                isp=isp,
+                mode=inverse_mode,
+                claims=hdr_claims,
             )
             optical = allocate("optical", np.float32, (*shape, 3))
             stages["optics"] = vignetting.process(

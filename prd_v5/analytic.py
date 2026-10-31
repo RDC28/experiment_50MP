@@ -55,6 +55,18 @@ class AnalyticISP:
             return 0.0
         return float(np.log2(self.hdr_max_radiance * (1 - 0.18) + 1))
 
+    def to_camera(self, linear: np.ndarray) -> np.ndarray:
+        """Map linear sRGB relative to the source clip level (1.0) into clean camera units."""
+        inverse = np.linalg.inv(np.asarray(self.camera_to_srgb, dtype=np.float64))
+        gains = np.asarray(self.white_balance, dtype=np.float64) * self.exposure_gain
+        return (np.asarray(linear, dtype=np.float64) / self.hdr_max_radiance) @ inverse.T / gains
+
+    def to_linear(self, camera: np.ndarray) -> np.ndarray:
+        """Inverse of to_camera: clean camera units back to source-relative linear sRGB."""
+        gains = np.asarray(self.white_balance, dtype=np.float64) * self.exposure_gain
+        forward = (np.asarray(camera, dtype=np.float64) * gains) @ np.asarray(self.camera_to_srgb).T
+        return forward * self.hdr_max_radiance
+
     def process(self, source: np.ndarray, destination: np.memmap, *, strip_rows: int = 64, claims=None) -> dict:
         """Write float32 clean camera RGB, allocating only strip-sized intermediates.
 
@@ -81,8 +93,6 @@ class AnalyticISP:
             raise ValueError("source and destination must not overlap")
         if isinstance(source, np.memmap) and source.filename == destination.filename:
             raise ValueError("source and destination must use separate files")
-        inverse = np.linalg.inv(np.asarray(self.camera_to_srgb, dtype=np.float64))
-        gains = np.asarray(self.white_balance, dtype=np.float64) * self.exposure_gain
         clipped = 0
         negative = 0
         expanded = 0
@@ -104,8 +114,7 @@ class AnalyticISP:
                 expanded += int(np.count_nonzero(claimed))
                 if claims is not None:
                     claims[start : start + len(block)] = claimed
-                linear = linear / self.hdr_max_radiance
-            camera = (linear @ inverse.T) / gains
+            camera = self.to_camera(linear)
             negative += int(np.count_nonzero(camera < 0))
             destination[start : start + len(block)] = np.maximum(camera, 0)
             # Validate the stored float32 camera values against the declared forward
@@ -113,9 +122,9 @@ class AnalyticISP:
             # Work stays local to this strip; this is self-consistency, not truth.
             inside = np.all(camera >= 0, axis=-1)
             stored = np.asarray(destination[start : start + len(block)], dtype=np.float64)
-            forward = (stored * gains) @ np.asarray(self.camera_to_srgb).T
+            forward = self.to_linear(stored)
             if self.hdr_max_radiance > 1:
-                forward = np.maximum(forward, 0) * self.hdr_max_radiance
+                forward = np.maximum(forward, 0)
                 forward = forward * (1 + 1 / self.hdr_max_radiance) / (1 + forward)
             forward = np.clip(forward, 0, 1)
             if self.inverse_smoothstep:

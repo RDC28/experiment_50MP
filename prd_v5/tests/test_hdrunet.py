@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from prd_v5 import hdrunet
+from prd_v5.analytic import AnalyticISP
 from prd_v5.hypothesis import CameraHypothesis
 from prd_v5.learned import apply_residual
 
@@ -115,7 +116,7 @@ def test_strict_load_strips_module_prefix_and_runs_bounded_residual(checkpoint, 
     clean = np.zeros_like(rgb)
     support = np.ones((6, 7), dtype=bool)
     destination = np.memmap(tmp_path / "out", mode="w+", dtype="float32", shape=rgb.shape)
-    report = apply_residual(rgb, clean, support, destination, camera, adapter, tile=4, halo=4)
+    report = apply_residual(rgb, clean, support, destination, camera, adapter, isp=AnalyticISP(), tile=4, halo=4)
     assert report["status"] == "executed experimental residual"
     # every inference tile is padded to a multiple of the network stride
     assert all(shape[2] % 4 == 0 and shape[3] % 4 == 0 for shape in model.shapes)

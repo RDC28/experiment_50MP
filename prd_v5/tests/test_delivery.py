@@ -272,7 +272,8 @@ def test_learned_residual_claims_are_audited_without_analytic_hdr(tmp_path, delt
     assert hdr["claimed_truth_pixels"] == int(np.count_nonzero(claims))
     assert report["stages"]["learned_raw"]["hdr_claim_pixels"] == int(np.count_nonzero(claims))
     if delta > 0:
-        assert hdr["forbidden_claim_pixels"] > 0
-        assert np.array_equal(claims, claims & np.load(output / "source_clipped.npy"))
+        clipped = np.load(output / "source_clipped.npy") & np.load(output / "source_support.npy")
+        assert hdr["forbidden_claim_pixels"] >= int(np.count_nonzero(clipped)) > 0
+        assert np.array_equal(clipped, clipped & claims)
     else:
         assert hdr["claimed_truth_pixels"] == 0
