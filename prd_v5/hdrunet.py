@@ -207,3 +207,46 @@ def load_hdrunet_adapter(
         tile=tile,
         halo=halo,
     )
+
+
+def resolve_residual_adapter(
+    adapter: ResidualAdapter | None,
+    camera: CameraHypothesis,
+    *,
+    enabled: bool,
+    inverse_mode: str,
+    checkpoint: str | Path | None,
+    sha256: str | None,
+    licence_accepted: bool,
+    experimental_accepted: bool,
+    tile: int,
+    halo: int,
+    max_delta: float,
+    loader=None,
+) -> tuple[ResidualAdapter | None, bool]:
+    """Notebook wiring: load HDRUNet when asked, or retile a supplied adapter.
+
+    Returns (adapter, loaded_from_checkpoint). Tiling of a loaded checkpoint goes
+    through the loader's stride validation; a supplied adapter is only retiled.
+    """
+    from dataclasses import replace
+
+    loader = load_hdrunet_adapter if loader is None else loader
+    loaded = False
+    if checkpoint is not None and adapter is None and enabled:
+        adapter = loader(
+            checkpoint,
+            sha256,
+            camera,
+            licence_accepted=licence_accepted,
+            experimental_accepted=experimental_accepted,
+            tile=tile,
+            halo=halo,
+            max_delta=max_delta,
+        )
+        loaded = True
+    if not enabled and (adapter is not None or inverse_mode == "LEARNED_RGB2RAW"):
+        raise ValueError("Learned branch disabled but adapter or strict learned mode requested")
+    if adapter is not None and not loaded:
+        adapter = replace(adapter, tile=tile, halo=halo)
+    return adapter, loaded

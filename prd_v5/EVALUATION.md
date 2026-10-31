@@ -89,7 +89,7 @@ Independent review then connected the remaining optical stages, added an executa
 | Phase | Implemented executable behavior | Remaining limits |
 | --- | --- | --- |
 | MVP | JPEG/PNG header/hash/ICC policy, memory-gated decode, aspect/native geometry, seeded immutable camera, analytic inverse ISP, CFA before physical electron noise, ADC, real DNG and independent LibRaw uint16 TIFF, registry/replay/JSON/HTML | Input is 8-bit rendered RGB; stored raster orientation is used. Exact original capture recovery is impossible. |
-| Fidelity | Verified user-supplied HAT/Real-ESRGAN x4 checkpoints through spandrel, tiled disk accumulation with visible OOM retry, Lanczos baseline/post-resize, experimental analytic inverse-tone HDR, joint exposure heuristic, gray-world WB and explicit D65 profile matrix selection, sequential paired sources and full-resolution whole/crop differences | HAT checkpoint is not auto-downloaded or invented. No claimed learned-SR gain without held-out truth. LPIPS (official package, tiled), calibrated DeltaE and sampled MTF are implemented and wired into the pair report and notebook, but stay not measured without caller-supplied aligned references or edge evidence. Adobe dng_validate, public-checkpoint auto-download, and a HDRUNet architecture loader for user checkpoints (`prd_v5/hdrunet.py`) is built, while RAW-Flow and a public auto-download remain unbuilt, see the sections below. Generic residual halo inference is implemented; actual model seam validation remains unmeasured. |
+| Fidelity | Verified user-supplied HAT/Real-ESRGAN x4 checkpoints through spandrel, tiled disk accumulation with visible OOM retry, Lanczos baseline/post-resize, experimental analytic inverse-tone HDR, joint exposure heuristic, gray-world WB and explicit D65 profile matrix selection, sequential paired sources and full-resolution whole/crop differences | HAT checkpoint is not auto-downloaded or invented. No claimed learned-SR gain without held-out truth. LPIPS (official package, tiled), calibrated DeltaE and sampled MTF are implemented and wired into the pair report and notebook, but stay not measured without caller-supplied aligned references or edge evidence. An Adobe `dng_validate` runner (`prd_v5/dng_validate.py`) and a best-effort Linux build script are built but unverified on Colab: the gate reports passed or failed only when the real tool ran, otherwise not measured. A HDRUNet architecture loader for user-supplied checkpoints (`prd_v5/hdrunet.py`) is built; public-checkpoint auto-download for HAT, HDRUNet and RAW-Flow remains unbuilt (no trustworthy SHA-256), see the sections below. Generic residual halo inference is implemented; actual model seam validation remains unmeasured. |
 | Learned RAW | Camera-domain/checkpoint-hash/normalization/licence contract, confidence-gated residual application, analytic/hybrid/strict-model-required dispatch and explicit skip evidence | No bundled RAW-Diffusion/SpiralDiff/RAW-Flow checkpoint loader, model-specific camera adaptation, training, or learned ITM. Advertised upstream weights do not prove Sony compatibility. This is adapter infrastructure, not a claim those models execute. |
 | Full sensor | CFA-domain Poisson shot noise, read noise, PRNU/DSNU, row/column FPN, thermal dark-current expectation, hot/dead maps and realized defect masks, monotone charge compression, supplied ISO-switched effective full-well/read-noise profile, shared absolute-coordinate seeds | Synthetic priors, not measured Sony calibration. Dark electrons share the Poisson stage; shot-noise-off disables that randomness. The affine DNG NoiseProfile describes baseline temporal noise, not nonlinear/body-map variance. Small flat/dark measurements explicitly test that limited model. |
 | Full optics | Pre-CFA radial/tangential Brown-Conrady sampling, vignetting, lateral/axial CA, center-to-edge Gaussian PSF, aperture/wavelength/pixel-pitch diffraction approximation, defocus, global line-motion blur; bounded strips/maps and tested halos | Synthetic Gaussian/line approximations, not Airy rings or measured lens MTF. Axial CA has no inferred depth field. Global motion does not reconstruct local object motion. Nearest/reflect boundaries are disclosed. |
@@ -713,11 +713,20 @@ archive has no Linux makefile or top-level CMake project for `dng_validate`
 zlib. A Colab Linux build would be a hand-written, untested build of about 80 MB
 of C++ and cannot be exercised on this Mac. Adobe SDK terms also apply.
 
-Disposition: **not built**. The notebook must not install or claim
-`dng_validate`; the generated DNG's conformance stays reported as "dng_validate
-not run" with the reason above, and independent LibRaw plus the registry-vs-DNG
-coherence check remain the available validators. A user may supply a prebuilt
-`dng_validate` path; none is assumed.
+Disposition: **runner built, Linux build unverified**. `prd_v5/dng_validate.py`
+runs `dng_validate -v` on the generated DNG and records the exit code, error
+lines and tool hash in the bundle's "DNG conformance" gate: passed only on a
+clean run, failed on a nonzero exit or error line, otherwise not measured. The
+tool comes from an explicit path (`DNG_VALIDATE_PATH` in the notebook), the
+`SYNTHRAW_DNG_VALIDATE` environment variable or `PATH`. The notebook setup cell
+runs `prd_v5/tools/build_dng_validate.sh`, which downloads the SDK from the
+conventional URL, refuses it unless the SHA-256 above matches (a local
+observation, not an Adobe attestation), and compiles the DNG SDK sources
+directly with g++. That script was written without a Linux build project to
+follow and has not been run: it does not build the bundled XMP toolkit
+sources, so linking may fail. A failed build is recorded as a visible skip
+naming the build error, and the run continues. Unit tests mock the subprocess,
+so only the runner's logic is verified, not the tool or the build.
 
 ### HDRUNet loader (built, user checkpoint only)
 

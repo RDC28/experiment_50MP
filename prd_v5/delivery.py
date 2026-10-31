@@ -14,6 +14,7 @@ from PIL import Image
 
 from prd_v5.coherence import metadata_coherence
 from prd_v5.colour_metrics import calibrated_delta_e
+from prd_v5.dng_validate import run_dng_validate
 from prd_v5.hdr_validation import validate_hdr_claims
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.physics import photon_transfer
@@ -221,6 +222,7 @@ def finish_bundle(output, report, *, colour_reference=None):
         "Metadata coherence": metadata_coherence(
             output / "capture.dng", report["registry"], report["stages"]["dng"]["tags"]
         ),
+        "DNG conformance": run_dng_validate(output / "capture.dng"),
         "Provenance": {"status": "passed", "fields": len(report["registry"])},
         **{
             name: {"status": "not measured", "reason": reason}
@@ -270,7 +272,6 @@ def finish_bundle(output, report, *, colour_reference=None):
         "Camera-specific learned loaders and halo inference",
         "Real RAW/HDR benchmarks",
         "Colab full-scale runtime and quality gates",
-        "Independent Adobe DNG conformance",
     ]
     for path in sorted(output.rglob("*")):
         if path.is_file() and path.name not in ("manifest.json", "report.html", "validation_report.html"):

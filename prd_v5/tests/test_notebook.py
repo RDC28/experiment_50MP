@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 
 import nbformat
+import pytest
 
 from prd_v5.analytic import AnalyticISP
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.hypothesis import CameraHypothesis
+from prd_v5.learned import ResidualAdapter
 
 NOTEBOOK = Path(__file__).parents[1] / "notebooks" / "synthetic_50mp_v5.ipynb"
 
@@ -113,25 +115,84 @@ def test_full_preset_values_are_executable_and_match_notebook():
     assert AnalyticRunConfig.from_json(preset.to_json()) == preset
 
 
-def test_notebook_wires_lpips_and_mtf_controls():
+def pair_call_keywords(notebook):
+    calls = [
+        node
+        for cell in notebook.cells
+        if cell.cell_type == "code"
+        for node in ast.walk(ast.parse(cell.source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run_analytic_pair"
+    ]
+    assert len(calls) == 1
+    return {k.arg: ast.unparse(k.value) for k in calls[0].keywords}
+
+
+def test_notebook_pair_call_binds_metric_controls_to_their_settings():
     notebook, values = assignments()
     assert values["LPIPS_OPTIONS"] == {"patch": 256, "net": "alex", "device": "cuda"}
     assert values["MTF_EDGE"] is None
-    text = "\n".join(c.source for c in notebook.cells if c.cell_type == "code")
-    assert "lpips_options=LPIPS_OPTIONS" in text and "mtf_edge=MTF_EDGE" in text
-    assert "[sr,metrics]" in text
+    keywords = pair_call_keywords(notebook)
+    assert keywords["lpips_options"] == "LPIPS_OPTIONS" and keywords["mtf_edge"] == "MTF_EDGE"
+    assert keywords["residual_adapter"] == "RESIDUAL_ADAPTER"
 
 
-def test_notebook_wires_optional_hdrunet_checkpoint():
-    notebook, values = assignments()
+def test_notebook_hdrunet_defaults_are_inert():
+    _, values = assignments()
     assert values["HDRUNET_CHECKPOINT"] is None and values["HDRUNET_SHA256"] is None
     assert values["HDRUNET_LICENCE_ACCEPTED"] is False
-    text = "\n".join(c.source for c in notebook.cells if c.cell_type == "code")
-    assert "load_hdrunet_adapter(" in text and "HDRUNET_SHA256," in text
+    assert values["DNG_VALIDATE_PATH"] is None
 
 
-def test_notebook_hdrunet_tiling_goes_through_loader_validation():
-    notebook, _ = assignments()
-    text = "\n".join(c.source for c in notebook.cells if c.cell_type == "code")
-    assert "tile=RAW_TILE," in text and "halo=RAW_OVERLAP," in text
-    assert "HDRUNET_LOADED" in text
+def run_resolver(**overrides):
+    from prd_v5.hdrunet import resolve_residual_adapter
+
+    _, values = assignments()
+    loads = []
+
+    def loader(checkpoint, sha256, camera, **kwargs):
+        loads.append((checkpoint, sha256, kwargs))
+        return ResidualAdapter(
+            predict=lambda *a: None,
+            checkpoint_path=str(checkpoint),
+            sha256=sha256,
+            camera_sha256="c",
+            source="fake",
+            licence="fake",
+            tile=kwargs["tile"],
+            halo=kwargs["halo"],
+        )
+
+    settings = dict(
+        enabled=values["ENABLE_LEARNED_RGB2RAW"],
+        inverse_mode=values["INVERSE_ISP_MODE"],
+        checkpoint=None,
+        sha256=None,
+        licence_accepted=False,
+        experimental_accepted=False,
+        tile=values["RAW_TILE"],
+        halo=values["RAW_OVERLAP"],
+        max_delta=values["HDRUNET_MAX_DELTA"],
+        loader=loader,
+    )
+    settings.update(overrides)
+    camera = CameraHypothesis(profile="SONY_A1II_LIKE", seed=1)
+    adapter = settings.pop("adapter", None)
+    return resolve_residual_adapter(adapter, camera, **settings), loads
+
+
+def test_notebook_defaults_load_nothing():
+    (adapter, loaded), loads = run_resolver()
+    assert adapter is None and loaded is False and loads == []
+
+
+def test_notebook_checkpoint_loads_with_notebook_tiling_through_loader():
+    (adapter, loaded), loads = run_resolver(checkpoint="/content/h.pth", sha256="0" * 64)
+    assert loaded and adapter.tile == 1024 and adapter.halo == 128
+    assert loads[0][2]["tile"] == 1024 and loads[0][2]["halo"] == 128
+
+
+def test_disabled_learned_branch_rejects_strict_mode_and_does_not_load():
+    with pytest.raises(ValueError, match="disabled"):
+        run_resolver(enabled=False, inverse_mode="LEARNED_RGB2RAW")
+    (adapter, loaded), loads = run_resolver(enabled=False, checkpoint="/x", sha256="0" * 64)
+    assert adapter is None and not loaded and loads == []

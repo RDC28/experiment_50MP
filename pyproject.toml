@@ -38,7 +38,7 @@ package-dir = { "synthetic_raw_lab" = "src", "synthraw" = "src/synthraw", "prd_v
 packages = ["synthetic_raw_lab", "synthraw", "prd_v5"]
 
 [tool.setuptools.package-data]
-prd_v5 = ["analytic-config.schema.json", "field_catalogue.json"]
+prd_v5 = ["analytic-config.schema.json", "field_catalogue.json", "tools/*.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "prd_v5/tests"]
