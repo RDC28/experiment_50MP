@@ -21,6 +21,7 @@ HDRUNET_REVISION = "e9bd4b90a27d7531a38b8c97db05feb368b96dc2"
 HDRUNET_SOURCE = f"https://github.com/chxy95/HDRUNet/tree/{HDRUNET_REVISION}"
 HDRUNET_LICENCE = "MIT (chxy95/HDRUNet LICENSE, copyright 2021 XyChen)"
 STRIDE = 4  # two stride-2 reductions: tiles are padded to, and halos kept at, multiples of four
+GAMMA = 2.24  # NTIRE2021 HDR data transfer, as linearized by upstream calculate_tonemapped_psnr
 
 
 def build_hdrunet(torch, nf: int = 64):
@@ -123,19 +124,16 @@ def build_hdrunet(torch, nf: int = 64):
     return HDRUNet()
 
 
-def _srgb_to_linear(encoded):
-    encoded = np.clip(encoded, 0.0, 1.0)
-    return np.where(encoded <= 0.04045, encoded / 12.92, ((encoded + 0.055) / 1.055) ** 2.4)
-
-
 def make_predictor(model, torch, *, device: str, max_delta: float):
-    """Tile predictor: encoded-domain HDRUNet delta mapped to a linear camera residual.
+    """Tile predictor: HDRUNet's HDR estimate mapped to a linear camera residual.
 
     The (img, cond) pair is the same encoded sRGB tile, as in upstream LQ_condition_dataset.
-    Output minus input, in encoded units, becomes a linear-light difference in
-    normalized units (1.0 = camera.saturation_e), matching the clean buffer it is added to.
-    Confidence falls linearly to zero as the per-pixel encoded change approaches `max_delta`;
-    the network's own mask is not a calibrated confidence.
+    Upstream trains against unbounded gamma-2.24 NTIRE2021 HDR targets on the input's scale
+    and clips its output only at zero, so values above 1 assert radiance above the source
+    clip level. Output and input are both linearized with GAMMA; their difference is the
+    residual in normalized units (1.0 = camera.saturation_e), matching the clean buffer it is
+    added to. Confidence falls linearly to zero as the per-pixel linear change approaches
+    `max_delta`; the network's own mask is not a calibrated confidence.
     """
 
     def predict(encoded, clean, origin, camera):
@@ -149,8 +147,8 @@ def make_predictor(model, torch, *, device: str, max_delta: float):
         if not np.isfinite(out).all():
             raise ValueError("HDRUNet produced nonfinite output")
         base = np.clip(encoded, 0.0, 1.0).astype(np.float64)
-        residual = _srgb_to_linear(np.clip(out, 0.0, 1.0)) - _srgb_to_linear(base)
-        change = np.abs(np.clip(out, 0.0, 1.0) - base).max(axis=-1)
+        residual = np.maximum(out.astype(np.float64), 0.0) ** GAMMA - base**GAMMA
+        change = np.abs(residual).max(axis=-1)
         return residual.astype(np.float32), np.clip(1.0 - change / max_delta, 0.0, 1.0)
 
     return predict

@@ -145,16 +145,18 @@ def complete_registry(report):
 
 
 def audit_hdr(output, report, clipped, support):
-    """Audit the pipeline's own HDR expansion claims against source endpoints.
+    """Audit the pipeline's own HDR claims against source endpoints.
 
     The claim mask (hdr_claims.npy) marks pixels where analytic HDR expansion
-    asserted radiance above the source clip level. Learned inverse tone mapping
-    is never executed by this pipeline, so it contributes no claims. Without an
-    HDR stage the audit stays "not measured".
+    asserted radiance above the source clip level, together with pixels where an
+    executed learned residual (the HDRUNet inverse-tone-mapping path) raised a
+    source-clipped channel above it. Without either stage the audit stays
+    "not measured".
     """
-    hdr_stage = report["stages"].get("analytic", {}).get("hdr", {})
+    analytic_hdr = report["stages"].get("analytic", {}).get("hdr", {}).get("effective")
+    learned_hdr = report["stages"].get("learned_raw", {}).get("status") == "executed experimental residual"
     path = output / "hdr_claims.npy"
-    if not hdr_stage.get("effective") or not path.exists():
+    if not (analytic_hdr or learned_hdr) or not path.exists():
         result = validate_hdr_claims(clipped, support)
         result["status"] = "not measured"
         result["reason"] = "No HDR expansion or learned inverse tone mapping stage ran"
@@ -166,13 +168,13 @@ def audit_hdr(output, report, clipped, support):
         claims._mmap.close()
     if result["forbidden_claim_pixels"]:
         result["reason"] = (
-            f"{result['forbidden_claim_pixels']} HDR-expanded pixels assert radiance above the clip level "
+            f"{result['forbidden_claim_pixels']} HDR-claimed pixels assert radiance above the clip level "
             "inside source-clipped or unsupported regions"
         )
     else:
         result["status"] = "passed"
         result["reason"] = (
-            "No HDR-expanded pixel lies in source-clipped or unsupported regions; "
+            "No HDR-claimed pixel lies in source-clipped or unsupported regions; "
             "numerical HDR fidelity remains not measured"
         )
     return result

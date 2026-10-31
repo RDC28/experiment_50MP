@@ -180,10 +180,11 @@ def run_analytic(
             if sr_checkpoint is not None:
                 stages["raster"]["learned_super_resolution"] = sr_checkpoint.backend
             clean = allocate("clean", np.float32, (*shape, 3))
-            stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows)
+            hdr_claims = allocate("hdr_claims", np.bool_, shape)
+            stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows, claims=hdr_claims)
             learned = None if residual_adapter is None else allocate("learned", np.float32, (*shape, 3))
             stages["learned_raw"] = apply_residual(
-                rgb, clean, support, learned, camera, residual_adapter, mode=inverse_mode
+                rgb, clean, support, learned, camera, residual_adapter, mode=inverse_mode, claims=hdr_claims
             )
             optical = allocate("optical", np.float32, (*shape, 3))
             stages["optics"] = vignetting.process(
@@ -308,7 +309,7 @@ def run_analytic(
             try:
                 for start in range(0, shape[0], strip_rows):
                     stop = start + strip_rows
-                    packaged_claims[start:stop] = isp.hdr_claim_mask(rgb[start:stop]) & support[start:stop]
+                    packaged_claims[start:stop] = hdr_claims[start:stop] & support[start:stop]
                 packaged_claims.flush()
             finally:
                 packaged_claims._mmap.close()

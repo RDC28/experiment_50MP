@@ -91,12 +91,25 @@ def resolve_mode(mode, adapter, camera) -> dict:
 
 
 def apply_residual(
-    rgb, clean, support, destination, camera, adapter, *, mode="HYBRID", tile=None, halo=None, threshold=0.5
+    rgb,
+    clean,
+    support,
+    destination,
+    camera,
+    adapter,
+    *,
+    mode="HYBRID",
+    tile=None,
+    halo=None,
+    threshold=0.5,
+    claims=None,
 ) -> dict:
     """Write corrected clean expectation in bounded tiles before CFA/noise.
 
     Predictors always read the unmodified clean baseline. Corrections apply only
-    to supported source pixels; sensor margins are copied unchanged.
+    to supported source pixels; sensor margins are copied unchanged. An optional
+    HxW boolean `claims` buffer is ORed with accepted pixels whose residual raises
+    a source-clipped channel, i.e. asserts radiance above the source clip level.
     """
     report = resolve_mode(mode, adapter, camera)
     tile = tile if tile is not None else adapter.tile if adapter is not None else 1024
@@ -111,13 +124,15 @@ def apply_residual(
         raise ValueError("Residual inputs must be matching HxWx3 arrays")
     if support.shape != clean.shape[:2] or support.dtype != np.bool_:
         raise ValueError("Residual support must be a boolean HxW mask")
+    if claims is not None and (claims.shape != clean.shape[:2] or claims.dtype != np.bool_):
+        raise ValueError("Residual claims must be a boolean HxW mask")
     if (
         destination.shape != clean.shape
         or np.may_share_memory(destination, clean)
         or (isinstance(clean, np.memmap) and getattr(destination, "filename", None) == clean.filename)
     ):
         raise ValueError("Residual destination must be a separate HxWx3 buffer")
-    accepted = changed = floored = 0
+    accepted = changed = floored = claimed = 0
     for top in range(0, clean.shape[0], tile):
         for left in range(0, clean.shape[1], tile):
             region = np.s_[top : top + tile, left : left + tile]
@@ -152,6 +167,10 @@ def apply_residual(
             changed += int(np.count_nonzero(corrected != baseline))
             accepted += int(np.count_nonzero(gate))
             destination[region] = corrected
+            above_clip = gate & np.any((residual > 0) & (encoded[core] >= 1), axis=-1)
+            claimed += int(np.count_nonzero(above_clip))
+            if claims is not None:
+                claims[region] |= above_clip
     destination.flush()
     return {
         **report,
@@ -160,6 +179,7 @@ def apply_residual(
         "changed_samples": changed,
         "zero_effect": changed == 0,
         "floored_samples": floored,
+        "hdr_claim_pixels": claimed,
         "tile": tile,
         "halo": halo,
         "context_policy": "clipped halo read; core-only write; predictor owns physical-edge padding",

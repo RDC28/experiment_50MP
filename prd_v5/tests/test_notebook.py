@@ -1,4 +1,7 @@
-"""Static notebook validation only; never execute the Colab notebook locally."""
+"""Notebook validation: literal settings, plus selected cells executed against stubs.
+
+The Colab run itself never executes locally; stubbed cells exercise only the wiring.
+"""
 
 import ast
 import json
@@ -73,24 +76,6 @@ def test_notebook_covers_prd_parameter_tables():
     assert expected == {field["name"] for field in values["FIELD_REQUESTS"]}
 
 
-def test_notebook_passes_optional_colour_truth_without_execution():
-    notebook, values = assignments()
-    assert values["COLOUR_REFERENCES"] == {}
-    calls = [
-        node
-        for cell in notebook.cells
-        if cell.cell_type == "code"
-        for node in ast.walk(ast.parse(cell.source))
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run_analytic_pair"
-    ]
-    assert len(calls) == 1
-    keywords = {keyword.arg: keyword.value for keyword in calls[0].keywords}
-    assert isinstance(keywords["colour_references"], ast.Name)
-    assert keywords["colour_references"].id == "COLOUR_REFERENCES"
-    assert isinstance(keywords["comparison_region"], ast.Name)
-    assert keywords["comparison_region"].id == "COMPARISON_REGION"
-
-
 def test_full_preset_values_are_executable_and_match_notebook():
     from dataclasses import asdict
 
@@ -115,29 +100,140 @@ def test_full_preset_values_are_executable_and_match_notebook():
     assert AnalyticRunConfig.from_json(preset.to_json()) == preset
 
 
-def pair_call_keywords(notebook):
-    calls = [
-        node
+def code_sources():
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+    return [cell.source for cell in notebook.cells if cell.cell_type == "code"]
+
+
+def execute(sources, tmp_path):
+    """Run sources in a fresh kernel, stopping at the first error, and return printed JSON."""
+    nbclient = pytest.importorskip("nbclient")
+    notebook = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell(source) for source in sources])
+    client = nbclient.NotebookClient(notebook, timeout=120, resources={"metadata": {"path": str(tmp_path)}})
+    error = None
+    try:
+        client.execute()
+    except nbclient.exceptions.CellExecutionError as raised:
+        error = raised
+    printed = [
+        json.loads(line.removeprefix("RECORD "))
         for cell in notebook.cells
-        if cell.cell_type == "code"
-        for node in ast.walk(ast.parse(cell.source))
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run_analytic_pair"
+        for output in cell.outputs
+        if output.get("name") == "stdout"
+        for line in output["text"].splitlines()
+        if line.startswith("RECORD ")
     ]
-    assert len(calls) == 1
-    return {k.arg: ast.unparse(k.value) for k in calls[0].keywords}
+    return printed, error
 
 
-def test_notebook_pair_call_binds_metric_controls_to_their_settings():
-    notebook, values = assignments()
-    assert values["LPIPS_OPTIONS"] == {"patch": 256, "net": "alex", "device": "cuda"}
-    assert values["MTF_EDGE"] is None
-    keywords = pair_call_keywords(notebook)
-    assert keywords["lpips_options"] == "LPIPS_OPTIONS" and keywords["mtf_edge"] == "MTF_EDGE"
-    assert keywords["residual_adapter"] == "RESIDUAL_ADAPTER"
+PAIR_STUB = """
+import json
+from pathlib import Path
+
+import prd_v5.paired
+
+
+class PairStub(Exception):
+    pass
+
+
+def record_pair(*args, **kwargs):
+    print("RECORD " + json.dumps({"args": [str(a) for a in args], "kwargs": kwargs}, default=repr))
+    raise PairStub
+
+
+prd_v5.paired.run_analytic_pair = record_pair
+"""
+
+PAIR_OVERRIDES = """
+COMPARISON_REGION = (0, 0, 64, 64)
+COLOUR_REFERENCES = {"4k": {"path": "/content/ref_4k.tiff", "calibration": {"colour_space": "sRGB_D65_2deg"}}}
+LPIPS_OPTIONS = {"patch": 128, "net": "vgg", "device": "cpu"}
+MTF_EDGE = {"region": (1, 2, 65, 66), "normal_axis": "x", "edge_evidence": "test edge"}
+"""
+
+
+@pytest.mark.parametrize(("learned", "mode"), [(True, "HYBRID"), (False, "ANALYTIC")])
+def test_notebook_run_cell_passes_metric_controls_to_the_pair(tmp_path, learned, mode):
+    _, params, fields, hypotheses, *_, run = code_sources()
+    context = f"""
+from prd_v5.learned import resolve_mode
+
+output = Path({str(tmp_path / "out")!r})
+runtime = {{"ram_available": 1 << 50, "disk_free": 1 << 50}}
+states = {{}}
+sr_checkpoint, sr_state = None, {{"planned": RESAMPLING}}
+"""
+    sources = [PAIR_STUB, params + PAIR_OVERRIDES + f"ENABLE_LEARNED_RGB2RAW = {learned}\n", fields, hypotheses]
+    (call,), error = execute([*sources, context, run], tmp_path)
+    assert error is not None and error.ename == "PairStub"
+    assert call["args"][:3] == ["/content/source_2k.png", "/content/source_4k.png", str(tmp_path / "out" / "pair")]
+    kwargs = call["kwargs"]
+    assert kwargs["comparison_region"] == [0, 0, 64, 64]
+    assert kwargs["colour_references"] == {
+        "4k": {"path": "/content/ref_4k.tiff", "calibration": {"colour_space": "sRGB_D65_2deg"}}
+    }
+    assert kwargs["lpips_options"] == {"patch": 128, "net": "vgg", "device": "cpu"}
+    assert kwargs["mtf_edge"] == {"region": [1, 2, 65, 66], "normal_axis": "x", "edge_evidence": "test edge"}
+    assert kwargs["residual_adapter"] is None and kwargs["inverse_mode"] == mode
+
+
+SETUP_STUB = """
+import importlib.machinery
+import os
+import subprocess
+import sys
+import types
+
+import prd_v5.dng_validate
+
+for name in ("google", "google.colab"):
+    module = types.ModuleType(name)
+    module.__spec__ = importlib.machinery.ModuleSpec(name, None, is_package=True)
+    module.__path__ = []
+    sys.modules[name] = module
+COMMANDS, BUILDS = [], []
+subprocess.run = lambda command, **kwargs: COMMANDS.append(command) or subprocess.CompletedProcess(command, 0)
+subprocess.check_output = lambda command, **kwargs: "0123abcd\\n"
+os.environ.pop("SYNTHRAW_DNG_VALIDATE", None)
+
+
+def record_build(workdir, **kwargs):
+    BUILDS.append(str(workdir))
+    return {"status": "built", "binary": "/content/dng_validate_build/dng_validate"}
+
+
+prd_v5.dng_validate.build_dng_validate = record_build
+"""
+
+SETUP_REPORT = """
+import json
+print("RECORD " + json.dumps({"builds": BUILDS, "tool": os.environ.get("SYNTHRAW_DNG_VALIDATE"), "commands": COMMANDS}))
+"""
+
+
+@pytest.mark.parametrize(
+    ("prebuilt", "builds", "tool"),
+    [
+        (None, ["/content/dng_validate_build"], "/content/dng_validate_build/dng_validate"),
+        ("/opt/dng_validate", [], "/opt/dng_validate"),
+    ],
+)
+def test_notebook_setup_builds_dng_validate_only_without_a_prebuilt_path(tmp_path, prebuilt, builds, tool):
+    setup = code_sources()[0]
+    if prebuilt is not None:
+        assert "DNG_VALIDATE_PATH = None" in setup
+        setup = setup.replace("DNG_VALIDATE_PATH = None", f"DNG_VALIDATE_PATH = {prebuilt!r}", 1)
+    (record,), error = execute([SETUP_STUB, setup, SETUP_REPORT], tmp_path)
+    assert error is None
+    assert record["builds"] == builds and record["tool"] == tool
+    assert any("pip" in command for command in record["commands"])
 
 
 def test_notebook_hdrunet_defaults_are_inert():
     _, values = assignments()
+    assert values["COLOUR_REFERENCES"] == {} and values["MTF_EDGE"] is None
+    assert values["LPIPS_OPTIONS"] == {"patch": 256, "net": "alex", "device": "cuda"}
     assert values["HDRUNET_CHECKPOINT"] is None and values["HDRUNET_SHA256"] is None
     assert values["HDRUNET_LICENCE_ACCEPTED"] is False
     assert values["DNG_VALIDATE_PATH"] is None

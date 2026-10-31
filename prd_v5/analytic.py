@@ -55,27 +55,15 @@ class AnalyticISP:
             return 0.0
         return float(np.log2(self.hdr_max_radiance * (1 - 0.18) + 1))
 
-    def hdr_claim_mask(self, block: np.ndarray) -> np.ndarray:
-        """Pixels where analytic HDR expansion asserts radiance above the source clip level.
-
-        block is an HxWx3 normalized encoded-sRGB strip. All false when HDR is off.
-        """
-        block = np.asarray(block, dtype=np.float64)
-        if self.hdr_max_radiance <= 1:
-            return np.zeros(block.shape[:2], dtype=np.bool_)
-        linear = np.where(block <= 0.04045, block / 12.92, ((block + 0.055) / 1.055) ** 2.4)
-        if self.inverse_smoothstep:
-            linear = 0.5 - np.sin(np.arcsin(1 - 2 * linear) / 3)
-        linear = linear / (1 + 1 / self.hdr_max_radiance - linear)
-        return np.any(linear > 1 + 1e-6, axis=-1)
-
-    def process(self, source: np.ndarray, destination: np.memmap, *, strip_rows: int = 64) -> dict:
+    def process(self, source: np.ndarray, destination: np.memmap, *, strip_rows: int = 64, claims=None) -> dict:
         """Write float32 clean camera RGB, allocating only strip-sized intermediates.
 
         Input must already have an explicit sRGB colour policy and be normalized
         to [0, 1]. A decoder/ICC transform is outside this API. Disk-backed source
         arrays are supported. The caller owns both buffers and must discard a
         partial destination on failure. No noise, CFA or learned model runs here.
+        An optional HxW boolean `claims` buffer receives the pixels where HDR
+        expansion asserts radiance above the source clip level.
         """
         if type(strip_rows) is not int or strip_rows < 1:
             raise ValueError("strip_rows must be a positive integer")
@@ -87,6 +75,8 @@ class AnalyticISP:
             raise ValueError("destination must be a float32 disk-backed memmap")
         if destination.shape != source.shape or not destination.flags.writeable:
             raise ValueError("destination must match source and be writable")
+        if claims is not None and (claims.shape != source.shape[:2] or claims.dtype != np.bool_):
+            raise ValueError("claims must be an HxW boolean buffer aligned with source")
         if np.may_share_memory(source, destination):
             raise ValueError("source and destination must not overlap")
         if isinstance(source, np.memmap) and source.filename == destination.filename:
@@ -110,7 +100,10 @@ class AnalyticISP:
             if self.hdr_max_radiance > 1:
                 # Invert y = r * (1 + 1/M) / (1 + r), with r in [0, M].
                 linear = linear / (1 + 1 / self.hdr_max_radiance - linear)
-                expanded += int(np.count_nonzero(np.any(linear > 1 + 1e-6, axis=-1)))
+                claimed = np.any(linear > 1 + 1e-6, axis=-1)
+                expanded += int(np.count_nonzero(claimed))
+                if claims is not None:
+                    claims[start : start + len(block)] = claimed
                 linear = linear / self.hdr_max_radiance
             camera = (linear @ inverse.T) / gains
             negative += int(np.count_nonzero(camera < 0))
@@ -151,7 +144,6 @@ class AnalyticISP:
                 "expanded_pixels": expanded,
                 "uncertainty": "All expanded radiance is a tone-curve hypothesis; endpoints remain unknown. "
                 "source_clipped.npy marks resampled endpoints only, not every uncertain HDR pixel.",
-                "learned_hdr": "not executed; no selected compatible checkpoint",
                 "raw_exposure_offset_ev": -float(np.log2(self.hdr_max_radiance)),
                 "baseline_exposure_ev": self.baseline_exposure_ev,
                 "sensor_limit": "hdr_max_radiance maps to sensor saturation; DNG BaselineExposure restores 18% grey",

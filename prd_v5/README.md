@@ -95,7 +95,7 @@ are ADC-referred electrons after pedestal removal and include clipping/quantisat
 The generated-region mask marks potentially generated/unsupported content, not a
 truth oracle. Original-source clipping uncertainty is independent of SR endpoints.
 The automatic HDR gate counts original-source endpoints and unsupported pixels.
-Its claim-policy audit fails when analytic HDR expansion (`hdr_claims.npy`) claims radiance there, passes otherwise, and is `not measured` when no HDR stage ran, while numerical
+Its claim-policy audit fails when analytic HDR expansion or the learned HDRUNet residual (`hdr_claims.npy`) claims radiance there, passes otherwise, and is `not measured` when neither ran, while numerical
 HDR fidelity remains `not measured`. On Colab, inspect `validation.json` under
 `HDR validity` for these counts. For external benchmark assertions, call
 `hdr_validation.validate_hdr_claims(source_clipped, source_support, claimed_truth)`
@@ -335,8 +335,8 @@ Run these only on a Colab A100 runtime, never on the development Mac.
    `prd_v5.hdrunet.load_hdrunet_adapter(path, expected_sha256, camera,
    licence_accepted=True, experimental_accepted=True)` and uses the result as
    `RESIDUAL_ADAPTER`. It verifies the digest before unpickling, loads with
-   `weights_only=True` and strict keys, and pads tiles to multiples of four. Output is mapped
-   to a linear residual by encoded-domain difference and gated by a change-size confidence;
+   `weights_only=True` and strict keys, and pads tiles to multiples of four. Its unbounded
+   gamma-2.24 output is linearized into a residual and gated by a change-size confidence;
    it is NTIRE2021 HDR, not Sony calibration or clipped-highlight truth.
 6. To use learned weights, supply `SR_CHECKPOINT` (path, expected SHA-256, backend,
    revision, source, licence, licence acceptance). No checkpoint is downloaded

@@ -294,15 +294,18 @@ Tiny generated-DNG fixtures exercise nonidentity WB, rational matrices, real tag
 ### HDR recovered-truth claim audit completion
 
 Every completed bundle audits the original-source endpoint and support masks
-in bounded row strips and records their counts in the JSON/HTML HDR gate. When
-analytic HDR expansion runs, the pipeline writes `hdr_claims.npy` (pixels whose
-expanded radiance exceeds the source clip level) and `delivery.audit_hdr` passes
-it to `validate_hdr_claims`: any claim inside a source-clipped or unsupported
-pixel fails the gate (expansion maps clipped endpoints to the radiance cap, so
-HDR runs on sources with clipped pixels report `failed`), otherwise it reports
-`passed`. With no HDR stage the gate is `not measured`. Learned inverse tone
-mapping is not executed by this pipeline and contributes no claims. Only unit
-fixtures and a tiny end-to-end fixture ran. The reusable `validate_hdr_claims`
+in bounded row strips and records their counts in the JSON/HTML HDR gate. The
+pipeline writes `hdr_claims.npy` from two sources: pixels whose analytic HDR
+expansion exceeds the source clip level, and, when the learned HDRUNet residual
+ran, accepted pixels whose residual raises a source-clipped channel (radiance
+above the source clip level). `delivery.audit_hdr` passes it to
+`validate_hdr_claims`: any claim inside a source-clipped or unsupported pixel
+fails the gate (expansion maps clipped endpoints to the radiance cap, so HDR
+runs on sources with clipped pixels report `failed`), otherwise it reports
+`passed`. The gate is `not measured` only when neither analytic HDR nor the
+learned residual ran. Only unit fixtures and tiny end-to-end fixtures ran; the
+learned claim path was exercised with a stub constant-residual adapter, not a
+real HDRUNet checkpoint. The reusable `validate_hdr_claims`
 API accepts an explicit aligned boolean claim mask: an intersection
 with a source endpoint or unsupported geometry fails the gate, counting the
 forbidden union once. Invalid mask dimensions, types and alignment fail clearly.
@@ -722,12 +725,15 @@ tool comes from an explicit path (`DNG_VALIDATE_PATH` in the notebook), the
 runs `prd_v5/tools/build_dng_validate.sh`, which downloads the SDK from the
 conventional URL, refuses it unless the SHA-256 above matches (a local
 observation, not an Adobe attestation), and compiles the DNG SDK sources
-directly with g++. That script was written without a Linux build project to
-follow and has not been run: it does not build the bundled XMP toolkit
-sources, so linking may fail. A failed build is recorded as a visible skip
+directly with g++. It locates the SDK layout (`<top>/dng_sdk/source` beside
+`<top>/xmp/toolkit`) and also compiles the bundled XMPCore toolkit (XMPCore,
+XMPCommon, shared sources and the zuid MD5) against system expat through an
+include shim, linking system libjpeg and zlib with JPEG XL support off. That
+script was written without a Linux build project to follow and has not been
+run, so compilation or linking may still fail. A failed build is recorded as a visible skip
 naming the build error, and the run continues. Unit tests mock the subprocess,
 so only the runner's logic is verified, not the tool or the build.
 
 ### HDRUNet loader (built, user checkpoint only)
 
-`prd_v5/hdrunet.py` reimplements the pinned upstream architecture (revision `e9bd4b90a27d7531a38b8c97db05feb368b96dc2`, `HDRUNet(in_nc=3, out_nc=3, nf=64, act_type='relu')`) with upstream state-dict key names. Counting its convolution weights and biases by hand gives 1,651,494 parameters (6,605,976 bytes as float32), consistent with the 6,662,614 byte checkpoint once pickle/zip overhead for the key names is allowed for; this is a plausibility check, not proof that the keys match. `load_hdrunet_adapter` requires a caller SHA-256, verifies bytes before unpickling, loads with `weights_only=True`, strips `module.`, and uses `strict=True` so any missing, unexpected or mis-shaped key fails. Inference is padded to stride four with reflect padding and runs inside the existing bounded halo tile loop (tile and halo multiples of four). The encoded-domain difference between output and input becomes a linear residual in normalized units (1.0 = saturation, the unit of the clean buffer it is added to), an experimental mapping that is not a Sony radiometric calibration. Confidence is `1 - max_channel_change / max_delta` (default 0.25), not the network's own mask. Fixture tests use a fake torch module; no checkpoint was downloaded and no model was run on this Mac. The architecture is unverified against real weights until a Colab run with a supplied checkpoint and digest. Auto-download stays blocked because no trustworthy SHA-256 was established, and highlight truth stays not measured.
+`prd_v5/hdrunet.py` reimplements the pinned upstream architecture (revision `e9bd4b90a27d7531a38b8c97db05feb368b96dc2`, `HDRUNet(in_nc=3, out_nc=3, nf=64, act_type='relu')`) with upstream state-dict key names. Counting its convolution weights and biases by hand gives 1,651,494 parameters (6,605,976 bytes as float32), consistent with the 6,662,614 byte checkpoint once pickle/zip overhead for the key names is allowed for; this is a plausibility check, not proof that the keys match. `load_hdrunet_adapter` requires a caller SHA-256, verifies bytes before unpickling, loads with `weights_only=True`, strips `module.`, and uses `strict=True` so any missing, unexpected or mis-shaped key fails. Inference is padded to stride four with reflect padding and runs inside the existing bounded halo tile loop (tile and halo multiples of four). Upstream output is unbounded gamma-2.24 NTIRE2021 HDR on the input's scale (clipped only at zero), so values above 1 assert radiance above the source clip level. Output and input are both linearized with that gamma and their difference becomes a linear residual in normalized units (1.0 = saturation, the unit of the clean buffer it is added to), an experimental mapping that is not a Sony radiometric calibration. Confidence is `1 - max_channel_linear_change / max_delta` (default 0.25), not the network's own mask. Accepted pixels whose residual raises a source-clipped channel join `hdr_claims.npy`. Fixture tests use a fake torch module; no checkpoint was downloaded and no model was run on this Mac. The architecture is unverified against real weights until a Colab run with a supplied checkpoint and digest. Auto-download stays blocked because no trustworthy SHA-256 was established, and highlight truth stays not measured.

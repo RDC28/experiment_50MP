@@ -119,9 +119,9 @@ def test_strict_load_strips_module_prefix_and_runs_bounded_residual(checkpoint, 
     assert report["status"] == "executed experimental residual"
     # every inference tile is padded to a multiple of the network stride
     assert all(shape[2] % 4 == 0 and shape[3] % 4 == 0 for shape in model.shapes)
-    # +0.1 encoded at 0.4 is brighter in linear light; confidence 1 - 0.1/0.25 = 0.6 passes the gate
-    expected = float((hdrunet._srgb_to_linear(np.float64(0.5)) - hdrunet._srgb_to_linear(np.float64(0.4))) * 0.6)
-    np.testing.assert_allclose(destination, expected, rtol=1e-4)
+    # +0.1 at 0.4 in the gamma-2.24 HDR domain is a linear change of about 0.083, so confidence ~0.67 passes
+    delta = 0.5**2.24 - 0.4**2.24
+    np.testing.assert_allclose(destination, delta * (1 - delta / 0.25), rtol=1e-4)
 
 
 def test_large_change_is_low_confidence(checkpoint):
@@ -144,8 +144,17 @@ def test_residual_is_normalized_not_electrons():
     predict = hdrunet.make_predictor(model, fake_torch({}), device="cpu", max_delta=0.25)
     encoded = np.full((4, 4, 3), 0.4, dtype=np.float32)
     residual, _ = predict(encoded, None, (0, 0), camera)
-    delta_linear = float(hdrunet._srgb_to_linear(np.float64(0.5)) - hdrunet._srgb_to_linear(np.float64(0.4)))
+    delta_linear = 0.5**2.24 - 0.4**2.24
     # same order as the encoded delta, not scaled by saturation_e
     assert camera.saturation_e > 100
     np.testing.assert_allclose(residual, delta_linear, rtol=1e-4)
     assert float(residual.max()) < 1.0
+
+
+def test_output_above_clip_level_is_kept_as_hdr_radiance():
+    predict = hdrunet.make_predictor(FakeModel(delta=0.05), fake_torch({}), device="cpu", max_delta=0.25)
+    encoded = np.ones((4, 4, 3), dtype=np.float32)
+    residual, confidence = predict(encoded, None, (0, 0), CameraHypothesis())
+    # 1.05 in the gamma-2.24 output domain is linear radiance above the clip level, not clipped to it
+    np.testing.assert_allclose(residual, 1.05**2.24 - 1.0, rtol=1e-4)
+    np.testing.assert_allclose(confidence, 1 - (1.05**2.24 - 1.0) / 0.25, rtol=1e-4)
