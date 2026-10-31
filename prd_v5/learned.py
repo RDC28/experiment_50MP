@@ -116,9 +116,9 @@ def apply_residual(
     Predictors always read the unmodified clean baseline. Corrections apply only
     to supported source pixels; sensor margins are copied unchanged. `isp` is the
     run's analytic model that produced `clean`; it fixes residual units and the
-    source clip level. An optional HxW boolean `claims` buffer is ORed with accepted,
-    changed pixels whose corrected value asserts radiance above the source clip
-    level on any channel.
+    claim comparison. An optional HxW boolean `claims` buffer is ORed with accepted,
+    changed pixels whose corrected value, mapped by isp.to_linear into the model's
+    expanded linear radiance, exceeds 1.0 on any channel (the analytic claim test).
     """
     report = resolve_mode(mode, adapter, camera)
     tile = tile if tile is not None else adapter.tile if adapter is not None else 1024

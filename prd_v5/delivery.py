@@ -147,11 +147,10 @@ def complete_registry(report):
 def audit_hdr(output, report, clipped, support):
     """Audit the pipeline's own HDR claims against source endpoints.
 
-    The claim mask (hdr_claims.npy) marks pixels where analytic HDR expansion
-    asserted radiance above the source clip level, together with pixels where an
-    executed learned residual (the HDRUNet inverse-tone-mapping path) raised a
-    source-clipped channel above it. Without either stage the audit stays
-    "not measured".
+    The claim mask (hdr_claims.npy) marks pixels whose expanded linear radiance
+    exceeds 1.0, from analytic HDR expansion and from accepted pixels an executed
+    learned residual (the HDRUNet inverse-tone-mapping path) changed. Without
+    either stage the audit stays "not measured".
     """
     analytic_hdr = report["stages"].get("analytic", {}).get("hdr", {}).get("effective")
     learned_hdr = report["stages"].get("learned_raw", {}).get("status") == "executed experimental residual"

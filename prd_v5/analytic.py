@@ -56,13 +56,16 @@ class AnalyticISP:
         return float(np.log2(self.hdr_max_radiance * (1 - 0.18) + 1))
 
     def to_camera(self, linear: np.ndarray) -> np.ndarray:
-        """Map linear sRGB relative to the source clip level (1.0) into clean camera units."""
+        """Map the model's expanded linear sRGB radiance into clean camera units (divide by M).
+
+        This equals source-relative linear sRGB (1.0 = source clip level) only at M = 1.
+        """
         inverse = np.linalg.inv(np.asarray(self.camera_to_srgb, dtype=np.float64))
         gains = np.asarray(self.white_balance, dtype=np.float64) * self.exposure_gain
         return (np.asarray(linear, dtype=np.float64) / self.hdr_max_radiance) @ inverse.T / gains
 
     def to_linear(self, camera: np.ndarray) -> np.ndarray:
-        """Inverse of to_camera: clean camera units back to source-relative linear sRGB."""
+        """Inverse of to_camera: clean camera units back to expanded linear sRGB radiance."""
         gains = np.asarray(self.white_balance, dtype=np.float64) * self.exposure_gain
         forward = (np.asarray(camera, dtype=np.float64) * gains) @ np.asarray(self.camera_to_srgb).T
         return forward * self.hdr_max_radiance
@@ -74,8 +77,8 @@ class AnalyticISP:
         to [0, 1]. A decoder/ICC transform is outside this API. Disk-backed source
         arrays are supported. The caller owns both buffers and must discard a
         partial destination on failure. No noise, CFA or learned model runs here.
-        An optional HxW boolean `claims` buffer receives the pixels where HDR
-        expansion asserts radiance above the source clip level.
+        An optional HxW boolean `claims` buffer receives the pixels whose expanded
+        linear radiance exceeds 1.0.
         """
         if type(strip_rows) is not int or strip_rows < 1:
             raise ValueError("strip_rows must be a positive integer")
