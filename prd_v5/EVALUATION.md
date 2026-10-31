@@ -732,7 +732,8 @@ directly with g++. It locates the SDK layout (`<top>/dng_sdk/source` beside
 XMPCommon, shared sources and the zuid MD5) against system expat through an
 include shim, linking system libjpeg and zlib with JPEG XL support off. That
 script was written without a Linux build project to follow and has not been
-run, so compilation or linking may still fail. A failed build is recorded as a visible skip
+run, so compilation or linking may still fail. A failed build is exported through
+`SYNTHRAW_DNG_VALIDATE_SKIP`, so each bundle's "DNG conformance" gate is a visible skip
 naming the build error, and the run continues. Unit tests mock the subprocess,
 so only the runner's logic is verified, not the tool or the build.
 

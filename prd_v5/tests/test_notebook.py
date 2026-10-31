@@ -196,19 +196,28 @@ COMMANDS, BUILDS = [], []
 subprocess.run = lambda command, **kwargs: COMMANDS.append(command) or subprocess.CompletedProcess(command, 0)
 subprocess.check_output = lambda command, **kwargs: "0123abcd\\n"
 os.environ.pop("SYNTHRAW_DNG_VALIDATE", None)
+os.environ.pop("SYNTHRAW_DNG_VALIDATE_SKIP", None)
+prd_v5.dng_validate.shutil.which = lambda name: None
+BUILD = {"status": "built", "binary": "/content/dng_validate_build/dng_validate"}
 
 
 def record_build(workdir, **kwargs):
     BUILDS.append(str(workdir))
-    return {"status": "built", "binary": "/content/dng_validate_build/dng_validate"}
+    return BUILD
 
 
 prd_v5.dng_validate.build_dng_validate = record_build
 """
 
+BUILD_FAILURE = """
+BUILD = {"status": "not measured", "reason": "dng_validate build failed (exit 1): undefined reference"}
+"""
+
 SETUP_REPORT = """
 import json
-print("RECORD " + json.dumps({"builds": BUILDS, "tool": os.environ.get("SYNTHRAW_DNG_VALIDATE"), "commands": COMMANDS}))
+gate = prd_v5.dng_validate.run_dng_validate("capture.dng")
+tool = os.environ.get("SYNTHRAW_DNG_VALIDATE")
+print("RECORD " + json.dumps({"builds": BUILDS, "tool": tool, "gate": gate, "commands": COMMANDS}))
 """
 
 
@@ -228,6 +237,16 @@ def test_notebook_setup_builds_dng_validate_only_without_a_prebuilt_path(tmp_pat
     assert error is None
     assert record["builds"] == builds and record["tool"] == tool
     assert any("pip" in command for command in record["commands"])
+
+
+def test_notebook_setup_build_failure_names_the_error_in_the_conformance_gate(tmp_path):
+    (record,), error = execute([SETUP_STUB, BUILD_FAILURE, code_sources()[0], SETUP_REPORT], tmp_path)
+    assert error is None
+    assert record["builds"] == ["/content/dng_validate_build"] and record["tool"] is None
+    assert record["gate"] == {
+        "status": "not measured",
+        "reason": "dng_validate build failed (exit 1): undefined reference",
+    }
 
 
 def test_notebook_hdrunet_defaults_are_inert():

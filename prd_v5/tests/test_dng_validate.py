@@ -20,9 +20,18 @@ def fake_run(returncode=0, stdout="", stderr=""):
 
 def test_missing_tool_is_not_measured(tmp_path, monkeypatch):
     monkeypatch.delenv(dv.ENV_VAR, raising=False)
+    monkeypatch.delenv(dv.SKIP_ENV_VAR, raising=False)
     monkeypatch.setattr(dv.shutil, "which", lambda name: None)
     record = dv.run_dng_validate(tmp_path / "x.dng")
     assert record["status"] == "not measured" and dv.ENV_VAR in record["reason"]
+
+
+def test_missing_tool_names_the_recorded_build_failure(tmp_path, monkeypatch):
+    monkeypatch.delenv(dv.ENV_VAR, raising=False)
+    monkeypatch.setenv(dv.SKIP_ENV_VAR, "dng_validate build failed (exit 2): SDK SHA-256 mismatch")
+    monkeypatch.setattr(dv.shutil, "which", lambda name: None)
+    record = dv.run_dng_validate(tmp_path / "x.dng")
+    assert record == {"status": "not measured", "reason": "dng_validate build failed (exit 2): SDK SHA-256 mismatch"}
 
 
 def test_clean_run_passes_and_records_tool_hash(tmp_path, tool, monkeypatch):

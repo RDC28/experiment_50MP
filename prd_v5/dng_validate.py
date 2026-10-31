@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 ENV_VAR = "SYNTHRAW_DNG_VALIDATE"
+SKIP_ENV_VAR = "SYNTHRAW_DNG_VALIDATE_SKIP"
 BUILD_SCRIPT = Path(__file__).parent / "tools" / "build_dng_validate.sh"
 # Adobe publishes no digest; this value is a local observation of one fetch of the
 # conventional download path (see EVALUATION.md), pinned so a changed archive is refused.
@@ -63,7 +64,9 @@ def run_dng_validate(dng: str | os.PathLike, binary: str | os.PathLike | None = 
     tool = find_dng_validate(binary)
     if tool is None:
         return not_measured(
-            f"dng_validate not available: pass a prebuilt path, set {ENV_VAR}, or let the notebook setup cell build it"
+            os.environ.get(SKIP_ENV_VAR)
+            or f"dng_validate not available: pass a prebuilt path, set {ENV_VAR}, or let the notebook setup cell "
+            "build it"
         )
     try:
         done = subprocess.run([str(tool), "-v", str(dng)], capture_output=True, text=True, timeout=timeout_s)
