@@ -11,7 +11,7 @@ original camera RAW, sensor calibration, spectra or private metadata.
 
 1. Open the notebook from `main`. Select a GPU
    runtime. Setup clones the repository into `/content/experiment_50MP`, fetches
-   `REPO_REF`, records its actual commit and installs the package plus SR extras.
+   `REPO_REF`, records its actual commit and installs the package plus the `sr` and `metrics` extras.
    Pin `REPO_REF` to a full commit SHA for a reproducible release experiment.
 2. Supply the rendered source variants at `SOURCE_2K` and `SOURCE_4K`. They must
    depict the same aligned scene; filenames alone cannot prove registration.
@@ -149,7 +149,7 @@ request these edits automatically via `exposure_sweep=True` and
 child bundle retains `exposure_edits/`, hashes all five TIFFs, and includes the
 response in its manifest and RAW editability validation evidence. A failed sweep
 prevents completion. Full-size visual
-review remain pending; RAW editability remains not measured. Test without models using
+review remains pending; RAW editability remains not measured. Test without models using
 `.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.
 
 For a relative white-balance edit sweep on Colab (also invoked automatically by the maximum notebook):
@@ -173,7 +173,7 @@ channel ratios describe the change rather than absolute brightness scaling.
 These are relative developer settings, not calibrated Kelvin temperatures.
 The fresh destination is protected from overwrite and removed on failure.
 Allow another 1.8 GB disk for both 50 MP inputs. WB accuracy stays not measured;
-highlight/shadow sweeps and full-size visual review remain pending.
+full-size visual review remains pending.
 The maximum preset enables `wb_sweep=True`; notebook `ENABLE_WB_SWEEP=True`
 and `WB_SWEEP_STRENGTH=1.25` expose the controls. Conservative library defaults
 disable the sweep. Both child bundles retain `wb_edits/`, per-TIFF hashes and
@@ -199,8 +199,8 @@ identical camera WB, brightness and highlight clipping. Unavailable algorithms
 are listed with reasons; execution/write errors abort and remove the new sweep
 directory. Reports retain algorithm names, library versions, channel means and
 clipping counts. Allow another 1.8 GB disk for two 50 MP inputs. Algorithm
-response does not prove detail accuracy or visual editability. Highlight/shadow
-sweeps and full-size visual review remain pending. Tiny fixtures:
+response does not prove detail accuracy or visual editability. Full-size
+visual review remains pending. Tiny fixtures:
 `.venv/bin/python -m pytest prd_v5/tests/test_roundtrip.py -q`.
 
 The maximum preset enables `demosaic_sweep=True`; notebook
@@ -345,6 +345,6 @@ Run these only on a Colab A100 runtime, never on the development Mac.
    automatically: no public artifact with a verified byte SHA-256 was found for
    HAT, RAW-Flow or HDRUNet. RAW-Diffusion and SpiralDiff publish no usable
    checkpoint. Without weights the Lanczos/analytic fallback is reported.
-6. Inspect `validation.json`, the pair JSON/HTML and the edit-sweep folders. The
+7. Inspect `validation.json`, the pair JSON/HTML and the edit-sweep folders. The
    RAW pre/post-noise comparison, frequency bands, metadata coherence and HDR
    validity gate run automatically.

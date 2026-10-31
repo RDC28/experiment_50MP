@@ -93,7 +93,7 @@ Independent review then connected the remaining optical stages, added an executa
 | Learned RAW | Camera-domain/checkpoint-hash/normalization/licence contract, confidence-gated residual application, analytic/hybrid/strict-model-required dispatch and explicit skip evidence | No bundled RAW-Diffusion/SpiralDiff/RAW-Flow checkpoint loader, model-specific camera adaptation or training. A HDRUNet loader (`prd_v5/hdrunet.py`) gives an experimental learned inverse-tone-mapping path for user-supplied checkpoints only; no learned ITM weights are auto-downloaded. Advertised upstream weights do not prove Sony compatibility. This is adapter infrastructure, not a claim those models execute. |
 | Full sensor | CFA-domain Poisson shot noise, read noise, PRNU/DSNU, row/column FPN, thermal dark-current expectation, hot/dead maps and realized defect masks, monotone charge compression, supplied ISO-switched effective full-well/read-noise profile, shared absolute-coordinate seeds | Synthetic priors, not measured Sony calibration. Dark electrons share the Poisson stage; shot-noise-off disables that randomness. The affine DNG NoiseProfile describes baseline temporal noise, not nonlinear/body-map variance. Small flat/dark measurements explicitly test that limited model. |
 | Full optics | Pre-CFA radial/tangential Brown-Conrady sampling, vignetting, lateral/axial CA, center-to-edge Gaussian PSF, aperture/wavelength/pixel-pitch diffraction approximation, defocus, global line-motion blur; bounded strips/maps and tested halos | Synthetic Gaussian/line approximations, not Airy rings or measured lens MTF. Axial CA has no inferred depth field. Global motion does not reconstruct local object motion. Nearest/reflect boundaries are disclosed. |
-| Final metadata/output | Every PRD table field registered with required provenance schema; unknown identity/history stays null. Source/checkpoint hashes, actual optical/sensor settings, DNG tags and explicit methods, canonical DNG/TIFF/preview, clean/noisy electron-equivalent mosaics, masks, JSON/HTML, pair HTML and per-artifact hashes | Undefined physical fields remain UNSPECIFIED. Some registry concepts have no standard DNG tag. Full Adobe conformance, scientific real-RAW/HDR/colour benchmarks and full-size edit sweeps remain unmeasured. |
+| Final metadata/output | Every PRD table field registered with required provenance schema; unknown identity/history stays null. Source/checkpoint hashes, actual optical/sensor settings, DNG tags and explicit methods, canonical DNG/TIFF/preview, clean/noisy electron-equivalent mosaics, masks, JSON/HTML, pair HTML and per-artifact hashes | Undefined physical fields remain UNSPECIFIED. Some registry concepts have no standard DNG tag. Adobe conformance is measured only when `dng_validate` runs (see the dng_validate section below). Full-size edit sweeps are exported, but RAW editability stays unmeasured pending visual review. Scientific real-RAW/HDR/colour benchmarks remain unmeasured. |
 
 `presets.full_quality_config()` and the notebook enable the implemented direct sensor/optics switches with modest nonzero priors (the supplied dual-regime profile remains optional), full 50 MP, HDR, Lanczos where a verified HAT checkpoint is absent, and every output. Enabling the full feature set is not a request to maximize destructive noise/blur strengths. Conservative library defaults remain available. GPS, serials, timestamp and other unknown identity/history values are not fabricated. Requested HAT/HYBRID/learned settings remain visible even when missing weights cause the explicitly allowed analytic fallback. Experimental acceptance flags are preselected by this maximum-settings interpretation; they are not licence acceptance for downloaded models.
 
@@ -700,7 +700,7 @@ distance and fake `lpips`/`torch` modules only to test tiling, contract and load
 wiring; no LPIPS network ran. The pair report, notebook controls and the `lpips`
 pip install in the Colab setup cell are wired (see below).
 
-### Adobe dng_validate on Colab: precise skip
+### Adobe dng_validate on Colab: runner and Linux build
 
 Metadata and source-layout inspection on 2026-10-30. The official
 [Adobe DNG page](https://www.adobe.com/support/downloads/dng/dng_sdk.html)
@@ -715,8 +715,8 @@ an upstream attestation. Its `DNG_ReadMe.txt` documents build projects only for
 macOS (Xcode 12.4 to 14.2) and Windows (Visual Studio 2022 with clang). The
 archive has no Linux makefile or top-level CMake project for `dng_validate`
 (only third-party libjxl/libjpeg builds), and bundles XMP SDK with boost, expat and
-zlib. A Colab Linux build would be a hand-written, untested build of about 80 MB
-of C++ and cannot be exercised on this Mac. Adobe SDK terms also apply.
+zlib. A Colab Linux build therefore has to be hand-written, compiling the C++ sources of the
+80 MB archive. Adobe SDK terms also apply.
 
 Disposition: **runner and Linux build built, verified in a Colab stand-in container**. `prd_v5/dng_validate.py`
 runs `dng_validate -v` on the generated DNG and records the exit code, error
