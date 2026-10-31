@@ -196,7 +196,7 @@ COMMANDS, BUILDS = [], []
 subprocess.run = lambda command, **kwargs: COMMANDS.append(command) or subprocess.CompletedProcess(command, 0)
 subprocess.check_output = lambda command, **kwargs: "0123abcd\\n"
 os.environ.pop("SYNTHRAW_DNG_VALIDATE", None)
-os.environ.pop("SYNTHRAW_DNG_VALIDATE_SKIP", None)
+os.environ["SYNTHRAW_DNG_VALIDATE_SKIP"] = "stale build failure from an earlier setup run"
 prd_v5.dng_validate.shutil.which = lambda name: None
 BUILD = {"status": "built", "binary": "/content/dng_validate_build/dng_validate"}
 
@@ -237,6 +237,7 @@ def test_notebook_setup_builds_dng_validate_only_without_a_prebuilt_path(tmp_pat
     assert error is None
     assert record["builds"] == builds and record["tool"] == tool
     assert any("pip" in command for command in record["commands"])
+    assert record["gate"]["status"] == "not measured" and "stale" not in record["gate"]["reason"]
 
 
 def test_notebook_setup_build_failure_names_the_error_in_the_conformance_gate(tmp_path):
