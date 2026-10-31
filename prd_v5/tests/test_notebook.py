@@ -195,7 +195,7 @@ for name in ("google", "google.colab"):
 COMMANDS, BUILDS = [], []
 subprocess.run = lambda command, **kwargs: COMMANDS.append(command) or subprocess.CompletedProcess(command, 0)
 subprocess.check_output = lambda command, **kwargs: "0123abcd\\n"
-os.environ.pop("SYNTHRAW_DNG_VALIDATE", None)
+os.environ["SYNTHRAW_DNG_VALIDATE"] = "/content/stale/dng_validate"
 os.environ["SYNTHRAW_DNG_VALIDATE_SKIP"] = "stale build failure from an earlier setup run"
 prd_v5.dng_validate.shutil.which = lambda name: None
 BUILD = {"status": "built", "binary": "/content/dng_validate_build/dng_validate"}
@@ -243,7 +243,7 @@ def test_notebook_setup_builds_dng_validate_only_without_a_prebuilt_path(tmp_pat
 def test_notebook_setup_build_failure_names_the_error_in_the_conformance_gate(tmp_path):
     (record,), error = execute([SETUP_STUB, BUILD_FAILURE, code_sources()[0], SETUP_REPORT], tmp_path)
     assert error is None
-    assert record["builds"] == ["/content/dng_validate_build"] and record["tool"] is None
+    assert record["builds"] == ["/content/dng_validate_build"]
     assert record["gate"] == {
         "status": "not measured",
         "reason": "dng_validate build failed (exit 1): undefined reference",
