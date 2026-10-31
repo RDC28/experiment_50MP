@@ -314,9 +314,9 @@ forbidden union once. Invalid mask dimensions, types and alignment fail clearly.
 The mask describes original source endpoints, including black endpoints, rather
 than newly saturated synthetic photosites or post-SR endpoints.
 
-A claim-policy pass is separate from the HDR gate status. Without calibrated
-aligned HDR reference data, numerical HDR fidelity and the overall HDR gate
-remain **not measured**, even when there are no forbidden claims. Non-endpoint
+The HDR gate status follows this claim audit. Without calibrated aligned HDR
+reference data, numerical HDR fidelity remains **not measured**, even when the
+gate passes with no forbidden claims. Non-endpoint
 claims do not establish truth. This audit does not inspect free-form prose or
 validate a learned confidence estimate, and it is not an HDR benchmark metric.
 

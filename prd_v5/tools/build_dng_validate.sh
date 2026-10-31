@@ -19,6 +19,7 @@ xmp="$root/xmp/toolkit"
 [ -d "$xmp/XMPCore/source" ] || { echo "XMP toolkit not found at $xmp" >&2; exit 3; }
 md5="$(find "$xmp/third-party/zuid" -type f -name MD5.cpp | head -n1)"
 [ -n "$md5" ] || { echo "zuid MD5.cpp not found in XMP toolkit" >&2; exit 3; }
+apt-get update -qq >/dev/null
 apt-get install -y -qq g++ libjpeg-dev zlib1g-dev libexpat1-dev >/dev/null
 # ExpatAdapter.cpp includes "third-party/expat/lib/expat.h"; the SDK ships no expat sources.
 mkdir -p shim/third-party/expat/lib obj

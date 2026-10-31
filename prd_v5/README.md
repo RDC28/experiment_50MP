@@ -9,7 +9,7 @@ original camera RAW, sensor calibration, spectra or private metadata.
 
 ## Run in Colab
 
-1. Open the notebook from this branch after validation publishes it. Select a GPU
+1. Open the notebook from `main`. Select a GPU
    runtime. Setup clones the repository into `/content/experiment_50MP`, fetches
    `REPO_REF`, records its actual commit and installs the package plus SR extras.
    Pin `REPO_REF` to a full commit SHA for a reproducible release experiment.
