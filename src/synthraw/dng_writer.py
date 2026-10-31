@@ -91,7 +91,9 @@ class DNGWriter:
                 raise ValueError("Mosaic exceeds WhiteLevel")
         if mosaic.nbytes >= 2**32 - 2**20:
             raise ValueError("Mosaic exceeds classic TIFF offset capacity")
-        tags = [_tag(record) for name, record in records.items() if name not in _STRUCTURAL]
+        # DNG readers locate the raw IFD by NewSubFileType = 0; tifffile omits the tag unless asked.
+        tags = [(254, "I", 1, 0, False)]
+        tags += [_tag(record) for name, record in records.items() if name not in _STRUCTURAL]
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         lossless = records["Compression"].value == 7

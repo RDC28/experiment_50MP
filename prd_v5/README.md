@@ -317,9 +317,9 @@ external inputs rather than replay configuration; the notebook passes `MTF_EDGE`
 Run these only on a Colab A100 runtime, never on the development Mac.
 
 1. Run the setup cell. It installs the repository with the `sr` and `metrics`
-   extras (the `metrics` extra pins `lpips==0.1.4`). It also tries a best-effort
-   Linux build of Adobe `dng_validate` (unverified; if it fails the DNG
-   conformance gate is a visible skip naming the error). A prebuilt binary can be
+   extras (the `metrics` extra pins `lpips==0.1.4`). It also builds Adobe
+   `dng_validate` on Linux (verified in an Ubuntu 22.04 container, not yet on
+   Colab; if it fails the DNG conformance gate is a visible skip naming the error). A prebuilt binary can be
    given through `DNG_VALIDATE_PATH` (see EVALUATION.md).
 2. Maximum defaults request every stage: full 50 MP, HAT, HYBRID, HDR, sensor and
    optics priors, all outputs, and the exposure (-3/-2/0/+2/+3 EV), WB,
