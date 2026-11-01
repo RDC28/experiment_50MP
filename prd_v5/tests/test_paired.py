@@ -24,6 +24,10 @@ def test_pair_uses_shared_hypotheses_and_links_completed_bundles(tmp_path):
         target_megapixels=0.001024,
         assume_unprofiled_srgb=True,
         strip_rows=3,
+        exposure_sweep=True,
+        wb_sweep=True,
+        demosaic_sweep=True,
+        tone_sweep=True,
     )
     output = tmp_path / "pair"
     report = run_analytic_pair(low, high, output, config, camera_selections=selections)
@@ -31,6 +35,15 @@ def test_pair_uses_shared_hypotheses_and_links_completed_bundles(tmp_path):
     assert report["comparison"]["status"] == "measured render disagreement"
     assert report["comparison"]["identical"] is True
     assert report["comparison"]["rmse"] == 0
+    spectra = report["comparison"]["frequency_bands"]
+    assert spectra["status"] == "measured spectral disagreement"
+    assert all(band["difference_power"] == 0 for band in spectra["bands"])
+    assert "frequency_bands" in (output / "2k_vs_4k_report.html").read_text()
+    for stage in ("pre_noise", "post_noise"):
+        raw = report["raw_comparison"][stage]["whole_raster"]
+        assert raw["status"] == "measured RAW disagreement"
+        assert raw["samples"] == 1024
+        assert raw["rmse"] == 0
     assert report["runs"]["2k"]["source_dimensions"] == [16, 16]
     assert report["runs"]["4k"]["source_dimensions"] == [32, 32]
     for label in ("2k", "4k"):
@@ -38,6 +51,14 @@ def test_pair_uses_shared_hypotheses_and_links_completed_bundles(tmp_path):
         manifest = output / run["manifest"]
         assert run["manifest_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
         child = json.loads(manifest.read_text())
+        assert run["exposure_sweep"] == child["stages"]["exposure_sweep"]
+        assert len(run["exposure_sweep"]["renders"]) == 5
+        assert run["wb_sweep"] == child["stages"]["wb_sweep"]
+        assert len(run["wb_sweep"]["renders"]) == 3
+        assert run["tone_sweep"] == child["stages"]["tone_sweep"]
+        assert run["tone_sweep"]["status"] == "measured"
+        assert run["demosaic_sweep"] == child["stages"]["demosaic_sweep"]
+        assert run["demosaic_sweep"]["status"] == "measured"
         assert child["camera"] == report["shared_camera"]
         assert child["registry"]["iso"]["mode"] == "USER"
         assert child["registry"]["iso"]["provenance"] == "USER_SET"
@@ -126,6 +147,8 @@ def test_pair_retains_whole_raster_and_native_crop_metrics(tmp_path):
     assert report["comparison"]["samples"] == 32 * 32 * 3
     crop = report["crop_comparison"]
     assert crop["region"] == list(region)
+    for stage in ("pre_noise", "post_noise"):
+        assert report["raw_comparison"][stage]["crop"]["samples"] == 8 * 9
     assert crop["samples"] == 8 * 9 * 3
     independent = compare_renders(output / "2k/developed.tiff", output / "4k/developed.tiff", region=region)
     assert {key: value for key, value in crop.items() if key != "limitations"} == independent
@@ -206,3 +229,290 @@ def test_pair_executes_shared_distortion_before_independent_roundtrip(tmp_path):
         assert np.count_nonzero(before != after) > 0
         assert (tmp_path / "warped" / label / "developed.tiff").is_file()
     assert report["comparison"]["identical"] is True
+
+
+def test_pair_raw_metrics_match_exported_electrons_with_sensor_noise(tmp_path):
+    import numpy as np
+
+    low, high = tmp_path / "low.png", tmp_path / "high.png"
+    Image.new("RGB", (16, 16), (60, 90, 120)).save(low)
+    Image.new("RGB", (32, 32), (100, 110, 120)).save(high)
+    config = AnalyticRunConfig(
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+        strip_rows=3,
+        camera=CameraHypothesis(shot_noise=True, read_noise=True),
+    )
+    output = tmp_path / "pair"
+    report = run_analytic_pair(low, high, output, config)
+    for stage, filename in (("pre_noise", "clean_bayer.npy"), ("post_noise", "noisy_bayer.npy")):
+        a, b = [np.load(output / label / filename).astype(float) for label in ("2k", "4k")]
+        difference = a - b
+        result = report["raw_comparison"][stage]["whole_raster"]
+        assert result["mae"] == pytest.approx(np.mean(np.abs(difference)))
+        assert result["rmse"] == pytest.approx(np.sqrt(np.mean(difference**2)))
+        assert result["rmse"] > 0
+
+
+def test_pair_calibrated_colour_references_reach_json_html_and_crops(tmp_path):
+    import numpy as np
+    import tifffile
+
+    from prd_v5.colour_metrics import calibrated_delta_e
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True, strip_rows=3)
+    contract = {
+        "camera_profile": "fixture camera and profile",
+        "trusted_development": "fixture black sRGB reference, not scientific truth",
+        "alignment": "fixture native coordinates",
+        "colour_space": "sRGB_D65_2deg",
+    }
+    reference = tmp_path / "reference.tiff"
+    tifffile.imwrite(reference, np.zeros((32, 32, 3), dtype=np.uint16), photometric="rgb")
+    output = tmp_path / "pair"
+    region = (2, 3, 10, 12)
+    report = run_analytic_pair(
+        source,
+        source,
+        output,
+        config,
+        comparison_region=region,
+        colour_references={"2k": {"path": reference, "calibration": contract}},
+    )
+    colour = report["colour_comparison"]
+    for label in ("2k", "4k"):
+        child = json.loads((output / label / "manifest.json").read_text())
+        gate = child["validation"]["Colour"]
+        assert gate["status"] == report["colour_comparison"][label]["whole_raster"]["status"]
+        assert child["scientific_acceptance"].startswith("conditional")
+        assert json.loads((output / label / "validation.json").read_text())["Colour"] == gate
+        assert gate["status"] in (output / label / "validation_report.html").read_text()
+        if label == "2k":
+            assert "mean_delta_e2000" in (output / label / "validation_report.html").read_text()
+            assert gate["evidence"]["mean_delta_e2000"] > 0
+            assert gate["evidence"]["reference"]["sha256"] == hashlib.sha256(reference.read_bytes()).hexdigest()
+        else:
+            assert "mean_delta_e2000" not in gate["evidence"]
+    for name, crop in (("whole_raster", None), ("crop", region)):
+        independent = calibrated_delta_e(
+            output / "2k/developed.tiff", reference, calibration=contract, region=crop, strip_rows=1
+        )
+        assert colour["2k"][name]["pixels"] == independent["pixels"]
+        assert colour["2k"][name]["mean_delta_e2000"] == pytest.approx(independent["mean_delta_e2000"])
+        assert independent["mean_delta_e2000"] > 0
+        assert colour["4k"][name]["status"] == "not measured"
+        assert "mean_delta_e2000" not in colour["4k"][name]
+    assert colour["2k"]["reference"]["sha256"] == hashlib.sha256(reference.read_bytes()).hexdigest()
+    assert json.loads((output / "pair_manifest.json").read_text()) == report
+    page = (output / "2k_vs_4k_report.html").read_text()
+    assert "colour_comparison" in page
+    assert "measured reference colour difference" in page
+    assert "No aligned calibrated reference supplied" in page
+
+
+@pytest.mark.parametrize("references", [{"typo": {}}, {"2k": {}}, {"2k": {"path": "", "calibration": None}}])
+def test_pair_rejects_malformed_colour_reference_controls_before_io(tmp_path, references):
+    output = tmp_path / "pair"
+    with pytest.raises(ValueError, match="reference"):
+        run_analytic_pair("absent", "absent", output, AnalyticRunConfig(), colour_references=references)
+    assert not output.exists()
+
+
+def test_colour_measurement_failure_prevents_pair_completion(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+
+    def fail(*args, **kwargs):
+        raise OSError("colour reference unreadable")
+
+    monkeypatch.setattr("prd_v5.paired.calibrated_delta_e", fail)
+    output = tmp_path / "pair"
+    with pytest.raises(OSError, match="colour reference unreadable"):
+        run_analytic_pair(source, source, output, config)
+    assert (output / "2k/manifest.json").is_file()
+    assert not (output / "pair_manifest.json").exists()
+    assert not (output / "2k_vs_4k_report.html").exists()
+
+
+@pytest.mark.parametrize("calibrated", [False, True])
+def test_pair_colour_missing_calibration_and_unequal_truth_stay_unmeasured(tmp_path, calibrated):
+    import numpy as np
+    import tifffile
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    reference = tmp_path / "reference.tiff"
+    tifffile.imwrite(reference, np.zeros((16, 16, 3), dtype=np.uint16), photometric="rgb")
+    contract = (
+        {
+            "camera_profile": "fixture camera",
+            "trusted_development": "fixture sRGB",
+            "alignment": "fixture coordinates",
+            "colour_space": "sRGB_D65_2deg",
+        }
+        if calibrated
+        else None
+    )
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    report = run_analytic_pair(
+        source,
+        source,
+        tmp_path / "pair",
+        config,
+        colour_references={"4k": {"path": reference, "calibration": contract}},
+    )
+    result = report["colour_comparison"]["4k"]["whole_raster"]
+    assert result["status"] == "not measured"
+    assert "Unequal rasters" in result["reason"] if calibrated else "No calibration" in result["reason"]
+    assert "mean_delta_e2000" not in result
+
+
+def test_child_colour_failure_cannot_publish_completion(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+
+    def fail(*args, **kwargs):
+        raise OSError("colour reference unreadable")
+
+    monkeypatch.setattr("prd_v5.delivery.calibrated_delta_e", fail)
+    output = tmp_path / "pair"
+    with pytest.raises(OSError, match="colour reference unreadable"):
+        run_analytic_pair(source, source, output, config)
+    assert not (output / "2k/manifest.json").exists()
+    assert not (output / "pair_manifest.json").exists()
+    assert not (output / "2k/validation_report.html").exists()
+
+
+@pytest.mark.parametrize("reference", [{}, {"path": "", "calibration": None}, []])
+def test_single_bundle_rejects_malformed_colour_reference_before_io(tmp_path, reference):
+    output = tmp_path / "single"
+    with pytest.raises(ValueError, match="reference"):
+        AnalyticRunConfig().run("absent", output, colour_reference=reference)
+    assert not output.exists()
+
+
+def test_pair_sampled_mtf_matches_developed_tiffs_and_reports_missing_evidence(tmp_path):
+    import numpy as np
+
+    from prd_v5.mtf import tiff_edge_mtf
+
+    source = tmp_path / "edge.png"
+    image = np.full((32, 32, 3), 40, dtype=np.uint8)
+    image[:, 16:] = 180
+    Image.fromarray(image).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    edge = {"region": (4, 0, 28, 32), "normal_axis": "x", "edge_evidence": "fixture vertical step, both plateaus"}
+    output = tmp_path / "measured"
+    report = run_analytic_pair(source, source, output, config, mtf_edge=edge)
+    for label in ("2k", "4k"):
+        result = report["mtf_comparison"][label]
+        assert result == tiff_edge_mtf(output / label / "developed.tiff", **edge)
+        assert result["status"] == "measured sampled edge response"
+        assert result["samples"] == 32
+        assert result["region"] == list(edge["region"])
+        assert "mtf50" in result and "mtf10" in result
+    assert json.loads((output / "pair_manifest.json").read_text()) == report
+    assert "measured sampled edge response" in (output / "2k_vs_4k_report.html").read_text()
+    missing = run_analytic_pair(source, source, tmp_path / "missing", config)
+    assert all(value["status"] == "not measured" for value in missing["mtf_comparison"].values())
+
+
+@pytest.mark.parametrize("edge", [{}, [], {"region": (0, 0, 16, 16), "normal_axis": "z", "edge_evidence": "fixture"}])
+def test_pair_rejects_invalid_mtf_controls_before_io(tmp_path, edge):
+    output = tmp_path / "pair"
+    with pytest.raises(ValueError, match="mtf_edge"):
+        run_analytic_pair("absent", "absent", output, AnalyticRunConfig(), mtf_edge=edge)
+    assert not output.exists()
+
+
+def test_mtf_failure_prevents_pair_completion(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (90, 80, 100)).save(source)
+
+    def fail(*args, **kwargs):
+        raise OSError("edge extraction failed")
+
+    monkeypatch.setattr("prd_v5.paired.tiff_edge_mtf", fail)
+    output = tmp_path / "pair"
+    config = AnalyticRunConfig(target_megapixels=0.001024, assume_unprofiled_srgb=True)
+    with pytest.raises(OSError, match="edge extraction failed"):
+        run_analytic_pair(source, source, output, config)
+    assert (output / "4k/manifest.json").exists()
+    assert not (output / "pair_manifest.json").exists()
+    assert not (output / "2k_vs_4k_report.html").exists()
+
+
+def test_pair_lpips_uses_references_and_reports_missing_truth(tmp_path):
+    import numpy as np
+    import tifffile
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (128, 128), (90, 80, 100)).save(source)
+    config = AnalyticRunConfig(target_megapixels=0.016384, assume_unprofiled_srgb=True, strip_rows=3)
+    contract = {
+        "camera_profile": "fixture camera and profile",
+        "trusted_development": "fixture reference, not scientific truth",
+        "alignment": "fixture native coordinates",
+        "colour_space": "sRGB_D65_2deg",
+    }
+    reference = tmp_path / "reference.tiff"
+    tifffile.imwrite(reference, np.zeros((128, 128, 3), dtype=np.uint16), photometric="rgb")
+    calls = []
+
+    def fake(a, b):
+        calls.append(a.shape)
+        return np.array([0.25])
+
+    output = tmp_path / "pair"
+    report = run_analytic_pair(
+        source,
+        source,
+        output,
+        config,
+        colour_references={"2k": {"path": reference, "calibration": contract}},
+        lpips_options={"patch": 64, "distance": fake},
+    )
+    measured = report["lpips_comparison"]["2k"]
+    assert measured["status"] == "measured reference perceptual distance"
+    assert measured["mean_lpips"] == 0.25 and measured["patches"] == 4
+    assert len(calls) == 4
+    assert report["lpips_comparison"]["4k"]["status"] == "not measured"
+    assert "lpips_comparison" in (output / "2k_vs_4k_report.html").read_text()
+
+
+def test_pair_rejects_unknown_lpips_options_before_io(tmp_path):
+    with pytest.raises(ValueError, match="lpips_options"):
+        run_analytic_pair("absent", "absent", tmp_path / "o", AnalyticRunConfig(), lpips_options={"x": 1})
+
+
+def _bad_reference(tmp_path, kind):
+    import numpy as np
+    import tifffile
+
+    if kind == "missing":
+        return tmp_path / "missing.tiff"
+    path = tmp_path / f"{kind}.tiff"
+    if kind == "garbage":
+        path.write_bytes(b"not a tiff")
+    elif kind == "uint8":
+        tifffile.imwrite(path, np.zeros((4, 4, 3), dtype=np.uint8), photometric="rgb")
+    else:
+        tifffile.imwrite(path, np.zeros((4, 4), dtype=np.uint16))
+    return path
+
+
+@pytest.mark.parametrize("kind", ["missing", "garbage", "uint8", "gray"])
+def test_unusable_colour_reference_fails_before_any_processing(tmp_path, kind):
+    reference = {"path": _bad_reference(tmp_path, kind), "calibration": None}
+    single = tmp_path / "single"
+    with pytest.raises(ValueError, match="[Cc]olour reference"):
+        AnalyticRunConfig().run("absent", single, colour_reference=reference)
+    assert not single.exists()
+    pair = tmp_path / "pair"
+    with pytest.raises(ValueError, match="[Cc]olour reference"):
+        run_analytic_pair("absent", "absent", pair, AnalyticRunConfig(), colour_references={"2k": reference})
+    assert not pair.exists()

@@ -20,6 +20,62 @@ def validate_region(region: tuple[int, int, int, int] | None) -> None:
         raise ValueError("region must be (top, left, bottom, right) nonempty nonnegative integer bounds")
 
 
+def _frequency_bands(first: np.ndarray, second: np.ndarray) -> dict:
+    """Local windowed spectra at native resolution, at most 256x256 per FFT.
+
+    Demeaning removes patch DC. Window-energy normalization makes summed power
+    a window-weighted variance, not a ground-truth texture score. Partial edge
+    blocks are included if both dimensions have at least four pixels.
+    """
+    edges = (0.0, 0.0625, 0.125, 0.25, 0.5, 1.0)
+    totals = np.zeros((3, len(edges) - 1), dtype=np.float64)
+    pixels = patches = omitted = 0
+    for top in range(0, first.shape[0], 256):
+        for left in range(0, first.shape[1], 256):
+            shape = (min(256, first.shape[0] - top), min(256, first.shape[1] - left))
+            if min(shape) < 4:
+                omitted += shape[0] * shape[1]
+                continue
+            window = np.outer(np.hanning(shape[0]), np.hanning(shape[1]))
+            normalization = window.size * np.sum(window**2)
+            radius = np.hypot(np.fft.fftfreq(shape[0])[:, None], np.fft.fftfreq(shape[1])[None, :])
+            spectra = []
+            for array in (first, second):
+                rgb = array[top : top + shape[0], left : left + shape[1]].astype(np.float64) / 65535
+                # Encoded sRGB luma proxy, explicitly not linear radiance.
+                luma = rgb @ np.array([0.2126, 0.7152, 0.0722])
+                spectra.append(np.fft.fft2((luma - luma.mean()) * window))
+            powers = [np.abs(spectrum) ** 2 / normalization for spectrum in spectra]
+            powers.append(np.abs(spectra[0] - spectra[1]) ** 2 / normalization)
+            for index, (low, high) in enumerate(zip(edges[:-1], edges[1:], strict=True)):
+                mask = (radius >= low) & (radius < high)
+                totals[:, index] += np.array([power[mask].sum() for power in powers]) * window.size
+            pixels += window.size
+            patches += 1
+    return {
+        "status": "measured spectral disagreement" if patches else "not measured",
+        "reason": None if patches else "No patches with both dimensions at least four pixels",
+        "domain": "Encoded sRGB luma proxy; native pixels, no registration or resampling",
+        "method": "Nonoverlapping <=256x256 patches; mean removed, Hann window, window-energy normalized FFT power",
+        "units": "squared normalized luma; frequency in cycles per native pixel",
+        "patches": patches,
+        "measured_pixels": pixels,
+        "omitted_edge_pixels": omitted,
+        "bands": [
+            {
+                "low_inclusive": low,
+                "high_exclusive": high,
+                "first_power": float(totals[0, index] / pixels) if pixels else None,
+                "second_power": float(totals[1, index] / pixels) if pixels else None,
+                "difference_power": float(totals[2, index] / pixels) if pixels else None,
+            }
+            for index, (low, high) in enumerate(zip(edges[:-1], edges[1:], strict=True))
+        ],
+        "scientific_fidelity": "not measured; texture power does not establish correct or source-supported detail",
+        "limitations": "Window dependent; final band includes diagonal frequencies above axial Nyquist; DC removed",
+    }
+
+
 def compare_renders(
     first: str | Path,
     second: str | Path,
@@ -94,4 +150,84 @@ def compare_renders(
             "identical": maximum == 0,
             "psnr_null_reason": "Identical samples have infinite PSNR" if mse == 0 else None,
             "saturated_pixel_fraction": [value / pixels for value in saturated],
+            "frequency_bands": _frequency_bands(left, right),
+        }
+
+
+def compare_bayer(
+    first: str | Path,
+    second: str | Path,
+    *,
+    cfa_pattern: str,
+    strip_rows: int = 64,
+    region: tuple[int, int, int, int] | None = None,
+) -> dict:
+    """Compare exported electron-equivalent mosaics without fitting or resampling.
+
+    Phase metrics retain the two green sites separately. Equal geometry and CFA
+    are prerequisites, not evidence of scene registration or reference truth.
+    """
+    if type(strip_rows) is not int or strip_rows <= 0:
+        raise ValueError("strip_rows must be a positive integer")
+    if cfa_pattern not in ("RGGB", "BGGR", "GRBG", "GBRG"):
+        raise ValueError("Unsupported CFA pattern")
+    validate_region(region)
+    report = {
+        "status": "not measured",
+        "units": "electrons (exported electron-equivalent domain)",
+        "alignment": "none",
+        "scientific_fidelity": "not measured; neither mosaic is ground truth",
+        "cfa_pattern": cfa_pattern,
+    }
+    with ExitStack() as stack:
+        arrays = []
+        for path in (first, second):
+            array = np.load(path, mmap_mode="r", allow_pickle=False)
+            stack.callback(array._mmap.close)
+            if array.ndim != 2 or array.dtype != np.float32 or not all(array.shape):
+                raise ValueError("Comparison requires nonempty float32 Bayer NPY arrays")
+            arrays.append(array)
+        report["shapes"] = [list(array.shape) for array in arrays]
+        if arrays[0].shape != arrays[1].shape:
+            return {**report, "reason": "Unequal Bayer shapes; no implicit resampling or alignment"}
+        top, left, bottom, right = region or (0, 0, *arrays[0].shape)
+        if bottom > arrays[0].shape[0] or right > arrays[0].shape[1]:
+            raise ValueError("region exceeds a Bayer raster")
+        report["region"] = [top, left, bottom, right]
+        counts = np.zeros(4, dtype=np.int64)
+        sums = np.zeros((4, 3), dtype=np.float64)
+        maxima = np.zeros(4, dtype=np.float64)
+        for start in range(top, bottom, strip_rows):
+            a, b = [array[start : min(start + strip_rows, bottom), left:right] for array in arrays]
+            if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+                raise ValueError("Bayer comparison contains nonfinite samples")
+            delta = a.astype(np.float64) - b
+            for phase in range(4):
+                dy = (phase // 2 - start) % 2
+                dx = (phase % 2 - left) % 2
+                values = delta[dy::2, dx::2]
+                if values.size:
+                    counts[phase] += values.size
+                    sums[phase] += [np.sum(values), np.sum(np.abs(values)), np.sum(values * values)]
+                    maxima[phase] = max(maxima[phase], float(np.max(np.abs(values))))
+
+        def metrics(count, totals, maximum):
+            if not count:
+                return {"status": "not measured", "reason": "No samples of this CFA phase in region"}
+            return {
+                "samples": int(count),
+                "bias_first_minus_second": float(totals[0] / count),
+                "mae": float(totals[1] / count),
+                "rmse": float(np.sqrt(totals[2] / count)),
+                "max_absolute_error": float(maximum),
+            }
+
+        return {
+            **report,
+            "status": "measured RAW disagreement",
+            **metrics(counts.sum(), sums.sum(axis=0), maxima.max()),
+            "phases": {
+                f"{phase // 2},{phase % 2}:{cfa_pattern[phase]}": metrics(counts[phase], sums[phase], maxima[phase])
+                for phase in range(4)
+            },
         }

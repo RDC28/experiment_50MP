@@ -41,8 +41,36 @@ class AnalyticRunConfig:
     vignetting: Vignetting = field(default_factory=Vignetting)
     distortion: Distortion = field(default_factory=Distortion)
     accept_experimental_optics: bool = False
+    exposure_sweep: bool = False
+    wb_sweep: bool = False
+    tone_sweep: bool = False
+    shadow_lifts_ev: tuple[float, float] = (0.5, 2.0)
+    demosaic_sweep: bool = False
+    wb_sweep_strength: float = 1.25
 
     def __post_init__(self):
+        if type(self.tone_sweep) is not bool:
+            raise ValueError("tone_sweep must be boolean")
+        if (
+            not isinstance(self.shadow_lifts_ev, (tuple, list))
+            or len(self.shadow_lifts_ev) != 2
+            or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 < v <= 4 for v in self.shadow_lifts_ev)
+            or self.shadow_lifts_ev[0] >= self.shadow_lifts_ev[1]
+        ):
+            raise ValueError("shadow_lifts_ev must contain two increasing positive EV values up to 4")
+        object.__setattr__(self, "shadow_lifts_ev", tuple(self.shadow_lifts_ev))
+        if type(self.exposure_sweep) is not bool:
+            raise ValueError("exposure_sweep must be boolean")
+        if type(self.demosaic_sweep) is not bool:
+            raise ValueError("demosaic_sweep must be boolean")
+        if type(self.wb_sweep) is not bool:
+            raise ValueError("wb_sweep must be boolean")
+        if (
+            type(self.wb_sweep_strength) not in (int, float)
+            or not math.isfinite(self.wb_sweep_strength)
+            or not 1.000001 <= self.wb_sweep_strength <= 4
+        ):
+            raise ValueError("wb_sweep_strength must be finite and between 1.000001 and 4")
         if self.resampling not in ("BILINEAR", "LANCZOS"):
             raise ValueError("resampling must be BILINEAR or LANCZOS")
         if not isinstance(self.optical_effects, OpticalEffects):
@@ -134,6 +162,7 @@ class AnalyticRunConfig:
         sr_checkpoint: SRCheckpoint | None = None,
         inverse_mode: str = "ANALYTIC",
         residual_adapter: ResidualAdapter | None = None,
+        colour_reference: dict | None = None,
     ) -> dict:
         """Execute the bounded analytic pipeline with exactly these settings."""
         from prd_v5.pipeline import run_analytic
@@ -154,6 +183,7 @@ class AnalyticRunConfig:
             sr_checkpoint=sr_checkpoint,
             inverse_mode=inverse_mode,
             residual_adapter=residual_adapter,
+            colour_reference=colour_reference,
             target_megapixels=self.target_megapixels,
             geometry_mode=self.geometry_mode,
             native_fit_policy=self.native_fit_policy,
@@ -161,4 +191,10 @@ class AnalyticRunConfig:
             strip_rows=self.strip_rows,
             max_decode_bytes=self.max_decode_bytes,
             max_develop_bytes=self.max_develop_bytes,
+            exposure_sweep=self.exposure_sweep,
+            wb_sweep=self.wb_sweep,
+            demosaic_sweep=self.demosaic_sweep,
+            tone_sweep=self.tone_sweep,
+            shadow_lifts_ev=self.shadow_lifts_ev,
+            wb_sweep_strength=self.wb_sweep_strength,
         )

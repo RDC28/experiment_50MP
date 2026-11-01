@@ -28,6 +28,8 @@ dependencies = [
 [project.optional-dependencies]
 # Phase 2 pretrained super-resolution (inference only). Colab preinstalls PyTorch.
 sr = ["torch>=2.1", "spandrel>=0.4.1"]
+# Official LPIPS package (Colab only; torchvision fetches the backbone at runtime).
+metrics = ["lpips==0.1.4"]
 dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.9", "nbclient>=0.10", "ipykernel>=6.29", "jsonschema>=4.18"]
 
 [tool.setuptools]
@@ -36,7 +38,7 @@ package-dir = { "synthetic_raw_lab" = "src", "synthraw" = "src/synthraw", "prd_v
 packages = ["synthetic_raw_lab", "synthraw", "prd_v5"]
 
 [tool.setuptools.package-data]
-prd_v5 = ["analytic-config.schema.json", "field_catalogue.json"]
+prd_v5 = ["analytic-config.schema.json", "field_catalogue.json", "tools/*.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "prd_v5/tests"]

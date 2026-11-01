@@ -32,6 +32,11 @@ class GeometryPlan:
     default_crop_size: tuple[int, int]
 
     @property
+    def outpaint_bands(self) -> tuple[tuple[float, float, float, float], ...]:
+        """Legacy DNG writer spelling for the same requested generated bands."""
+        return self.generated_bands
+
+    @property
     def actual_megapixels(self) -> float:
         return self.width * self.height / 1_000_000
 

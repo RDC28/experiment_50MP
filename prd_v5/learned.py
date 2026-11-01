@@ -10,7 +10,10 @@ from pathlib import Path
 
 import numpy as np
 
+from prd_v5.analytic import AnalyticISP
 from prd_v5.hypothesis import CameraHypothesis
+
+NORMALIZATIONS = ("clean_camera_rgb_saturation", "source_linear_srgb_clip")
 
 
 def camera_domain(camera: CameraHypothesis) -> str:
@@ -23,9 +26,15 @@ class ResidualAdapter:
     """Caller-loaded, deterministic tile predictor returning (residual, confidence).
 
     Inputs are encoded sRGB and clean camera RGB, both HxWx3; residual has
-    identical shape in camera.saturation_e units and confidence is HxW in [0,1].
+    identical shape and confidence is HxW in [0,1]. Residual units follow
+    `normalization`: "clean_camera_rgb_saturation" is clean camera RGB
+    (1.0 = camera.saturation_e, like the clean buffer); "source_linear_srgb_clip" is
+    linear sRGB with 1.0 at the source clip level, mapped into clean units by the
+    run's AnalyticISP.to_camera (HDR headroom 1/M, camera matrix, gains).
     Predictors receive absolute (top,left) and the immutable camera. They must
-    supply their own receptive-field handling and never add stochastic noise.
+    declare sufficient halo context and never add stochastic noise. Halo reads
+    clip at the image boundary; predictors own their physical-edge padding.
+    Only the core is written, so no context prediction is averaged into it.
     No RAW-Flow/SpiralDiff compatibility or scientific calibration is implied.
     """
 
@@ -38,14 +47,18 @@ class ResidualAdapter:
     licence_accepted: bool = False
     experimental_accepted: bool = False
     normalization: str = "clean_camera_rgb_saturation"
+    tile: int = 1024
+    halo: int = 128
 
     def verify(self, camera: CameraHypothesis) -> dict:
         if not callable(self.predict) or self.experimental_accepted is not True or self.licence_accepted is not True:
             raise ValueError("Callable adapter and explicit experimental/licence acceptance required")
         if not self.source.strip() or not self.licence.strip():
             raise ValueError("Adapter source and licence required")
-        if self.normalization != "clean_camera_rgb_saturation" or self.camera_sha256 != camera_domain(camera):
+        if self.normalization not in NORMALIZATIONS or self.camera_sha256 != camera_domain(camera):
             raise ValueError("Adapter normalization or camera domain mismatch")
+        if type(self.tile) is not int or self.tile < 1 or type(self.halo) is not int or self.halo < 0:
+            raise ValueError("Residual tile must be positive and halo nonnegative integers")
         digest = hashlib.sha256()
         with Path(self.checkpoint_path).open("rb") as stream:
             while block := stream.read(1024 * 1024):
@@ -84,14 +97,34 @@ def resolve_mode(mode, adapter, camera) -> dict:
 
 
 def apply_residual(
-    rgb, clean, support, destination, camera, adapter, *, mode="HYBRID", tile=1024, threshold=0.5
+    rgb,
+    clean,
+    support,
+    destination,
+    camera,
+    adapter,
+    *,
+    isp: AnalyticISP,
+    mode="HYBRID",
+    tile=None,
+    halo=None,
+    threshold=0.5,
+    claims=None,
 ) -> dict:
     """Write corrected clean expectation in bounded tiles before CFA/noise.
 
     Predictors always read the unmodified clean baseline. Corrections apply only
-    to supported source pixels; sensor margins are copied unchanged.
+    to supported source pixels; sensor margins are copied unchanged. `isp` is the
+    run's analytic model that produced `clean`; it fixes residual units and the
+    claim comparison. An optional HxW boolean `claims` buffer is ORed with accepted,
+    changed pixels whose corrected value, mapped by isp.to_linear into the model's
+    expanded linear radiance, exceeds 1.0 on any channel (the analytic claim test).
     """
     report = resolve_mode(mode, adapter, camera)
+    tile = tile if tile is not None else adapter.tile if adapter is not None else 1024
+    halo = halo if halo is not None else adapter.halo if adapter is not None else 128
+    if type(halo) is not int or halo < 0:
+        raise ValueError("Residual halo must be a nonnegative integer")
     if type(tile) is not int or tile < 1 or not np.isfinite(threshold) or not 0 <= threshold <= 1:
         raise ValueError("Invalid residual tile or confidence threshold")
     if adapter is None:
@@ -100,21 +133,32 @@ def apply_residual(
         raise ValueError("Residual inputs must be matching HxWx3 arrays")
     if support.shape != clean.shape[:2] or support.dtype != np.bool_:
         raise ValueError("Residual support must be a boolean HxW mask")
+    if claims is not None and (claims.shape != clean.shape[:2] or claims.dtype != np.bool_):
+        raise ValueError("Residual claims must be a boolean HxW mask")
     if (
         destination.shape != clean.shape
         or np.may_share_memory(destination, clean)
         or (isinstance(clean, np.memmap) and getattr(destination, "filename", None) == clean.filename)
     ):
         raise ValueError("Residual destination must be a separate HxWx3 buffer")
-    accepted = changed = floored = 0
+    accepted = changed = floored = claimed = 0
     for top in range(0, clean.shape[0], tile):
         for left in range(0, clean.shape[1], tile):
             region = np.s_[top : top + tile, left : left + tile]
-            baseline = np.array(clean[region], copy=True)
-            encoded = np.array(rgb[region], copy=True)
+            context_top, context_left = max(0, top - halo), max(0, left - halo)
+            context = np.s_[
+                context_top : min(clean.shape[0], top + tile + halo),
+                context_left : min(clean.shape[1], left + tile + halo),
+            ]
+            core = np.s_[
+                top - context_top : min(clean.shape[0], top + tile) - context_top,
+                left - context_left : min(clean.shape[1], left + tile) - context_left,
+            ]
+            baseline = np.array(clean[context], copy=True)
+            encoded = np.array(rgb[context], copy=True)
             baseline.setflags(write=False)
             encoded.setflags(write=False)
-            residual, confidence = adapter.predict(encoded, baseline, (top, left), camera)
+            residual, confidence = adapter.predict(encoded, baseline, (context_top, context_left), camera)
             residual, confidence = np.asarray(residual), np.asarray(confidence)
             if residual.shape != baseline.shape or confidence.shape != baseline.shape[:2]:
                 raise ValueError("Residual/confidence shape mismatch")
@@ -122,6 +166,9 @@ def apply_residual(
                 raise ValueError("Nonfinite residual/confidence")
             if np.any(confidence < 0) or np.any(confidence > 1):
                 raise ValueError("Confidence must be in [0,1]")
+            residual, confidence, baseline = residual[core], confidence[core], baseline[core]
+            if adapter.normalization == "source_linear_srgb_clip":
+                residual = isp.to_camera(residual)
             gate = (confidence >= threshold) & support[region]
             corrected = baseline.astype(np.float64) + np.where(gate[..., None], residual * confidence[..., None], 0)
             if not np.isfinite(corrected).all() or np.any(corrected > np.finfo(np.float32).max):
@@ -131,6 +178,11 @@ def apply_residual(
             changed += int(np.count_nonzero(corrected != baseline))
             accepted += int(np.count_nonzero(gate))
             destination[region] = corrected
+            asserted = np.any(isp.to_linear(corrected) > 1 + 1e-6, axis=-1)
+            above_clip = gate & np.any(corrected != baseline, axis=-1) & asserted
+            claimed += int(np.count_nonzero(above_clip))
+            if claims is not None:
+                claims[region] |= above_clip
     destination.flush()
     return {
         **report,
@@ -139,7 +191,11 @@ def apply_residual(
         "changed_samples": changed,
         "zero_effect": changed == 0,
         "floored_samples": floored,
+        "hdr_claim_pixels": claimed,
         "tile": tile,
+        "halo": halo,
+        "context_policy": "clipped halo read; core-only write; predictor owns physical-edge padding",
+        "seam_validation": "not measured; sufficient receptive field remains predictor responsibility",
         "confidence_threshold": threshold,
         "sensor_noise_in_network": False,
     }

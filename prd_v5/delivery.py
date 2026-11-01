@@ -12,6 +12,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from prd_v5.coherence import metadata_coherence
+from prd_v5.colour_metrics import calibrated_delta_e
+from prd_v5.dng_validate import run_dng_validate
+from prd_v5.hdr_validation import validate_hdr_claims
 from prd_v5.hypothesis import CameraField, CameraHypothesis
 from prd_v5.physics import photon_transfer
 
@@ -140,7 +144,42 @@ def complete_registry(report):
     return registry
 
 
-def finish_bundle(output, report):
+def audit_hdr(output, report, clipped, support):
+    """Audit the pipeline's own HDR claims against source endpoints.
+
+    The claim mask (hdr_claims.npy) marks pixels whose expanded linear radiance
+    exceeds 1.0, from analytic HDR expansion and from accepted pixels an executed
+    learned residual (the HDRUNet inverse-tone-mapping path) changed. Without
+    either stage the audit stays "not measured".
+    """
+    analytic_hdr = report["stages"].get("analytic", {}).get("hdr", {}).get("effective")
+    learned_hdr = report["stages"].get("learned_raw", {}).get("status") == "executed experimental residual"
+    path = output / "hdr_claims.npy"
+    if not (analytic_hdr or learned_hdr) or not path.exists():
+        result = validate_hdr_claims(clipped, support)
+        result["status"] = "not measured"
+        result["reason"] = "No HDR expansion or learned inverse tone mapping stage ran"
+        return result
+    claims = np.load(path, mmap_mode="r")
+    try:
+        result = validate_hdr_claims(clipped, support, claims)
+    finally:
+        claims._mmap.close()
+    if result["forbidden_claim_pixels"]:
+        result["reason"] = (
+            f"{result['forbidden_claim_pixels']} HDR-claimed pixels assert radiance above the clip level "
+            "inside source-clipped or unsupported regions"
+        )
+    else:
+        result["status"] = "passed"
+        result["reason"] = (
+            "No HDR-claimed pixel lies in source-clipped or unsupported regions; "
+            "numerical HDR fidelity remains not measured"
+        )
+    return result
+
+
+def finish_bundle(output, report, *, colour_reference=None):
     """Write canonical names, complete registry, masks, hashes and gate records."""
     import shutil
 
@@ -171,6 +210,7 @@ def finish_bundle(output, report):
     support = np.load(output / "source_support.npy", mmap_mode="r")
     clipped = np.load(output / "source_clipped.npy", mmap_mode="r")
     try:
+        hdr_validation = audit_hdr(output, report, clipped, support)
         learned = "super_resolution" in report["stages"] or report["stages"]["learned_raw"].get("effective") == "HYBRID"
         Image.fromarray((~support | learned).astype(np.uint8) * 255).save(output / "generated_region_mask.png")
         Image.fromarray((~support | clipped).astype(np.uint8) * 255).save(output / "uncertainty_map.png")
@@ -180,10 +220,10 @@ def finish_bundle(output, report):
     validation = {
         "DNG parse": {"status": "passed", "evidence": report["stages"]["roundtrip"]},
         "CFA integrity": {"status": "passed", "evidence": report["stages"]["dng"]["structural_validation"]},
-        "Metadata coherence": {
-            "status": "not measured",
-            "reason": "No full registry-versus-DNG coherence check runs; DNG fields derive from executed configuration",
-        },
+        "Metadata coherence": metadata_coherence(
+            output / "capture.dng", report["registry"], report["stages"]["dng"]["tags"]
+        ),
+        "DNG conformance": run_dng_validate(output / "capture.dng"),
         "Provenance": {"status": "passed", "fields": len(report["registry"])},
         **{
             name: {"status": "not measured", "reason": reason}
@@ -192,13 +232,10 @@ def finish_bundle(output, report):
                 "SR value": "Requires genuine held-out RAW-derived truth and Lanczos reference",
                 "Colour": "Requires aligned calibrated colour truth",
                 "Noise validity": "Flat/dark sweep pending; existing tests establish simulator self-consistency only",
-                "RAW editability": "Full EV/WB/highlight/shadow/demosaic sweep requires Colab validation",
+                "RAW editability": ("Developer response only; Colab visual acceptance pending"),
             }.items()
         },
-        "HDR validity": {
-            "status": "not measured",
-            "reason": "No HDR check runs; analytic expansion is disclosed with uncertainty, not recovered truth",
-        },
+        "HDR validity": hdr_validation,
         "acceptance": "conditional: scientific gates unmeasured",
         "mask_semantics": {
             "generated": "Potential model-generated content or unsupported margins; not a truth oracle",
@@ -209,6 +246,25 @@ def finish_bundle(output, report):
             "noisy_bayer.npy": "ADC-referred electrons including clipping and quantisation",
         },
     }
+    reference = {} if colour_reference is None else colour_reference
+    colour = calibrated_delta_e(
+        output / "developed.tiff",
+        reference.get("path"),
+        calibration=reference.get("calibration"),
+        strip_rows=report["limits"]["strip_rows"],
+    )
+    if reference:
+        path = Path(reference["path"])
+        colour["reference"] = {"path": str(path), "sha256": digest(path), "size_bytes": path.stat().st_size}
+    validation["Colour"] = {
+        "status": colour["status"],
+        "reason": colour.get("reason", "Measured difference only; no acceptance threshold or WB angular validation"),
+        "evidence": colour,
+    }
+    validation["RAW editability"]["exposure_sweep"] = report["stages"]["exposure_sweep"]
+    validation["RAW editability"]["wb_sweep"] = report["stages"]["wb_sweep"]
+    validation["RAW editability"]["demosaic_sweep"] = report["stages"]["demosaic_sweep"]
+    validation["RAW editability"]["tone_sweep"] = report["stages"]["tone_sweep"]
     validation["Noise validity"] = photon_transfer(CameraHypothesis(**report["camera"]))
     (output / "validation.json").write_text(json.dumps(validation, indent=2) + "\n")
     report["validation"] = validation
@@ -217,11 +273,13 @@ def finish_bundle(output, report):
         "Camera-specific learned loaders and halo inference",
         "Real RAW/HDR benchmarks",
         "Colab full-scale runtime and quality gates",
-        "Independent Adobe DNG conformance",
     ]
-    for path in sorted(output.iterdir()):
+    for path in sorted(output.rglob("*")):
         if path.is_file() and path.name not in ("manifest.json", "report.html", "validation_report.html"):
-            report["artifacts"][path.name] = {"sha256": digest(path), "size_bytes": path.stat().st_size}
+            report["artifacts"][path.relative_to(output).as_posix()] = {
+                "sha256": digest(path),
+                "size_bytes": path.stat().st_size,
+            }
     return report
 
 

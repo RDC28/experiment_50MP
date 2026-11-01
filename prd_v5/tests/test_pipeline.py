@@ -48,6 +48,12 @@ def test_complete_bundle(tmp_path):
     assert report["runtime"]["libraries"]["libraw"] in page
     assert "Runtime and replay limits" in page
     assert report["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
+    assert report["stages"]["exposure_sweep"]["status"] == "disabled"
+    assert report["stages"]["wb_sweep"]["status"] == "disabled"
+    assert report["stages"]["demosaic_sweep"]["status"] == "disabled"
+    assert report["stages"]["tone_sweep"]["status"] == "disabled"
+    assert not (output / "demosaic_edits").exists()
+    assert not (output / "exposure_edits").exists()
     assert report["stages"]["analytic"]["forward_consistency"]["status"] == "passed"
     assert report["registry"]["gps"]["value"] is None
     registry = report["registry"]
@@ -277,3 +283,129 @@ def test_bundle_defect_mask_matches_seeded_sensor_and_replay(tmp_path, hot_fract
     path = tmp_path / "first/sensor_defects.npy"
     assert first["artifacts"][path.name]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert "sensor_defects.npy" in (tmp_path / "first/report.html").read_text()
+
+
+def test_config_runs_exposure_edits_and_hashes_nested_outputs(tmp_path):
+    from prd_v5.analytic import AnalyticISP
+    from prd_v5.config import AnalyticRunConfig
+
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((32, 32, 3), 80, dtype=np.uint8)).save(source)
+    config = AnalyticRunConfig(
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+        exposure_sweep=True,
+        wb_sweep=True,
+        wb_sweep_strength=1.5,
+        demosaic_sweep=True,
+        tone_sweep=True,
+        shadow_lifts_ev=(1.0, 3.0),
+        isp=AnalyticISP(hdr_max_radiance=2),
+    )
+    output = tmp_path / "edits"
+    report = config.run(source, output)
+    sweep = report["stages"]["exposure_sweep"]
+    assert sweep["status"] == "measured"
+    assert sweep["baseline_exposure_ev"] == config.isp.baseline_exposure_ev
+    assert [r["brightness_multiplier"] for r in sweep["renders"]] == [
+        2 ** (config.isp.baseline_exposure_ev + ev) for ev in (-3, -2, 0, 2, 3)
+    ]
+    for ev in (-3, -2, 0, 2, 3):
+        name = f"exposure_edits/exposure_{ev:+d}EV.tiff"
+        assert report["artifacts"][name]["sha256"] == hashlib.sha256((output / name).read_bytes()).hexdigest()
+    validation = json.loads((output / "validation.json").read_text())
+    assert validation["RAW editability"]["status"] == "not measured"
+    assert validation["RAW editability"]["exposure_sweep"] == sweep
+    assert json.loads((output / "config.json").read_text())["exposure_sweep"] is True
+    assert "exposure_edits/exposure_+3EV.tiff" in (output / "report.html").read_text()
+    wb = report["stages"]["wb_sweep"]
+    assert wb["status"] == "measured"
+    assert wb["strength"] == 1.5
+    assert wb["baseline_exposure_ev"] == config.isp.baseline_exposure_ev
+    assert [r["name"] for r in wb["renders"]] == ["cool", "neutral", "warm"]
+    assert validation["RAW editability"]["wb_sweep"] == wb
+    saved = json.loads((output / "config.json").read_text())
+    assert saved["wb_sweep"] is True and saved["wb_sweep_strength"] == 1.5
+    for name in ("cool", "neutral", "warm"):
+        path = f"wb_edits/wb_{name}.tiff"
+        assert report["artifacts"][path]["sha256"] == hashlib.sha256((output / path).read_bytes()).hexdigest()
+        assert path in (output / "report.html").read_text()
+
+    demosaic = report["stages"]["demosaic_sweep"]
+    assert demosaic["status"] == "measured"
+    assert demosaic["baseline_exposure_ev"] == config.isp.baseline_exposure_ev
+    assert validation["RAW editability"]["demosaic_sweep"] == demosaic
+    assert saved["demosaic_sweep"] is True
+    assert {r["algorithm"] for r in demosaic["renders"]} | {r["algorithm"] for r in demosaic["skipped"]} == {
+        "LINEAR",
+        "VNG",
+        "AHD",
+    }
+    for render in demosaic["renders"]:
+        path = f"demosaic_edits/demosaic_{render['algorithm'].lower()}.tiff"
+        assert report["artifacts"][path]["sha256"] == hashlib.sha256((output / path).read_bytes()).hexdigest()
+        assert path in (output / "report.html").read_text()
+    assert "demosaic_sweep" in (output / "validation_report.html").read_text()
+    tone = report["stages"]["tone_sweep"]
+    assert tone["status"] == "measured"
+    assert tone["baseline_exposure_ev"] == config.isp.baseline_exposure_ev
+    assert [r["shadow_lift_ev"] for r in tone["renders"]] == [0, 0, 1, 3]
+    assert validation["RAW editability"]["tone_sweep"] == tone
+    assert saved["tone_sweep"] is True and saved["shadow_lifts_ev"] == [1, 3]
+    for render in tone["renders"]:
+        path = f"tone_edits/{render['name']}.tiff"
+        assert report["artifacts"][path]["sha256"] == hashlib.sha256((output / path).read_bytes()).hexdigest()
+        assert path in (output / "report.html").read_text()
+    assert "tone_sweep" in (output / "validation_report.html").read_text()
+
+
+@pytest.mark.parametrize("stage", ["exposure", "wb", "demosaic", "tone"])
+def test_edit_failure_prevents_completion(tmp_path, monkeypatch, stage):
+    source = tmp_path / "source.png"
+    Image.fromarray(np.full((32, 32, 3), 80, dtype=np.uint8)).save(source)
+
+    def fail(*args, **kwargs):
+        raise OSError("fixture exposure failure")
+
+    monkeypatch.setattr(f"prd_v5.pipeline.develop_{stage}_sweep", fail)
+    output = tmp_path / "failed"
+    with pytest.raises(OSError, match="exposure failure"):
+        run_analytic(
+            source,
+            output,
+            CameraHypothesis(),
+            target_megapixels=0.001024,
+            assume_unprofiled_srgb=True,
+            **{f"{stage}_sweep": True},
+        )
+    assert not (output / "manifest.json").exists()
+    assert not list(output.glob("working-*"))
+
+
+def test_unavailable_demosaic_methods_remain_visible_in_completed_bundle(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 32), (80, 90, 100)).save(source)
+    unavailable = {
+        "status": "not measured",
+        "renders": [],
+        "skipped": [
+            {"algorithm": name, "reason": "Unavailable in this LibRaw build"} for name in ("LINEAR", "VNG", "AHD")
+        ],
+    }
+    monkeypatch.setattr("prd_v5.pipeline.develop_demosaic_sweep", lambda *args, **kwargs: unavailable)
+    output = tmp_path / "skipped"
+    report = run_analytic(
+        source,
+        output,
+        CameraHypothesis(),
+        target_megapixels=0.001024,
+        assume_unprofiled_srgb=True,
+        demosaic_sweep=True,
+    )
+    assert report["stages"]["demosaic_sweep"] == unavailable
+    gate = json.loads((output / "validation.json").read_text())["RAW editability"]
+    assert gate["status"] == "not measured"
+    assert gate["demosaic_sweep"] == unavailable
+    assert "Unavailable in this LibRaw build" in (output / "validation_report.html").read_text()
+    assert (output / "manifest.json").is_file()
+    assert not any(name.startswith("demosaic_edits/") for name in report["artifacts"])

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from prd_v5.analytic import AnalyticISP
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.hypothesis import CameraHypothesis
 from prd_v5.learned import ResidualAdapter, apply_residual, camera_domain, resolve_mode
@@ -18,6 +19,7 @@ def adapter_for(tmp_path, camera, predict=None):
     checkpoint = tmp_path / "double.bin"
     checkpoint.write_bytes(b"test double, not a research checkpoint")
     return ResidualAdapter(
+        halo=0,
         predict=predict or (lambda rgb, clean, origin, camera: (np.full_like(clean, 0.1), np.ones(clean.shape[:2]))),
         checkpoint_path=str(checkpoint),
         sha256=hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
@@ -50,7 +52,9 @@ def test_gating_tiles_and_units(tmp_path):
     support[2] = False
     try:
         clean[:] = 0.1
-        report = apply_residual(np.zeros_like(clean), clean, support, learned, camera, adapter, tile=2)
+        report = apply_residual(
+            np.zeros_like(clean), clean, support, learned, camera, adapter, isp=AnalyticISP(), tile=2
+        )
         expected = np.full((3, 4, 3), 0.25)
         expected[:, ::2] = 0.1
         expected[2] = 0.1
@@ -62,10 +66,42 @@ def test_gating_tiles_and_units(tmp_path):
         assert report["changed_samples"] == 12
         assert report["sensor_noise_in_network"] is False
         with pytest.raises(ValueError, match="separate"):
-            apply_residual(np.zeros_like(clean), clean, support, clean, camera, adapter)
+            apply_residual(np.zeros_like(clean), clean, support, clean, camera, adapter, isp=AnalyticISP())
     finally:
         clean._mmap.close()
         learned._mmap.close()
+
+
+@pytest.mark.parametrize("radiance", [1.0, 16.0])
+def test_source_linear_residual_stacks_in_clean_units_and_claims_above_clip(tmp_path, radiance):
+    camera = CameraHypothesis()
+    isp = AnalyticISP(white_balance=(2.0, 1.0, 0.5), hdr_max_radiance=radiance)
+    encoded = np.full((2, 3, 3), 0.4)
+    encoded[0, 0] = (1.0, 0.97, 0.8)
+    residual = np.zeros(encoded.shape, dtype=np.float32)
+    residual[0, 0] = (0.0, 0.111, 0.0)
+    residual[0, 1] = 0.9
+    residual[0, 2] = 0.5
+
+    def predict(rgb, baseline, origin, supplied_camera):
+        return residual, np.ones(baseline.shape[:2])
+
+    adapter = replace(adapter_for(tmp_path, camera, predict), normalization="source_linear_srgb_clip")
+    clean = np.memmap(tmp_path / "clean", mode="w+", dtype=np.float32, shape=encoded.shape)
+    destination = np.memmap(tmp_path / "result", mode="w+", dtype=np.float32, shape=encoded.shape)
+    claims = np.zeros(encoded.shape[:2], dtype=bool)
+    try:
+        isp.process(encoded, clean)
+        report = apply_residual(
+            encoded, clean, np.ones_like(claims), destination, camera, adapter, isp=isp, claims=claims
+        )
+        expected = clean + residual / radiance / np.array([2.0, 1.0, 0.5])
+        np.testing.assert_allclose(destination, expected, rtol=1e-6)
+        assert claims.tolist() == [[True, True, False], [False, False, False]]
+        assert report["hdr_claim_pixels"] == 2
+    finally:
+        clean._mmap.close()
+        destination._mmap.close()
 
 
 @pytest.mark.parametrize(
@@ -110,6 +146,7 @@ def test_bad_predictions(tmp_path, bad):
                 np.zeros_like(clean),
                 camera,
                 adapter_for(tmp_path, camera, predict),
+                isp=AnalyticISP(),
             )
         np.testing.assert_allclose(clean, 0.1)
     finally:
@@ -133,7 +170,7 @@ def test_paired_residual_adc_effect_and_provenance(tmp_path):
     baseline = tmp_path / "baseline"
     output = tmp_path / "learned"
     run_analytic_pair(source, source, baseline, config)
-    adapter = adapter_for(tmp_path, camera)
+    adapter = replace(adapter_for(tmp_path, camera), tile=8, halo=2)
     result = run_analytic_pair(source, source, output, config, inverse_mode="LEARNED_RGB2RAW", residual_adapter=adapter)
     import rawpy
 
@@ -147,6 +184,7 @@ def test_paired_residual_adc_effect_and_provenance(tmp_path):
         child = json.loads((output / label / "manifest.json").read_text())
         stage = child["stages"]["learned_raw"]
         assert stage["changed_samples"] == 32 * 32 * 3
+        assert (stage["tile"], stage["halo"]) == (8, 2)
         assert stage["checkpoint"]["sha256"] == adapter.sha256
         assert child["registry"]["Checkpoint hashes"]["value"] == {"sr": None, "residual": adapter.sha256}
         assert child["stages"]["roundtrip"]["tiff_roundtrip"].startswith("passed")
@@ -190,3 +228,48 @@ def test_residual_never_reaches_sensor_margins(tmp_path):
         mosaic = raw.raw_image.copy()
     assert np.all(mosaic[~support] == camera.black_level)
     assert np.all(mosaic[support] > camera.black_level)
+
+
+@pytest.mark.parametrize("tile,halo", [(1, 1), (4, 1), (5, 3), (32, 2)])
+def test_halo_prediction_matches_whole_image_neighborhood(tmp_path, tile, halo):
+    """A deterministic spatial filter exposes lost context at tile boundaries."""
+    from scipy.ndimage import uniform_filter
+
+    camera = CameraHypothesis()
+    clean = np.random.default_rng(12).uniform(0.1, 0.3, (9, 11, 3)).astype(np.float32)
+    encoded = np.random.default_rng(13).uniform(0, 1, clean.shape).astype(np.float32)
+    support = np.ones(clean.shape[:2], dtype=bool)
+    support[-1] = False
+    calls = []
+
+    def predict(rgb, baseline, origin, supplied_camera):
+        top, left = origin
+        h, w = baseline.shape[:2]
+        assert h <= tile + 2 * halo and w <= tile + 2 * halo
+        np.testing.assert_array_equal(baseline, clean[top : top + h, left : left + w])
+        np.testing.assert_array_equal(rgb, encoded[top : top + h, left : left + w])
+        assert not baseline.flags.writeable and not rgb.flags.writeable
+        calls.append(origin)
+        return uniform_filter(rgb, size=(3, 3, 1), mode="reflect") * 0.1, np.full((h, w), 0.75)
+
+    adapter = replace(adapter_for(tmp_path, camera, predict), tile=tile, halo=halo)
+    destination = np.memmap(tmp_path / "result", mode="w+", dtype="float32", shape=clean.shape)
+    try:
+        report = apply_residual(encoded, clean, support, destination, camera, adapter, isp=AnalyticISP())
+        residual = uniform_filter(encoded, size=(3, 3, 1), mode="reflect") * 0.1
+        expected = clean.astype(np.float64) + np.where(support[..., None], residual * 0.75, 0)
+        np.testing.assert_allclose(destination, expected, atol=3e-8, rtol=0)
+        assert report["accepted_pixels"] == int(support.sum())
+        assert (report["tile"], report["halo"]) == (tile, halo)
+        assert report["seam_validation"].startswith("not measured")
+        assert calls
+    finally:
+        destination._mmap.close()
+
+
+@pytest.mark.parametrize("settings", [{"halo": -1}, {"halo": True}, {"tile": 0}, {"tile": 1.5}])
+def test_invalid_adapter_context_rejected_before_checkpoint_io(tmp_path, settings):
+    camera = CameraHypothesis()
+    adapter = replace(adapter_for(tmp_path, camera), checkpoint_path="absent", **settings)
+    with pytest.raises(ValueError, match="tile.*halo"):
+        resolve_mode("HYBRID", adapter, camera)

@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 
 from prd_v5.analytic import AnalyticISP
+from prd_v5.colour_metrics import validate_colour_reference
 from prd_v5.config import AnalyticRunConfig
 from prd_v5.decode import decode_source
 from prd_v5.delivery import export_arrays, finish_bundle
@@ -26,7 +27,13 @@ from prd_v5.optics import Distortion, Vignetting
 from prd_v5.raster import rasterize, rasterize_lanczos
 from prd_v5.registry import analytic_registry
 from prd_v5.report import render_report
-from prd_v5.roundtrip import develop_roundtrip
+from prd_v5.roundtrip import (
+    develop_demosaic_sweep,
+    develop_exposure_sweep,
+    develop_roundtrip,
+    develop_tone_sweep,
+    develop_wb_sweep,
+)
 from prd_v5.runtime import runtime_record
 from prd_v5.sensor import BayerSensor, SensorEffects
 
@@ -43,6 +50,12 @@ def run_analytic(
     vignetting: Vignetting | None = None,
     distortion: Distortion | None = None,
     accept_experimental_optics: bool = False,
+    exposure_sweep: bool = False,
+    wb_sweep: bool = False,
+    demosaic_sweep: bool = False,
+    tone_sweep: bool = False,
+    shadow_lifts_ev: tuple[float, float] = (0.5, 2.0),
+    wb_sweep_strength: float = 1.25,
     target_megapixels: float = 50.0,
     geometry_mode: str = "PRESERVE_SOURCE_ASPECT_50MP",
     native_fit_policy: str = "LETTERBOX_SENSOR_MARGIN",
@@ -55,6 +68,7 @@ def run_analytic(
     sr_checkpoint: SRCheckpoint | None = None,
     inverse_mode: str = "ANALYTIC",
     residual_adapter: ResidualAdapter | None = None,
+    colour_reference: dict | None = None,
 ) -> dict:
     """Run explicit bilinear/analytic MVP, never an implicit learned fallback.
 
@@ -68,6 +82,8 @@ def run_analytic(
     can be supplied to sequential source-resolution runs. Full-scale execution
     belongs in Colab with explicit memory budgets, never on the development Mac.
     """
+    if colour_reference is not None:
+        validate_colour_reference(colour_reference)
     if optical_effects is None:
         optical_effects = OpticalEffects()
     if sensor_effects is None:
@@ -89,6 +105,12 @@ def run_analytic(
         vignetting=vignetting,
         distortion=distortion,
         accept_experimental_optics=accept_experimental_optics,
+        exposure_sweep=exposure_sweep,
+        wb_sweep=wb_sweep,
+        demosaic_sweep=demosaic_sweep,
+        tone_sweep=tone_sweep,
+        shadow_lifts_ev=shadow_lifts_ev,
+        wb_sweep_strength=wb_sweep_strength,
         isp=isp,
         target_megapixels=target_megapixels,
         geometry_mode=geometry_mode,
@@ -158,10 +180,19 @@ def run_analytic(
             if sr_checkpoint is not None:
                 stages["raster"]["learned_super_resolution"] = sr_checkpoint.backend
             clean = allocate("clean", np.float32, (*shape, 3))
-            stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows)
+            hdr_claims = allocate("hdr_claims", np.bool_, shape)
+            stages["analytic"] = isp.process(rgb, clean, strip_rows=strip_rows, claims=hdr_claims)
             learned = None if residual_adapter is None else allocate("learned", np.float32, (*shape, 3))
             stages["learned_raw"] = apply_residual(
-                rgb, clean, support, learned, camera, residual_adapter, mode=inverse_mode
+                rgb,
+                clean,
+                support,
+                learned,
+                camera,
+                residual_adapter,
+                isp=isp,
+                mode=inverse_mode,
+                claims=hdr_claims,
             )
             optical = allocate("optical", np.float32, (*shape, 3))
             stages["optics"] = vignetting.process(
@@ -210,6 +241,48 @@ def run_analytic(
                 isp,
                 max_working_bytes=max_develop_bytes,
             )
+            stages["exposure_sweep"] = (
+                develop_exposure_sweep(
+                    output / "capture.dng",
+                    output / "exposure_edits",
+                    baseline_exposure_ev=isp.baseline_exposure_ev,
+                    max_working_bytes=max_develop_bytes,
+                )
+                if exposure_sweep
+                else {"status": "disabled", "reason": "exposure_sweep=False"}
+            )
+            stages["wb_sweep"] = (
+                develop_wb_sweep(
+                    output / "capture.dng",
+                    output / "wb_edits",
+                    baseline_exposure_ev=isp.baseline_exposure_ev,
+                    strength=wb_sweep_strength,
+                    max_working_bytes=max_develop_bytes,
+                )
+                if wb_sweep
+                else {"status": "disabled", "reason": "wb_sweep=False"}
+            )
+            stages["demosaic_sweep"] = (
+                develop_demosaic_sweep(
+                    output / "capture.dng",
+                    output / "demosaic_edits",
+                    baseline_exposure_ev=isp.baseline_exposure_ev,
+                    max_working_bytes=max_develop_bytes,
+                )
+                if demosaic_sweep
+                else {"status": "disabled", "reason": "demosaic_sweep=False"}
+            )
+            stages["tone_sweep"] = (
+                develop_tone_sweep(
+                    output / "capture.dng",
+                    output / "tone_edits",
+                    baseline_exposure_ev=isp.baseline_exposure_ev,
+                    shadow_lifts_ev=config.shadow_lifts_ev,
+                    max_working_bytes=max_develop_bytes,
+                )
+                if tone_sweep
+                else {"status": "disabled", "reason": "tone_sweep=False"}
+            )
             export_arrays(output, final_optical, adc, camera, strip_rows=strip_rows)
             # Export only after the independent image gate, without materializing
             # the full mask in RAM. NPY preserves boolean dtype and raster shape.
@@ -238,6 +311,16 @@ def run_analytic(
                 packaged_clipping.flush()
             finally:
                 packaged_clipping._mmap.close()
+            packaged_claims = np.lib.format.open_memmap(
+                output / "hdr_claims.npy", mode="w+", dtype=np.bool_, shape=shape
+            )
+            try:
+                for start in range(0, shape[0], strip_rows):
+                    stop = start + strip_rows
+                    packaged_claims[start:stop] = hdr_claims[start:stop] & support[start:stop]
+                packaged_claims.flush()
+            finally:
+                packaged_claims._mmap.close()
             packaged_defects = np.lib.format.open_memmap(
                 output / "sensor_defects.npy", mode="w+", dtype=np.uint8, shape=shape
             )
@@ -266,6 +349,7 @@ def run_analytic(
         "developed.tiff",
         "source_support.npy",
         "source_clipped.npy",
+        "hdr_claims.npy",
         "sensor_defects.npy",
         "config.json",
     ):
@@ -406,7 +490,7 @@ def run_analytic(
             "Colab full-scale validation",
         ],
     }
-    finish_bundle(output, report)
+    finish_bundle(output, report, colour_reference=colour_reference)
     # Render before the completion marker. Hash the HTML in the manifest without
     # making the report depend on its own digest.
     report_path = output / "report.html"

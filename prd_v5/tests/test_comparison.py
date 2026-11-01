@@ -119,3 +119,99 @@ def test_region_on_unequal_rasters_and_bounds_cleanup(tmp_path, monkeypatch):
         compare_renders(a, b, region=(0, 0, 3, 3))
     assert len(opened) == 2
     assert all(array._mmap.closed for array in opened)
+
+
+def test_bayer_electron_metrics_preserve_phase_and_crop_origin(tmp_path):
+    from prd_v5.comparison import compare_bayer
+
+    a = np.zeros((7, 9), dtype=np.float32)
+    b = np.arange(63, dtype=np.float32).reshape(7, 9)
+    first, second = tmp_path / "a.npy", tmp_path / "b.npy"
+    np.save(first, a)
+    np.save(second, b)
+    region = (1, 3, 6, 8)
+    report = compare_bayer(first, second, cfa_pattern="RGGB", region=region, strip_rows=1)
+    other = compare_bayer(first, second, cfa_pattern="RGGB", region=region, strip_rows=4)
+    assert report == other
+    difference = -b[1:6, 3:8].astype(float)
+    assert report["samples"] == 25
+    assert report["rmse"] == pytest.approx(np.sqrt(np.mean(difference**2)))
+    for phase, (key, result) in enumerate(report["phases"].items()):
+        expected = -b[1 + (phase // 2 - 1) % 2 : 6 : 2, 3 + (phase % 2 - 3) % 2 : 8 : 2]
+        assert key.endswith("RGGB"[phase])
+        assert result["bias_first_minus_second"] == pytest.approx(expected.mean())
+        assert result["mae"] == pytest.approx(np.abs(expected).mean())
+    json.dumps(report, allow_nan=False)
+
+
+def test_bayer_unequal_shape_and_invalid_samples(tmp_path):
+    from prd_v5.comparison import compare_bayer
+
+    a, b = tmp_path / "a.npy", tmp_path / "b.npy"
+    np.save(a, np.zeros((2, 2), np.float32))
+    np.save(b, np.zeros((4, 4), np.float32))
+    assert compare_bayer(a, b, cfa_pattern="BGGR")["status"] == "not measured"
+    np.save(b, np.full((2, 2), np.nan, np.float32))
+    with pytest.raises(ValueError, match="nonfinite"):
+        compare_bayer(a, b, cfa_pattern="BGGR")
+    np.save(b, np.zeros((2, 2), np.float64))
+    with pytest.raises(ValueError, match="float32"):
+        compare_bayer(a, b, cfa_pattern="BGGR")
+
+
+def test_frequency_bands_separate_known_native_pixel_sinusoids(tmp_path):
+    x = np.arange(128)
+
+    def sinusoid(frequency):
+        row = np.rint(32768 + 12000 * np.sin(2 * np.pi * frequency * x)).astype(np.uint16)
+        return np.broadcast_to(row[None, :, None], (128, 128, 3)).copy()
+
+    a = write(tmp_path / "low.tiff", sinusoid(1 / 32))
+    b = write(tmp_path / "high.tiff", sinusoid(3 / 16))
+    report = compare_renders(a, b)["frequency_bands"]
+    assert report["status"] == "measured spectral disagreement"
+    bands = report["bands"]
+    assert np.argmax([band["first_power"] for band in bands]) == 0
+    assert np.argmax([band["second_power"] for band in bands]) == 2
+    expected_variance = (12000 / 65535) ** 2 / 2
+    assert sum(band["first_power"] for band in bands) == pytest.approx(expected_variance, rel=0.002)
+    assert sum(band["second_power"] for band in bands) == pytest.approx(expected_variance, rel=0.002)
+    assert sum(band["difference_power"] for band in bands) == pytest.approx(2 * expected_variance, rel=0.002)
+    assert report["measured_pixels"] == 128**2
+    json.dumps(report, allow_nan=False)
+
+
+def test_frequency_bounded_fft_partial_edges_and_crop(tmp_path, monkeypatch):
+    rng = np.random.default_rng(17)
+    image = rng.integers(0, 65536, (263, 259, 3), dtype=np.uint16)
+    path = write(tmp_path / "random.tiff", image)
+    original = np.fft.fft2
+    shapes = []
+
+    def bounded(array):
+        shapes.append(array.shape)
+        assert max(array.shape) <= 256
+        return original(array)
+
+    monkeypatch.setattr(np.fft, "fft2", bounded)
+    result = compare_renders(path, path)["frequency_bands"]
+    assert result["patches"] == 2
+    assert result["measured_pixels"] == 263 * 256
+    assert result["omitted_edge_pixels"] == 263 * 3
+    assert set(shapes) == {(256, 256), (7, 256)}
+    assert all(band["difference_power"] == 0 for band in result["bands"])
+    crop = compare_renders(path, path, region=(1, 2, 129, 130))["frequency_bands"]
+    assert crop["patches"] == 1 and crop["measured_pixels"] == 128**2
+
+
+def test_frequency_dc_removed_and_tiny_crop_explicitly_unmeasured(tmp_path):
+    a = write(tmp_path / "dark.tiff", np.zeros((8, 8, 3), np.uint16))
+    b = write(tmp_path / "bright.tiff", np.full((8, 8, 3), 65535, np.uint16))
+    result = compare_renders(a, b)
+    assert result["mae"] == 1
+    assert all(band["difference_power"] == 0 for band in result["frequency_bands"]["bands"])
+    tiny = compare_renders(a, b, region=(0, 0, 2, 3))["frequency_bands"]
+    assert tiny["status"] == "not measured"
+    assert tiny["omitted_edge_pixels"] == 6
+    assert all(band["first_power"] is None for band in tiny["bands"])
+    json.dumps(tiny, allow_nan=False)

@@ -86,7 +86,19 @@ def test_full_quality_fixture_outputs_registry_and_decodable_adc(tmp_path, adc_b
     assert report["validation"]["acceptance"].startswith("conditional")
     assert np.asarray(Image.open(output / "uncertainty_map.png"))[0, 0] == 255
     validation = json.loads((output / "validation.json").read_text())
-    assert validation["HDR validity"]["status"] == validation["Metadata coherence"]["status"] == "not measured"
+    assert validation["HDR validity"]["status"] == "failed"
+    hdr = validation["HDR validity"]
+    assert hdr["source_endpoint_pixels"] == int(np.count_nonzero(np.load(output / "source_clipped.npy")))
+    assert hdr["unsupported_pixels"] == int(np.count_nonzero(~np.load(output / "source_support.npy")))
+    assert hdr["source_endpoint_pixels"] > 0
+    claims = np.load(output / "hdr_claims.npy")
+    expected_forbidden = claims & (np.load(output / "source_clipped.npy") | ~np.load(output / "source_support.npy"))
+    assert hdr["claimed_truth_pixels"] == int(np.count_nonzero(claims)) > 0
+    assert hdr["forbidden_claim_pixels"] == int(np.count_nonzero(expected_forbidden)) > 0
+    assert hdr["numerical_hdr_fidelity"] == "not measured"
+    assert validation["Metadata coherence"]["status"] == "passed"
+    assert "AsShotNeutral" in validation["Metadata coherence"]["checked"]
+    assert "Full-well capacity" in validation["Metadata coherence"]["unmapped_registry_fields"]
     assert registry["Checkpoint hashes"]["value"] is None
     assert registry["Checkpoint hashes"]["provenance"] == "UNSPECIFIED"
     page = (output / "validation_report.html").read_text()
@@ -96,7 +108,7 @@ def test_full_quality_fixture_outputs_registry_and_decodable_adc(tmp_path, adc_b
     for gate, record in validation.items():
         if isinstance(record, dict) and "status" in record:
             assert rendered[gate][0] == record["status"]
-    assert rendered["HDR validity"] == ["not measured", validation["HDR validity"]["reason"]]
+    assert rendered["HDR validity"] == ["failed", validation["HDR validity"]["reason"]]
     assert "Lanczos-3" in report["pipeline"] and "bilinear" not in report["pipeline"]
     assert "Lanczos-3" in page
 
@@ -149,3 +161,119 @@ def test_extended_low_iso_well_and_adc_tags_remain_coherent(tmp_path):
         assert raw.white_level == camera.white_level
         assert int(raw.raw_image.max()) <= camera.white_level
     assert report["registry"]["White level"]["value"] == camera.white_level
+
+
+def _hdr_inputs(tmp_path, claims, *, effective=True, learned="disabled"):
+    clipped = np.zeros((4, 4), dtype=bool)
+    clipped[0, 0] = True
+    if claims is not None:
+        np.save(tmp_path / "hdr_claims.npy", claims)
+    report = {"stages": {"analytic": {"hdr": {"effective": effective}}, "learned_raw": {"status": learned}}}
+    return report, clipped, np.ones((4, 4), dtype=bool)
+
+
+def test_hdr_audit_passes_when_expansion_avoids_clipped_pixels(tmp_path):
+    from prd_v5.delivery import audit_hdr
+
+    claims = np.zeros((4, 4), dtype=bool)
+    claims[2, 2] = True
+    report, clipped, support = _hdr_inputs(tmp_path, claims)
+    result = audit_hdr(tmp_path, report, clipped, support)
+    assert result["status"] == "passed"
+    assert result["claimed_truth_pixels"] == 1 and result["forbidden_claim_pixels"] == 0
+    assert result["numerical_hdr_fidelity"] == "not measured"
+
+
+def test_hdr_audit_fails_when_expansion_claims_clipped_pixels(tmp_path):
+    from prd_v5.delivery import audit_hdr
+
+    claims = np.zeros((4, 4), dtype=bool)
+    claims[0, 0] = claims[2, 2] = True
+    report, clipped, support = _hdr_inputs(tmp_path, claims)
+    result = audit_hdr(tmp_path, report, clipped, support)
+    assert result["status"] == "failed"
+    assert result["forbidden_claim_pixels"] == 1
+
+
+def test_hdr_audit_not_measured_without_hdr_stage(tmp_path):
+    from prd_v5.delivery import audit_hdr
+
+    report, clipped, support = _hdr_inputs(tmp_path, None, effective=False)
+    result = audit_hdr(tmp_path, report, clipped, support)
+    assert result["status"] == "not measured"
+    assert "No HDR" in result["reason"]
+
+
+def test_hdr_audit_measures_learned_residual_without_analytic_hdr(tmp_path):
+    from prd_v5.delivery import audit_hdr
+
+    claims = np.zeros((4, 4), dtype=bool)
+    claims[0, 0] = True
+    report, clipped, support = _hdr_inputs(tmp_path, claims, effective=False, learned="executed experimental residual")
+    result = audit_hdr(tmp_path, report, clipped, support)
+    assert result["status"] == "failed" and result["forbidden_claim_pixels"] == 1
+
+
+def test_analytic_claim_mask_marks_clipped_source_only_when_hdr_runs(tmp_path):
+    from prd_v5.analytic import AnalyticISP
+
+    block = np.full((2, 2, 3), 0.2, dtype=np.float32)
+    block[0, 0] = 1.0
+    for name, isp, expected in (
+        ("off", AnalyticISP(), [[False, False], [False, False]]),
+        ("on", AnalyticISP(hdr_max_radiance=4), [[True, False], [False, False]]),
+    ):
+        clean = np.memmap(tmp_path / name, mode="w+", dtype=np.float32, shape=block.shape)
+        claims = np.zeros((2, 2), dtype=bool)
+        report = isp.process(block, clean, claims=claims)
+        assert claims.tolist() == expected
+        assert report["hdr"]["expanded_pixels"] == int(np.count_nonzero(claims))
+
+
+def _stub_adapter(tmp_path, camera, delta):
+    from prd_v5.learned import ResidualAdapter, camera_domain
+
+    checkpoint = tmp_path / "stub.pth"
+    checkpoint.write_bytes(b"stub")
+
+    def predict(encoded, clean, origin, camera):
+        return np.full(encoded.shape, delta, dtype=np.float32), np.ones(encoded.shape[:2], dtype=np.float32)
+
+    return ResidualAdapter(
+        predict=predict,
+        checkpoint_path=str(checkpoint),
+        sha256=digest(checkpoint),
+        camera_sha256=camera_domain(camera),
+        source="stub",
+        licence="stub",
+        licence_accepted=True,
+        experimental_accepted=True,
+        tile=16,
+        halo=0,
+    )
+
+
+@pytest.mark.parametrize(("delta", "status"), [(0.05, "failed"), (-0.05, "passed")])
+def test_learned_residual_claims_are_audited_without_analytic_hdr(tmp_path, delta, status):
+    from prd_v5.analytic import AnalyticISP
+
+    source = tmp_path / "source.png"
+    image = np.full((32, 32, 3), 100, dtype=np.uint8)
+    image[4:12, 4:12] = 255
+    Image.fromarray(image).save(source)
+    camera = CameraHypothesis(profile="GENERIC")
+    config = replace(full_quality_config(), target_megapixels=0.001024, camera=camera, isp=AnalyticISP())
+    output = tmp_path / "run"
+    report = config.run(source, output, inverse_mode="HYBRID", residual_adapter=_stub_adapter(tmp_path, camera, delta))
+    assert report["stages"]["analytic"]["hdr"]["effective"] is False
+    hdr = json.loads((output / "validation.json").read_text())["HDR validity"]
+    claims = np.load(output / "hdr_claims.npy")
+    assert hdr["status"] == status
+    assert hdr["claimed_truth_pixels"] == int(np.count_nonzero(claims))
+    assert report["stages"]["learned_raw"]["hdr_claim_pixels"] == int(np.count_nonzero(claims))
+    if delta > 0:
+        clipped = np.load(output / "source_clipped.npy") & np.load(output / "source_support.npy")
+        assert hdr["forbidden_claim_pixels"] >= int(np.count_nonzero(clipped)) > 0
+        assert np.array_equal(clipped, clipped & claims)
+    else:
+        assert hdr["claimed_truth_pixels"] == 0

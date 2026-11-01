@@ -41,6 +41,7 @@ def test_stripped_round_trip(tmp_path, fixture_data, phase, bits):
         page = container.pages[0]
         assert len(page.dataoffsets) == 7
         assert page.compression == 1
+        assert page.tags["NewSubfileType"].value == 0
         assert np.array_equal(page.asarray(), mosaic)
         assert page.tags["Make"].value == "Synthetic"
         assert page.tags["ColorMatrix1"].dtype.name == "SRATIONAL"
