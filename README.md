@@ -8,10 +8,15 @@ Outputs are **synthetic camera-grade masters**: 16-bit TIFF and linear-light Ope
 a rendered source. They are never camera RAW captures, and every report keeps preserved, interpolated,
 inferred, simulated and encoded information apart.
 
-**Next experiment: [PRD v5](prd_v5/PRD_v5.md)** ("Final Single-Colab Synthetic 50 MP RAW Camera
+**Next experiment: [PRD v6](prd_v6/PRD_v6.md)** ("Single-Run, Accuracy-Gated Synthetic 50 MP RAW"). It
+targets a single Colab "Run all" at maximum quality that downloads its results automatically, gated on 95%
+accuracy against a real Sony A1 II RAW in linear RAW space. It is a specification only; its notebook is not
+built yet.
+
+**Previous experiment: [PRD v5](prd_v5/PRD_v5.md)** ("Final Single-Colab Synthetic 50 MP RAW Camera
 Reconstruction"). Its notebook, code and tests live in `prd_v5/`; see [prd_v5/README.md](prd_v5/README.md).
 
-**Previous target: [PRD_v3.md](PRD_v3.md)** ("Final PRD: Synthetic Sony-like 50 MP RAW Reconstruction Colab"),
+**Earlier target: [PRD_v3.md](PRD_v3.md)** ("Final PRD: Synthetic Sony-like 50 MP RAW Reconstruction Colab"),
 the target that follows cycle 1. It specifies one notebook, `synthetic_camera_raw_50mp_colab.ipynb`, that
 builds a synthetic DNG and a 50 MP 16-bit TIFF through an explicit radiance, camera and sensor chain.
 [PRD.md](PRD.md) remains the specification of the cycle 1 notebooks described below, which keep working unchanged.
