@@ -476,11 +476,22 @@ inside one driver cell.
    the notebook itself and uses only the standard library and
    `google.colab.files`, so it works even when the clone or install failed.
 
+   After each driver step, the driver cell rebuilds the summary archive and,
+   when `DRIVE_MIRROR` is true, copies it to Drive at that point, not only in
+   the `finally` block.
+
    This guarantee covers raised exceptions only. A `finally` block does not
    run when the runtime process itself is lost (an out-of-memory kernel crash,
-   a runtime disconnect or a recycle). For those cases the mitigations are the
-   summary archive written early and updated during the run (section 13), the
-   Drive mirror when enabled, and `download_results()` (section 10.3).
+   a runtime disconnect or a recycle). For those cases the mitigations are:
+   - the summary archive rebuilt after each driver step, and its Drive copy
+     when `DRIVE_MIRROR` is true;
+   - `download_results(run_dir)`, which lives in the repo package, so after a
+     kernel crash a new cell can import it from the clone on disk; it builds
+     any missing archives from the run folder, then triggers the downloads
+     (section 10.3).
+
+   After a runtime recycle only what was already mirrored to Drive survives;
+   nothing survives a recycle when `DRIVE_MIRROR` is false.
 
 Never used anywhere: `files.upload`, `input()`, widgets that wait for a click,
 `/content` paths that assume a manual upload, or silent fallbacks (for example,
@@ -545,14 +556,20 @@ anything after it fails, the captain still has the answer.
   the run reaches the driver cell's `finally` block. A closed tab means no
   download, but the run folder and archives stay on the runtime.
 - Recovery, printed in the banner:
-  1. Allow multiple downloads for `colab.research.google.com`, then run
-     `download_results()` in a new cell; it re-sends the existing archives
-     without recomputing.
+  1. Allow multiple downloads for `colab.research.google.com`, then in a new
+     cell import `download_results` from the repo package in the clone on disk
+     and run `download_results(run_dir)`. It builds any missing archives from
+     the run folder without recomputing results, then triggers the downloads.
+     This also works after a kernel crash, because the clone and the run
+     folder stay on the runtime.
   2. Download the archives from the Files pane.
-  3. If `DRIVE_MIRROR` is true, archives are also copied to
-     `MyDrive/exp50mp_v6/<run_id>/` before the browser downloads start.
+  3. If `DRIVE_MIRROR` is true, the summary archive is copied to
+     `MyDrive/exp50mp_v6/<run_id>/` after each driver step, and all archives
+     are copied there before the browser downloads start.
 - Files on the runtime last only until Colab recycles it (idle timeout or
-  session limit). The banner says so.
+  session limit). After a recycle only what was already mirrored to Drive
+  survives; nothing survives a recycle when `DRIVE_MIRROR` is false. The
+  banner says so.
 
 ## 11. Milestones
 
@@ -586,7 +603,11 @@ anything after it fails, the captain still has the answer.
    explains the failure, with no cell left unrun by Run all. A forced
    exception in step 5 or 6 keeps the benchmark's PASS or MISSED verdict,
    marked "completed with errors". The guarantee covers raised exceptions
-   only; process loss relies on the mitigations in section 9.2.
+   only. After a forced kernel crash, `download_results(run_dir)` imported
+   from the clone in a new cell builds any missing archives from the run
+   folder and downloads them. After a runtime recycle only what was already
+   mirrored to Drive survives (the summary archive as of the last completed
+   driver step when `DRIVE_MIRROR` is true; nothing when it is false).
 6. Unit tests and lint pass locally; full-suite tests run through the shared
    heavy-lock script.
 
@@ -599,7 +620,7 @@ anything after it fails, the captain still has the answer.
 | Browser blocks multiple downloads or the tab is closed | Captain gets only the summary or nothing | Summary first, recovery function, Files pane, optional Drive mirror |
 | HAT-L or reference download fails (quota, link rot) | Run cannot start | Repo-hosted mirror, SHA-256 pins, preflight fails fast with a report |
 | A100 not available or High-RAM not granted | Slower or rejected run | L4 accepted with warning; preflight states the actual tier |
-| Runtime longer than estimates, Colab session recycled | Lost outputs | Measure in M5; summary archive written early and updated; Drive mirror |
+| Runtime longer than estimates, Colab session recycled | Lost outputs | Measure in M5; summary archive rebuilt after each driver step and copied to Drive when `DRIVE_MIRROR` is true (only that survives a recycle); `download_results(run_dir)` after a kernel crash |
 | Disk exhaustion while archiving | Packaging fails | 80 GB preflight check, ZIP_STORED, exclusions by default |
 | ARW licence unknown | Cannot host publicly | Q4 default: captain-owned private URL with pinned SHA-256, no redistribution |
 | rawpy or LibRaw version drift changes R1 or decode | Score shifts between runs | Pin versions; record LibRaw version and matrix in the manifest |
