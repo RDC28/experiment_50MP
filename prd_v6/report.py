@@ -88,7 +88,8 @@ def write(run_dir) -> Path:
         gated = metrics["gated"]
         parts.append(f"<h2>{label} ({html.escape(metrics['layout'])}, {metrics['size'][1]}x{metrics['size'][0]})</h2>")
         parts.append(
-            f"<p>k = {gated['k']:.4f} ({_signed(gated['k_ev'])} EV). Gate: {'PASS' if gated['passes'] else 'MISSED'}</p>"
+            f"<p>k = {gated['k']:.4f} ({_signed(gated['k_ev'])} EV). "
+            f"Gate: {'PASS' if gated['passes'] else 'MISSED'}</p>"
         )
         rows = [
             [
