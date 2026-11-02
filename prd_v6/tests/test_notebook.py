@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import json
 import re
 import shutil
 import subprocess
+import sys
 import traceback
+import types
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -58,21 +62,106 @@ def test_settings_are_literal_max_defaults(notebook):
     assert re.fullmatch(r"[0-9a-f]{40}", settings["REPO_REF"])
 
 
-def test_driver_runs_everything_inside_one_try_finally(notebook):
-    tree = ast.parse(code_cells(notebook)[1])
-    last = tree.body[-1]
-    assert isinstance(last, ast.Try) and last.finalbody, "the driver must end with the try/finally"
-    finally_source = ast.unparse(last.finalbody)
-    assert "finalize_run" in finally_source and "_fallback" in finally_source
-    body = ast.unparse(last.body)
-    for step in ("_setup()", "driver.run(RUN_DIR, SETTINGS)"):
-        assert step in body
+class _ContentRoot(ast.NodeTransformer):
+    """Moves the driver's /content paths under a test folder; nothing else in the cell changes."""
+
+    def __init__(self, root: Path):
+        self.root = root
+
+    def visit_Constant(self, node):
+        if isinstance(node.value, str) and node.value.startswith("/content/"):
+            return ast.copy_location(ast.Constant(str(self.root) + node.value[len("/content") :]), node)
+        return node
 
 
-def test_driver_never_waits_for_the_user(notebook):
-    source = code_cells(notebook)[1]
-    for forbidden in ("files.upload", "input(", "ipywidgets", "lanczos_model"):
-        assert forbidden not in source
+def run_driver_cell(notebook, root: Path, monkeypatch, stand_ins: dict):
+    """Run the settings cell, then the driver cell as Colab would, with `stand_ins` for the named functions."""
+    calls = {"download": [], "upload": [], "input": []}
+
+    def forbidden(name):
+        def call(*args, **kwargs):
+            calls[name].append(args)
+            raise AssertionError(f"the driver cell called {name}")
+
+        return call
+
+    colab = types.ModuleType("google.colab")
+    colab.files = types.SimpleNamespace(
+        download=lambda path: calls["download"].append(Path(path)), upload=forbidden("upload")
+    )
+    google = types.ModuleType("google")
+    google.colab = colab
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.colab", colab)
+    monkeypatch.setattr(builtins, "input", forbidden("input"))
+    tree = _ContentRoot(root).visit(ast.parse(code_cells(notebook)[1]))
+    tree.body = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) and n.name in stand_ins)]
+    namespace: dict = {"__name__": "__main__"}
+    exec(code_cells(notebook)[0], namespace)  # noqa: S102
+    namespace.update(stand_ins)
+    exec(compile(ast.fix_missing_locations(tree), "driver", "exec"), namespace)  # noqa: S102
+    return namespace, calls
+
+
+def _setup_fails():
+    raise RuntimeError("clone failed")
+
+
+def _benchmark_fails(run_dir, settings):
+    delivery.mark_step_started(run_dir, 4)
+    try:
+        raise RuntimeError("benchmark exploded")
+    except RuntimeError as error:
+        delivery.mark_step_finished(run_dir, 4, error)
+        raise
+
+
+@pytest.mark.parametrize(
+    ("setup", "run", "reason"),
+    [
+        (_setup_fails, None, "step 2 (Setup) raised RuntimeError: clone failed"),
+        (lambda: None, _benchmark_fails, "step 4 (Benchmark) raised RuntimeError: benchmark exploded"),
+    ],
+    ids=["setup", "benchmark"],
+)
+def test_driver_cell_finalizes_and_downloads_an_invalid_run(
+    notebook, tmp_path, monkeypatch, capsys, setup, run, reason
+):
+    from prd_v6 import driver
+
+    monkeypatch.setattr(driver, "run", run or (lambda *_: pytest.fail("driver.run ran after a failed setup")))
+    ns, calls = run_driver_cell(notebook, tmp_path, monkeypatch, {"_setup": setup})
+    run_dir = ns["RUN_DIR"]
+    assert run_dir.parent == tmp_path / "exp50mp_v6"
+    verdict = json.loads((run_dir / "verdict.json").read_text())
+    assert verdict["status"] == "INVALID" and verdict["final"]
+    assert verdict["text"] == f"INVALID: {reason}"
+    summary = delivery.summary_path(run_dir)
+    assert calls["download"] == [summary] and ns["ARCHIVES"] == [summary]
+    with zipfile.ZipFile(summary) as archive:
+        assert json.loads(archive.read("verdict.json"))["text"] == verdict["text"]
+    assert calls["input"] == calls["upload"] == []
+    assert f"PRD v6 RUN {ns['RUN_ID']}: INVALID" in capsys.readouterr().out
+
+
+def test_driver_cell_falls_back_when_packaging_fails(notebook, tmp_path, monkeypatch, capsys):
+    def packaging_fails(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(delivery, "finalize_run", packaging_fails)
+    ns, calls = run_driver_cell(notebook, tmp_path, monkeypatch, {"_setup": _setup_fails})
+    fallback = tmp_path / "exp50mp_v6" / f"{ns['RUN_ID']}_fallback.zip"
+    assert calls["download"] == [fallback]
+    with zipfile.ZipFile(fallback) as archive:
+        state = json.loads(archive.read(f"{ns['RUN_ID']}/state.json"))
+        assert f"{ns['RUN_ID']}/config.json" in archive.namelist()
+    assert [(r["step"], r["status"], r["error"]) for r in state["steps"]] == [
+        (2, "failed", "RuntimeError: clone failed")
+    ]
+    assert calls["input"] == calls["upload"] == []
+    out = capsys.readouterr().out
+    assert f"PRD v6 RUN {ns['RUN_ID']}: INVALID" in out
+    assert "INVALID: RuntimeError: clone failed; packaging: OSError: disk full" in out
 
 
 def test_colab_runtime_and_tier_are_stated(notebook):

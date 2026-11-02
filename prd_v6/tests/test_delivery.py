@@ -65,6 +65,26 @@ def test_pass_run_packages_summary_and_data_archives(tmp_path, capsys):
     assert [d["status"] for d in downloads] == ["not in Colab: use the file on disk"] * 2
 
 
+def test_archive_index_marks_the_summary_as_self_and_hashes_the_data_archives(tmp_path):
+    import hashlib
+
+    run_dir = make_run(tmp_path, steps=[(s, "finished") for s in (2, 3, 4, 6)], verdict_status="PASS")
+    for recover in (False, True):
+        if recover:
+            _, archives = delivery.download_results(run_dir, download=False)
+        else:
+            _, archives = delivery.finalize_run(run_dir, download=False)
+        with zipfile.ZipFile(archives[0]) as summary:
+            index = json.loads(summary.read("archives.json"))
+        assert index == json.loads((run_dir / "archives.json").read_text())
+        assert index[0] == {"archive": archives[0].name, "sha256": "self"}
+        assert index[1:] == [
+            {"archive": a.name, "bytes": a.stat().st_size, "sha256": hashlib.sha256(a.read_bytes()).hexdigest()}
+            for a in archives[1:]
+        ]
+        assert len(index) == len(archives) == 2
+
+
 def test_gating_step_failure_is_invalid(tmp_path):
     run_dir = make_run(tmp_path, steps=[(2, "finished"), (3, "failed")])
     verdict, archives = delivery.finalize_run(run_dir, {"DRIVE_MIRROR": False}, download=False)

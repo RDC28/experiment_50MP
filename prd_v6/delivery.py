@@ -234,9 +234,13 @@ def write_manifest(run_dir) -> Path:
     return target
 
 
+def summary_path(run_dir) -> Path:
+    return Path(run_dir) / "archives" / f"{run_id(run_dir)}_01_summary.zip"
+
+
 def build_summary(run_dir) -> Path:
     run_dir = Path(run_dir)
-    target = run_dir / "archives" / f"{run_id(run_dir)}_01_summary.zip"
+    target = summary_path(run_dir)
     for old in target.parent.glob(f"{run_id(run_dir)}_01_summary*.zip"):
         old.unlink()
     return _zip(target, [(p, r) for p, r in _files(run_dir, run_dir) if _in_summary(p, r)])
@@ -376,14 +380,13 @@ def _package(run_dir, settings: dict, verdict: dict, *, download: bool, only_mis
     run_dir = Path(run_dir)
     _render_report(run_dir)
     write_manifest(run_dir)
-    data = build_archives(run_dir, settings, only_missing=only_missing)
-    summary = build_summary(run_dir)
-    archives = [summary] + sorted(data)
+    data = sorted(build_archives(run_dir, settings, only_missing=only_missing))
     _write_json(
         run_dir / "archives.json",
-        [{"archive": a.name, "bytes": a.stat().st_size, "sha256": _sha256(a)} for a in archives],
+        [{"archive": summary_path(run_dir).name, "sha256": "self"}]
+        + [{"archive": a.name, "bytes": a.stat().st_size, "sha256": _sha256(a)} for a in data],
     )
-    summary = build_summary(run_dir)  # again, so it carries archives.json
+    archives = [build_summary(run_dir)] + data
     if settings.get("DRIVE_MIRROR"):
         mirror_to_drive(run_dir, archives)
     if download:
