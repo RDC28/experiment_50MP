@@ -17,6 +17,15 @@ def _load(path: Path):
         return None
 
 
+def _signed(value: float, places: int = 3) -> str:
+    """Signed fixed-point text that never prints a negative zero."""
+    return f"{round(float(value), places) + 0.0:+.{places}f}"
+
+
+def _yes(flag) -> str:
+    return "yes" if flag else "no"
+
+
 def _pct(value) -> str:
     return "n/a" if value is None else f"{100 * float(value):.2f}%"
 
@@ -41,7 +50,7 @@ def summary_text(run_dir: Path) -> str:
             planes = "  ".join(
                 f"{p}: A {_pct(out['planes'][p]['A'])} P2 {_pct(out['planes'][p]['P2'])}" for p in PLANES
             )
-            exposure = f"  k {out['k_ev']:+.3f} EV" if isinstance(out.get("k_ev"), (int, float)) else ""
+            exposure = f"  k {_signed(out['k_ev'])} EV" if isinstance(out.get("k_ev"), (int, float)) else ""
             lines.append(f"{label}: {'PASS' if out.get('passes') else 'MISSED'}  {planes}{exposure}")
     for reason in verdict.get("invalid_reasons", []):
         lines.append(f"invalid: {reason}")
@@ -79,7 +88,7 @@ def write(run_dir) -> Path:
         gated = metrics["gated"]
         parts.append(f"<h2>{label} ({html.escape(metrics['layout'])}, {metrics['size'][1]}x{metrics['size'][0]})</h2>")
         parts.append(
-            f"<p>k = {gated['k']:.4f} ({gated['k_ev']:+.3f} EV). Gate: {'PASS' if gated['passes'] else 'MISSED'}</p>"
+            f"<p>k = {gated['k']:.4f} ({_signed(gated['k_ev'])} EV). Gate: {'PASS' if gated['passes'] else 'MISSED'}</p>"
         )
         rows = [
             [
@@ -116,7 +125,7 @@ def write(run_dir) -> Path:
                 _table(
                     ["stage"] + [f"delta A {p} (points)" for p in PLANES] + ["meets rule"],
                     [
-                        [row] + [f"{100 * v['delta_A'][p]:.3f}" for p in PLANES] + [v["meets_rule"]]
+                        [row] + [_signed(100 * v["delta_A"][p]) for p in PLANES] + [_yes(v["meets_rule"])]
                         for row, v in metrics["ablation"].items()
                     ],
                 )
@@ -136,14 +145,14 @@ def write(run_dir) -> Path:
             hard = sanity["hard"]
             sens = sanity["sensitivity"]
             rows = [
-                ["self (hard)", hard["self"]["passed"], _pct(hard["self"]["min_A"])],
+                ["self (hard)", _yes(hard["self"]["passed"]), _pct(hard["self"]["min_A"])],
                 [
                     "noise floor (hard)",
-                    hard["noise_floor"]["passed"],
+                    _yes(hard["noise_floor"]["passed"]),
                     _pct(min(v["A"] for v in hard["noise_floor"]["planes"].values())),
                 ],
             ]
-            rows += [[f"{k} (sensitivity)", v["passed"], _pct(v["min_A"])] for k, v in sens.items()]
+            rows += [[f"{k} (sensitivity)", _yes(v["passed"]), _pct(v["min_A"])] for k, v in sens.items()]
             parts.append(_table(["check", "passed", "min A"], rows))
         integrity = metrics.get("integrity", {})
         parts.append(

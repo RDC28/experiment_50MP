@@ -369,8 +369,9 @@ def banner(run_dir, verdict: dict, archives: list[Path], settings: dict) -> str:
         MULTIPLE_DOWNLOADS_WARNING,
         "Recovery, in a new cell: " + recovery_line(run_dir),
         "Or download the archives from the Files pane (folder above, archives/).",
-        (f"Drive mirror: {DRIVE_ROOT / run_id(run_dir)}. " if settings.get("DRIVE_MIRROR") else "Drive mirror is off: ")
-        + "files on the runtime are lost when Colab recycles it.",
+        f"Drive mirror: {DRIVE_ROOT / run_id(run_dir)}. Files on the runtime are lost when Colab recycles it."
+        if settings.get("DRIVE_MIRROR")
+        else "Drive mirror is off: files on the runtime are lost when Colab recycles it.",
         rule,
     ]
     return "\n".join(lines)

@@ -491,7 +491,8 @@ def run(cfg: Config) -> dict:
             ok = all(d >= constants.ABLATION_MIN_DELTA for d in delta.values())
             ablation[row] = {"delta_A": delta, "without": _brief(without), "meets_rule": bool(ok)}
             if not ok:
-                warnings.append(f"ablation: {row} breaks the section 5.1 rule (delta A {delta})")
+                points = ", ".join(f"{p} {round(100 * d, 3) + 0.0:+.3f}" for p, d in delta.items())
+                warnings.append(f"ablation: {row} breaks the section 5.1 rule (delta A {points} points)")
     with _timed(cfg, "50 MP tile seams and no-op checks"):
         from synthraw.super_resolution import diagnose_tile_seams
 
@@ -589,18 +590,39 @@ def run(cfg: Config) -> dict:
     return verdict
 
 
+GATE_LIMITS = {"A": constants.P1_MIN, "P2": constants.P2_MIN}
+
+
+def _shortfall(miss: dict) -> float:
+    value = miss["value"]
+    return GATE_LIMITS[miss["condition"]] - value if math.isfinite(value) else math.inf
+
+
+def _failing(planes: dict) -> list[dict]:
+    """Every (plane, condition) below its gate (non-finite counts as below), largest shortfall first."""
+    misses = [
+        {"plane": p, "condition": c, "value": planes[p][c]}
+        for p in metrics.PLANES
+        for c in GATE_LIMITS
+        if not planes[p][c] >= GATE_LIMITS[c]
+    ]
+    return sorted(misses, key=_shortfall, reverse=True)
+
+
 def build_verdict(results: dict, invalid: list[str], warnings: list[str]) -> dict:
     outputs = {}
     for name in constants.OUTPUT_ORDER:
         gated = results[name]["gated"]
         worst = gated["worst_plane"]
-        contributors = _contributors(results[name]["ladder_steps"], worst)
+        failing = _failing(gated["planes"])
+        contributors = _contributors(results[name]["ladder_steps"], failing[0]["plane"] if failing else worst)
         outputs[name] = {
             "label": constants.OUTPUT_LABELS[name],
             "passes": bool(gated["passes"]),
             "min_A": gated["min_A"],
             "worst_plane": worst,
             "planes": {p: {"A": gated["planes"][p]["A"], "P2": gated["planes"][p]["P2"]} for p in metrics.PLANES},
+            "failing": failing,
             "k": gated["k"],
             "k_ev": gated["k_ev"],
             "contributors": [{"step": LADDER_NAMES[s], "points": round(100 * c, 2)} for s, c in contributors],
@@ -608,21 +630,31 @@ def build_verdict(results: dict, invalid: list[str], warnings: list[str]) -> dic
     headline_name = min(constants.OUTPUT_ORDER, key=lambda n: outputs[n]["min_A"])
     headline = outputs[headline_name]
     per_output = " / ".join(
-        f"{o['label']} {'PASS' if o['passes'] else 'MISSED'} {100 * o['min_A']:.1f}%" for o in outputs.values()
+        f"{o['label']} MISSED {o['failing'][0]['plane']} {o['failing'][0]['condition']} "
+        f"{100 * o['failing'][0]['value']:.2f}%"
+        if o["failing"]
+        else f"{o['label']} PASS A {100 * o['min_A']:.1f}%"
+        for o in outputs.values()
     )
     if invalid:
         status = "INVALID"
         text = f"INVALID: {invalid[0]}" + (f" (and {len(invalid) - 1} more)" if len(invalid) > 1 else "")
     else:
         status = "PASS" if all(o["passes"] for o in outputs.values()) else "MISSED"
-        where = f"{headline['label']}, {headline['worst_plane']}"
-        text = f"{status}: A = {100 * headline['min_A']:.1f}% ({where}). {per_output}."
-        if status == "MISSED":
-            failing = [o for o in outputs.values() if not o["passes"]]
-            worst = min(failing, key=lambda o: o["min_A"])
+        if status == "PASS":
+            where = f"{headline['label']}, {headline['worst_plane']}"
+            text = f"PASS: A = {100 * headline['min_A']:.1f}% ({where}). {per_output}."
+        else:
+            failing = [o for o in outputs.values() if o["failing"]]
+            worst = max(failing, key=lambda o: _shortfall(o["failing"][0]))
+            miss = worst["failing"][0]
+            text = (
+                f"MISSED: {worst['label']} {miss['plane']} {miss['condition']} = {100 * miss['value']:.2f}% "
+                f"(< {100 * GATE_LIMITS[miss['condition']]:.0f}%), A = {100 * worst['min_A']:.1f}%. {per_output}."
+            )
             top = worst["contributors"]
             text += (
-                f" Largest contributor ({worst['label']}, {worst['worst_plane']}): "
+                f" Largest contributor ({worst['label']}, {miss['plane']}): "
                 f"{top[0]['step']} (-{top[0]['points']:.1f} points)."
             )
             if len(top) > 1:

@@ -164,3 +164,16 @@ def test_recovery_line_imports_from_the_clone(clone):
         f'import sys; sys.path.insert(0, "{clone}"); '
         'from prd_v6.delivery import download_results; download_results("/content/exp50mp_v6/run")'
     )
+
+
+@pytest.mark.parametrize(
+    ("mirror", "expected"),
+    [
+        (True, f"Drive mirror: {delivery.DRIVE_ROOT}/run. Files on the runtime are lost when Colab recycles it."),
+        (False, "Drive mirror is off: files on the runtime are lost when Colab recycles it."),
+    ],
+)
+def test_banner_states_the_drive_mirror_in_full_sentences(tmp_path, mirror, expected):
+    verdict = {"status": "PASS", "text": "PASS: A = 97.0%", "outputs": {"2k": OUTPUT}, "warnings": []}
+    lines = delivery.banner(tmp_path / "run", verdict, [], {"DRIVE_MIRROR": mirror}).splitlines()
+    assert expected in lines
