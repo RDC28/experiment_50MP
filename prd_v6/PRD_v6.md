@@ -54,9 +54,10 @@ must earn its place against that measurement.
   property of the deliverable (section 5.1).
 - G4. When the target is missed, the run still completes, still downloads
   everything, says MISSED plainly and names the largest error contributor with
-  numbers (section 7). When any step fails, the single driver cell's
-  `try/finally` still packages and downloads a summary archive that explains
-  the failure (section 9.2).
+  numbers (section 7). When any step raises an exception, the single driver
+  cell's `try/finally` still packages and downloads a summary archive that
+  explains the failure (section 9.2). This guarantee covers raised exceptions
+  only; for process loss see section 9.2.
 - G5. Committed evidence of at least one full Colab run (section 11, M5).
 
 ### Non-goals
@@ -314,17 +315,23 @@ INVALID.
 
 - **PASS**: integrity gates pass, hard sanity checks pass, primary gate
   passes.
-- **MISSED**: integrity and hard sanity checks pass, primary gate fails. The report states
-  the gap per plane and the largest contributor from the error budget
-  (section 7.2).
+- **MISSED**: integrity and hard sanity checks pass, primary gate fails. The
+  report states the gap per plane and the largest contributor from the error
+  budget (section 7.2).
 - **INVALID**: integrity or a hard sanity check fails, the reference is
-  unsuitable, a driver step raised (section 9.2), or a required stage silently
-  did nothing. No accuracy claim is made.
+  unsuitable, one of driver steps 1-4 raised (section 9.2), or a required
+  stage silently did nothing. No accuracy claim is made.
+
+A failure in driver step 5 (production) or step 6 (sweeps and secondary
+reports) does not change the PASS or MISSED verdict already computed by the
+benchmark; the verdict and the banner mark it "completed with errors" and
+name the failed step.
 
 Thresholds are fixed in code and in this PRD. The notebook never relaxes a
 threshold, never retries with different settings to reach a pass, and never
 reports a diagnostic score as the headline. In every status, results are
-packaged and downloaded.
+packaged and downloaded, unless the runtime process itself is lost
+(section 9.2).
 
 ### 6.7 Integrity gates kept from v5
 
@@ -455,13 +462,25 @@ inside one driver cell.
    5. **Production.** Only if source URLs are set.
    6. **Sweeps and secondary reports.**
 
+   An exception in steps 1-4 ends the `try` and makes the run INVALID. Steps 5
+   and 6 are each guarded on their own: an exception there is recorded with
+   its traceback, the run is marked "completed with errors" next to the
+   benchmark's PASS or MISSED verdict (section 6.6), and the next step still
+   runs, so a step 5 failure does not skip step 6.
+
    The `finally` block is **package and download**, so it runs after success
-   and after an exception in any step above. It records the exception and
-   traceback in the run state (making the run INVALID), writes the verdict and
-   manifest, builds archives from whatever the run folder holds, triggers
-   downloads (section 10) and ends with a printed verdict banner. Its code is
-   defined in the notebook itself and uses only the standard library and
+   and after an exception in any step above. It records any exception and
+   traceback in the run state, writes the verdict and manifest, builds
+   archives from whatever the run folder holds, triggers downloads
+   (section 10) and ends with a printed verdict banner. Its code is defined in
+   the notebook itself and uses only the standard library and
    `google.colab.files`, so it works even when the clone or install failed.
+
+   This guarantee covers raised exceptions only. A `finally` block does not
+   run when the runtime process itself is lost (an out-of-memory kernel crash,
+   a runtime disconnect or a recycle). For those cases the mitigations are the
+   summary archive written early and updated during the run (section 13), the
+   Drive mirror when enabled, and `download_results()` (section 10.3).
 
 Never used anywhere: `files.upload`, `input()`, widgets that wait for a click,
 `/content` paths that assume a manual upload, or silent fallbacks (for example,
@@ -523,8 +542,8 @@ anything after it fails, the captain still has the answer.
   download. If it is blocked, only archive 1 arrives. The notebook prints this
   warning before the downloads start and again in the banner.
 - `files.download` only works while the Colab tab is open and connected when
-  the run reaches the driver cell's `finally` block. A closed tab means no download, but the run folder
-  and archives stay on the runtime.
+  the run reaches the driver cell's `finally` block. A closed tab means no
+  download, but the run folder and archives stay on the runtime.
 - Recovery, printed in the banner:
   1. Allow multiple downloads for `colab.research.google.com`, then run
      `download_results()` in a new cell; it re-sends the existing archives
@@ -562,9 +581,12 @@ anything after it fails, the captain still has the answer.
 4. Every stage in the max preset except shot and read noise has an ablation
    row showing it meets the section 5.1 rule; the noise cost is reported as
    ladder rung L1.
-5. A forced failure in any driver step (for example, a failed clone or a
+5. A forced exception in any driver step (for example, a failed clone or a
    wrong checkpoint hash) still produces and downloads a summary archive that
-   explains the failure, with no cell left unrun by Run all.
+   explains the failure, with no cell left unrun by Run all. A forced
+   exception in step 5 or 6 keeps the benchmark's PASS or MISSED verdict,
+   marked "completed with errors". The guarantee covers raised exceptions
+   only; process loss relies on the mitigations in section 9.2.
 6. Unit tests and lint pass locally; full-suite tests run through the shared
    heavy-lock script.
 
