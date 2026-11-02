@@ -319,8 +319,10 @@ INVALID.
   report states the gap per plane and the largest contributor from the error
   budget (section 7.2).
 - **INVALID**: integrity or a hard sanity check fails, the reference is
-  unsuitable, one of driver steps 1-4 raised (section 9.2), or a required
-  stage silently did nothing. No accuracy claim is made.
+  unsuitable, one of driver steps 1-4 raised (section 9.2), the process was
+  lost before a final verdict was written (recorded by `download_results`,
+  section 9.2), or a required stage silently did nothing. No accuracy claim
+  is made.
 
 A failure in driver step 5 (production) or step 6 (sweeps and secondary
 reports) does not change the PASS or MISSED verdict already computed by the
@@ -447,7 +449,10 @@ inside one driver cell.
    defaults that need no edits: `PRESET = "max"`, `REPO_REF` pinned to a
    release commit (not `main`), `SOURCE_*_URL = None`, `DOWNLOAD_ALL = False`,
    `DRIVE_MIRROR = False`.
-2. **Driver cell.** One `try/finally`. The `try` runs these steps in order:
+2. **Driver cell.** At the start of the run, before any heavy step, it prints
+   the recovery line: `run_dir`, the clone path, and the import-and-call line
+   for `download_results(run_dir)`. Then one `try/finally`. The `try` runs
+   these steps in order:
    1. **Drive mount**, only if `DRIVE_MIRROR` is true. It is the first step, so
       the one authorization prompt happens at the start and never later.
    2. **Setup.** Clone at `REPO_REF`, install pinned packages that do not
@@ -486,9 +491,12 @@ inside one driver cell.
    - the summary archive rebuilt after each driver step, and its Drive copy
      when `DRIVE_MIRROR` is true;
    - `download_results(run_dir)`, which lives in the repo package, so after a
-     kernel crash a new cell can import it from the clone on disk; it builds
-     any missing archives from the run folder, then triggers the downloads
-     (section 10.3).
+     kernel crash a new cell can import it from the clone on disk. It always
+     rebuilds the summary archive; when no final verdict exists it writes the
+     verdict as INVALID with the reason "process lost during step N", N being
+     the last step the driver recorded as started. It builds any missing
+     archives from the run folder, labels any archive built from a step that
+     did not finish as partial, then triggers the downloads (section 10.3).
 
    After a runtime recycle only what was already mirrored to Drive survives;
    nothing survives a recycle when `DRIVE_MIRROR` is false.
@@ -555,13 +563,16 @@ anything after it fails, the captain still has the answer.
 - `files.download` only works while the Colab tab is open and connected when
   the run reaches the driver cell's `finally` block. A closed tab means no
   download, but the run folder and archives stay on the runtime.
-- Recovery, printed in the banner:
+- Recovery, printed at the start of the run and again in the banner:
   1. Allow multiple downloads for `colab.research.google.com`, then in a new
      cell import `download_results` from the repo package in the clone on disk
-     and run `download_results(run_dir)`. It builds any missing archives from
-     the run folder without recomputing results, then triggers the downloads.
-     This also works after a kernel crash, because the clone and the run
-     folder stay on the runtime.
+     and run `download_results(run_dir)`. It always rebuilds the summary
+     archive, builds any missing archives from the run folder without
+     recomputing results, then triggers the downloads. When no final verdict
+     exists it writes the verdict as INVALID with the reason "process lost
+     during step N" and labels any archive built from a step that did not
+     finish as partial. This also works after a kernel crash, because the
+     clone and the run folder stay on the runtime.
   2. Download the archives from the Files pane.
   3. If `DRIVE_MIRROR` is true, the summary archive is copied to
      `MyDrive/exp50mp_v6/<run_id>/` after each driver step, and all archives
@@ -604,8 +615,10 @@ anything after it fails, the captain still has the answer.
    exception in step 5 or 6 keeps the benchmark's PASS or MISSED verdict,
    marked "completed with errors". The guarantee covers raised exceptions
    only. After a forced kernel crash, `download_results(run_dir)` imported
-   from the clone in a new cell builds any missing archives from the run
-   folder and downloads them. After a runtime recycle only what was already
+   from the clone in a new cell rebuilds the summary archive with an INVALID
+   verdict and the reason "process lost during step N", builds any missing
+   archives from the run folder (labelled partial when their step did not
+   finish) and downloads them. After a runtime recycle only what was already
    mirrored to Drive survives (the summary archive as of the last completed
    driver step when `DRIVE_MIRROR` is true; nothing when it is false).
 6. Unit tests and lint pass locally; full-suite tests run through the shared
@@ -620,7 +633,7 @@ anything after it fails, the captain still has the answer.
 | Browser blocks multiple downloads or the tab is closed | Captain gets only the summary or nothing | Summary first, recovery function, Files pane, optional Drive mirror |
 | HAT-L or reference download fails (quota, link rot) | Run cannot start | Repo-hosted mirror, SHA-256 pins, preflight fails fast with a report |
 | A100 not available or High-RAM not granted | Slower or rejected run | L4 accepted with warning; preflight states the actual tier |
-| Runtime longer than estimates, Colab session recycled | Lost outputs | Measure in M5; summary archive rebuilt after each driver step and copied to Drive when `DRIVE_MIRROR` is true (only that survives a recycle); `download_results(run_dir)` after a kernel crash |
+| Runtime longer than estimates, Colab session recycled | Lost outputs | Measure in M5; summary archive rebuilt after each driver step and copied to Drive when `DRIVE_MIRROR` is true (only that survives a recycle); `download_results(run_dir)` after a kernel crash (rebuilds the summary with an INVALID "process lost during step N" verdict, partial archives labelled) |
 | Disk exhaustion while archiving | Packaging fails | 80 GB preflight check, ZIP_STORED, exclusions by default |
 | ARW licence unknown | Cannot host publicly | Q4 default: captain-owned private URL with pinned SHA-256, no redistribution |
 | rawpy or LibRaw version drift changes R1 or decode | Score shifts between runs | Pin versions; record LibRaw version and matrix in the manifest |
