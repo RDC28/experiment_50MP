@@ -863,7 +863,7 @@ three-output requirement, and Q4 was settled without hosting.
    in-sample (section 13). **Settled:** the publisher's own URL serves the
    file (section 8.1), so v6 fetches it from there with a pinned SHA-256 and
    does not host or redistribute it. More frames are still wanted.
-6. **Delivered noise.** Are there specific 2K/4K source images to deliver,
+5. **Production inputs.** Are there specific 2K/4K source images to deliver,
    or is benchmark-only the default run? Default: benchmark-only.
 6. **Delivered noise.** Should the primary 50 MP DNG include sensor noise
    (as now), or should the noise-free mosaic be primary and the noisy one

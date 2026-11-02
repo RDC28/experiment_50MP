@@ -10,8 +10,8 @@ inferred, simulated and encoded information apart.
 
 **Next experiment: [PRD v6](prd_v6/PRD_v6.md)** ("Single-Run, Accuracy-Gated Synthetic 50 MP RAW"). It
 targets a single Colab "Run all" at maximum quality that downloads its results automatically, gated on 95%
-accuracy against a real Sony A1 II RAW in linear RAW space. It is a specification only; its notebook is not
-built yet.
+accuracy against a real Sony A1 II RAW in linear RAW space, separately for 2K, 4K and 50 MP 16-bit outputs.
+Its notebook, code and tests live in `prd_v6/`; see [prd_v6/README.md](prd_v6/README.md).
 
 **Previous experiment: [PRD v5](prd_v5/PRD_v5.md)** ("Final Single-Colab Synthetic 50 MP RAW Camera
 Reconstruction"). Its notebook, code and tests live in `prd_v5/`; see [prd_v5/README.md](prd_v5/README.md).
@@ -268,7 +268,7 @@ src/                           the shared package, imported as synthetic_raw_lab
   final_report.py              the final experiment report: PRD 34 answers, PRD 33 outcome, best Colab configuration
 src/synthraw/                  the PRD_v3 package, imported as synthraw (PRD_v3 class names)
 prd_v5/                        PRD v5 experiment: notebook, prd_v5 package and tests (see prd_v5/README.md)
-prd_v6/PRD_v6.md               PRD v6 specification (next experiment; notebook not built yet)
+prd_v6/                        PRD v6 experiment: specification, notebook, prd_v6 package and tests (see prd_v6/README.md)
 tests/                         pytest suite; cycle 1 notebook execution and real-network tests are opt-in
 inputs/{human,night,universal}/  read-only copies of ingested sources (not in Git)
 outputs/{human,night,universal}/  full-resolution masters per run (not in Git)

@@ -34,14 +34,14 @@ dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.9", "nbclient>=0.10", "ipykernel>=
 
 [tool.setuptools]
 # PRD 4.4 keeps the modules directly in src/; they install as the synthetic_raw_lab package.
-package-dir = { "synthetic_raw_lab" = "src", "synthraw" = "src/synthraw", "prd_v5" = "prd_v5" }
-packages = ["synthetic_raw_lab", "synthraw", "prd_v5"]
+package-dir = { "synthetic_raw_lab" = "src", "synthraw" = "src/synthraw", "prd_v5" = "prd_v5", "prd_v6" = "prd_v6" }
+packages = ["synthetic_raw_lab", "synthraw", "prd_v5", "prd_v6"]
 
 [tool.setuptools.package-data]
 prd_v5 = ["analytic-config.schema.json", "field_catalogue.json", "tools/*.sh"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "prd_v5/tests"]
+testpaths = ["tests", "prd_v5/tests", "prd_v6/tests"]
 pythonpath = ["src"]
 addopts = "-ra"
 
@@ -51,7 +51,7 @@ target-version = "py310"
 
 [tool.ruff.format]
 # The supplied PRD is kept verbatim, including its embedded code blocks.
-exclude = ["prd_v5/PRD_v5.md"]
+exclude = ["prd_v5/PRD_v5.md", "prd_v6/PRD_v6.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
