@@ -50,10 +50,13 @@ must earn its place against that measurement.
   (section 6).
 - G3. A pipeline whose stages are chosen by measured accuracy, not by
   completeness of the camera model. Stages that lower accuracy are removed
-  from the max preset (section 5).
+  from the max preset, except measured shot and read noise, which is a
+  property of the deliverable (section 5.1).
 - G4. When the target is missed, the run still completes, still downloads
   everything, says MISSED plainly and names the largest error contributor with
-  numbers (section 7).
+  numbers (section 7). When any step fails, the single driver cell's
+  `try/finally` still packages and downloads a summary archive that explains
+  the failure (section 9.2).
 - G5. Committed evidence of at least one full Colab run (section 11, M5).
 
 ### Non-goals
@@ -124,7 +127,7 @@ M3 replaces every expectation with a measured ablation.
 | Learned RGB-to-RAW for other cameras (RAW-Flow Nikon/Canon/PASCALRAW, RAW-Diffusion, SpiralDiff) | Hurts; wrong spectral response, no A1 II checkpoint exists | **Drop** |
 | Mosaic to RGGB at the reference CFA phase | Required | Keep |
 | Saturation at the A1 II clip (15360) | Helps; matches real highlight behaviour | Keep, at the measured clip, not 16383 |
-| Shot and read noise | Neutral to the gate by construction (section 6.4); needed for a believable RAW | Keep, at **measured** A1 II values: gain about 2.08 e-/DN (G), read noise 4 e- (upper bound), full well about 33,000 e- |
+| Shot and read noise | Costs accuracy by design: the delivered DNG's independent noise adds directly to the P1 error (about 2-3% NRMSE near the median, section 7.1); needed for a believable RAW | Keep, at **measured** A1 II values: gain about 2.08 e-/DN (G), read noise 4 e- (upper bound), full well about 33,000 e-; exempt from the rule below |
 | PRNU, DSNU, FPN, dark current, hot and dead pixels, nonlinearity | Hurts; fabricated patterns are not in the reference (its measured hot-pixel rate is 6e-6 and dead 2e-8) | **Drop** |
 | ADC quantization to 14 bit, black 512 | Required | Keep |
 | DNG writer, LibRaw TIFF, `dng_validate` | Required | Keep |
@@ -135,6 +138,11 @@ Rule for the frozen max preset: a stage stays enabled only if the ablation on
 the benchmark shows it changes the primary accuracy score A (section 6.3) by
 -0.1 percentage points or better on every plane. A stage that helps one plane
 and hurts another by more than that is dropped or made plane-neutral.
+
+Shot and read noise are exempt from this rule. They are a property of the
+deliverable, not an accuracy stage: the delivered DNG is a noisy camera RAW
+(Q6 default) and the gate scores that file, so noise stays on even though it
+lowers A. Its cost is reported every run as ladder rung L1 (section 7.2).
 
 ### 5.2 v6 order
 
@@ -209,11 +217,14 @@ measured matrix because it is a camera-model constant.
   single scalar, white balance, colour matrix and plane-ratio errors still
   count in full. Whether the captain allows even this scalar is Q1; the
   unfitted (k = 1) score is always reported.
-- Mask: the visible area, minus reference photosites at or above 0.98 x 15360
-  (sensor-clipped, no truth available) and a 16 px border. The source-clipped
-  pixels of the 8-bit render are kept in the mask and reported separately,
-  because recovering them is part of the job. If more than 1% of photosites are
-  excluded, the reference frame is unsuitable and the run is INVALID.
+- Mask: the visible area minus a 16 px border (8608x5728 photosites), minus
+  sensor-clipped reference photosites, defined as raw value (before black
+  subtraction) >= 0.98 x 15360 = 15052.8 DN; no truth is available there. The
+  source-clipped pixels of the 8-bit render are kept in the mask and reported
+  separately, because recovering them is part of the job. If sensor-clipped
+  photosites exceed 1% of the visible area excluding the border, the reference
+  frame is unsuitable and the run is INVALID. The border is not counted
+  towards that 1%.
 
 ### 6.3 Primary gate
 
@@ -254,19 +265,30 @@ Definitions that were considered and rejected:
 | Scoring on heavily downsampled images | PR #13 showed downsampled comparisons hid high-frequency differences. v6 scores every photosite. |
 | Clean mosaic as the gated output | The delivered DNG includes noise; the user gets that file. The clean score is reported as a diagnostic. |
 
-Required sanity checks, run on every benchmark and shipped in the report. Each
-must give the expected result or the run is INVALID (the metric is broken, so
-no verdict is possible):
+Sanity checks, run on every benchmark and shipped in the report.
+
+Hard checks. Each must give the expected result or the run is INVALID (the
+metric is broken, so no verdict is possible):
 
 - Reference against itself: A = 1.000, P2 = 100%.
 - Reference against an independent noise realization of itself (from the
   measured noise model): P1 at least 0.97 and P2 at least 99%. This is the
   noise floor; it proves the target is not unreachable because of noise.
-- Constant mean predictor: A well below 0.95 (expected about 0.2 to 0.5,
-  scene dependent).
-- Reference shifted by 1 photosite of the same colour: fails the gate.
-- Reference with R plane gain +10%: fails on R.
-- Reference blurred with sigma 2 photosites: fails the gate.
+
+Sensitivity checks. Each perturbation is applied to the noise-floor
+realization and scored against the reference. Compared with the unperturbed
+noise-floor score, it must lower min A_p by at least 1 percentage point and
+lower the P2 fraction (on every plane, or on R for the R gain). These are
+monotonic checks, not gate failures, because how far a perturbation falls is
+scene dependent. A check that misses its margin is flagged as a
+metric-sensitivity warning in the verdict and report; it does not make the run
+INVALID.
+
+- Constant mean predictor (expected A about 0.2 to 0.5, scene dependent).
+- Shift by 1 photosite of the same colour (2 raw photosites).
+- R plane gain +10%.
+- Gaussian blur of each CFA plane with sigma 2 raw photosites (1 same-colour
+  site).
 
 ### 6.5 Reported, not gated
 
@@ -290,12 +312,14 @@ no verdict is possible):
 
 ### 6.6 Run status
 
-- **PASS**: integrity gates pass, sanity checks pass, primary gate passes.
-- **MISSED**: integrity and sanity pass, primary gate fails. The report states
+- **PASS**: integrity gates pass, hard sanity checks pass, primary gate
+  passes.
+- **MISSED**: integrity and hard sanity checks pass, primary gate fails. The report states
   the gap per plane and the largest contributor from the error budget
   (section 7.2).
-- **INVALID**: integrity or sanity fails, the reference is unsuitable, or a
-  required stage silently did nothing. No accuracy claim is made.
+- **INVALID**: integrity or a hard sanity check fails, the reference is
+  unsuitable, a driver step raised (section 9.2), or a required stage silently
+  did nothing. No accuracy claim is made.
 
 Thresholds are fixed in code and in this PRD. The notebook never relaxes a
 threshold, never retries with different settings to reach a pass, and never
@@ -408,27 +432,36 @@ automatically to other scenes. When unset, the run is benchmark-only (Q5).
 
 ### 9.2 Cell contract
 
-1. **Settings.** All configuration in one cell with defaults that need no
-   edits: `PRESET = "max"`, `REPO_REF` pinned to a release commit (not
-   `main`), `SOURCE_*_URL = None`, `DOWNLOAD_ALL = False`,
-   `DRIVE_MIRROR = False`. If `DRIVE_MIRROR` is true, Drive is mounted here, in
-   the first cell, so the one authorization prompt happens at the start and
-   never between cells.
-2. **Setup.** Clone at `REPO_REF`, install pinned packages that do not require a
-   runtime restart (a restart would break Run all; the notebook checks this and
-   fails with a clear message if a package would need one), build
-   `dng_validate`.
-3. **Preflight.** GPU, VRAM, RAM, disk, package versions; download the
-   reference ARW and checkpoints and verify every SHA-256. Any failure stops
-   here, before heavy work, and still writes a small failure report (cell 7
-   runs).
-4. **Benchmark.** Build R1 and R2 at 4K and 2K, run the frozen pipeline and the
-   ladder, score, sanity checks.
-5. **Production.** Only if source URLs are set.
-6. **Sweeps and secondary reports.**
-7. **Package and download.** Cells 3-6 run inside a `try/finally` so this
-   always runs, even after an error. It writes the manifest, builds archives
-   and triggers downloads (section 10). It ends with a printed verdict banner.
+The notebook has two code cells. Colab's Run all stops at the first cell that
+raises, and a `try/finally` cannot span cells, so all work that can fail runs
+inside one driver cell.
+
+1. **Settings cell.** Literal assignments only, so it cannot fail, with
+   defaults that need no edits: `PRESET = "max"`, `REPO_REF` pinned to a
+   release commit (not `main`), `SOURCE_*_URL = None`, `DOWNLOAD_ALL = False`,
+   `DRIVE_MIRROR = False`.
+2. **Driver cell.** One `try/finally`. The `try` runs these steps in order:
+   1. **Drive mount**, only if `DRIVE_MIRROR` is true. It is the first step, so
+      the one authorization prompt happens at the start and never later.
+   2. **Setup.** Clone at `REPO_REF`, install pinned packages that do not
+      require a runtime restart (a restart would break Run all; the notebook
+      checks this and fails with a clear message if a package would need one),
+      build `dng_validate`.
+   3. **Preflight.** GPU, VRAM, RAM, disk, package versions; download the
+      reference ARW and checkpoints and verify every SHA-256. Any failure stops
+      here, before heavy work.
+   4. **Benchmark.** Build R1 and R2 at 4K and 2K, run the frozen pipeline and
+      the ladder, score, sanity checks.
+   5. **Production.** Only if source URLs are set.
+   6. **Sweeps and secondary reports.**
+
+   The `finally` block is **package and download**, so it runs after success
+   and after an exception in any step above. It records the exception and
+   traceback in the run state (making the run INVALID), writes the verdict and
+   manifest, builds archives from whatever the run folder holds, triggers
+   downloads (section 10) and ends with a printed verdict banner. Its code is
+   defined in the notebook itself and uses only the standard library and
+   `google.colab.files`, so it works even when the clone or install failed.
 
 Never used anywhere: `files.upload`, `input()`, widgets that wait for a click,
 `/content` paths that assume a manual upload, or silent fallbacks (for example,
@@ -447,9 +480,11 @@ its highest-quality setting:
   outputs.
 - Measured A1 II camera model; 14-bit ADC.
 - Full ladder, both benchmark resolutions, both renders, all sweeps.
+- Shot and read noise at measured A1 II values in the delivered DNG (the one
+  stage kept although it lowers A, section 5.1).
 
 Stages dropped in section 5.1 are not "options" in the max preset because they
-lower accuracy. Keeping them as an opt-in ungated mode is Q9.
+lower accuracy. Q9 default: they are removed from v6, with no opt-in look mode.
 
 ## 10. Outputs and automatic download
 
@@ -488,7 +523,7 @@ anything after it fails, the captain still has the answer.
   download. If it is blocked, only archive 1 arrives. The notebook prints this
   warning before the downloads start and again in the banner.
 - `files.download` only works while the Colab tab is open and connected when
-  the run reaches cell 7. A closed tab means no download, but the run folder
+  the run reaches the driver cell's `finally` block. A closed tab means no download, but the run folder
   and archives stay on the runtime.
 - Recovery, printed in the banner:
   1. Allow multiple downloads for `colab.research.google.com`, then run
@@ -511,8 +546,8 @@ anything after it fails, the captain still has the answer.
   inverse, back-projection, measured noise and levels, stage removals.
 - **M3, ablation and freeze.** Per-stage ablation on Colab; freeze the max
   preset with the section 5.1 rule; record the ablation table.
-- **M4, single-run notebook.** Cell contract, preflight, try/finally
-  packaging, downloads, recovery function.
+- **M4, single-run notebook.** Cell contract, preflight, single driver cell
+  with try/finally packaging, downloads, recovery function.
 - **M5, evidence.** A full Run-all on the stated tier, measured stage times and
   memory, verdict and summary archive committed under `evidence/colab_runs/`
   (no DNGs or ARWs in Git).
@@ -524,10 +559,12 @@ anything after it fails, the captain still has the answer.
 2. The run reports PASS, MISSED or INVALID against section 6 exactly as
    defined, with all sanity checks shown.
 3. The headline number is computed in linear RAW space on the delivered DNG.
-4. Every stage in the max preset has an ablation row showing it meets the
-   section 5.1 rule.
-5. A forced failure (for example, a wrong checkpoint hash) still produces and
-   downloads a summary archive that explains the failure.
+4. Every stage in the max preset except shot and read noise has an ablation
+   row showing it meets the section 5.1 rule; the noise cost is reported as
+   ladder rung L1.
+5. A forced failure in any driver step (for example, a failed clone or a
+   wrong checkpoint hash) still produces and downloads a summary archive that
+   explains the failure, with no cell left unrun by Run all.
 6. Unit tests and lint pass locally; full-suite tests run through the shared
    heavy-lock script.
 
@@ -542,7 +579,7 @@ anything after it fails, the captain still has the answer.
 | A100 not available or High-RAM not granted | Slower or rejected run | L4 accepted with warning; preflight states the actual tier |
 | Runtime longer than estimates, Colab session recycled | Lost outputs | Measure in M5; summary archive written early and updated; Drive mirror |
 | Disk exhaustion while archiving | Packaging fails | 80 GB preflight check, ZIP_STORED, exclusions by default |
-| ARW licence unknown | Cannot host publicly | Q4; private URL with token if needed |
+| ARW licence unknown | Cannot host publicly | Q4 default: captain-owned private URL with pinned SHA-256, no redistribution |
 | rawpy or LibRaw version drift changes R1 or decode | Score shifts between runs | Pin versions; record LibRaw version and matrix in the manifest |
 | Pip install needing a runtime restart | Breaks Run all | Pin versions known to install cleanly on Colab; preflight check |
 
@@ -558,17 +595,26 @@ anything after it fails, the captain still has the answer.
    Default: reported only, because 2K is unlikely to pass (section 7.1).
 4. **Reference frames.** Can the reference ARW be hosted at a stable URL, and
    under what licence? Can we get at least 5 more A1 II frames of varied scenes
-   and light so that tuning and the gate use different frames?
+   and light so that tuning and the gate use different frames? Default: a
+   captain-owned private URL with a pinned SHA-256 and no redistribution; until
+   more frames exist, the gate uses the single frame and the score is labelled
+   in-sample (section 13).
 5. **Production inputs.** Are there specific 2K/4K source images to deliver,
-   or is benchmark-only the default run?
+   or is benchmark-only the default run? Default: benchmark-only.
 6. **Delivered noise.** Should the primary delivered DNG include sensor noise
    (as now), or should the noise-free mosaic be primary and the noisy one
-   secondary?
+   secondary? Default: the noisy DNG is primary and gated, exempt from the
+   section 5.1 rule, with its cost reported as rung L1; the clean mosaic is
+   reported only.
 7. **Missing model.** If HAT-L cannot be loaded, should the max run fail
    (default) or fall back to Lanczos and say so?
 8. **Downloads.** Is the default bundle set right, or should every artefact
-   download (tens of GB)? Should the Drive mirror be on by default?
+   download (tens of GB)? Should the Drive mirror be on by default? Default:
+   the five bundles in section 10.2, Drive mirror off.
 9. **Look mode.** Keep the dropped v5 stages (optics, grain, fabricated sensor
    effects) as an opt-in, ungated "camera look" mode, or remove them from v6?
+   Default: remove them from v6, no look mode.
 10. **If MISSED.** Ship the best measured pipeline with a MISSED verdict, or
-    fund an A1 II-specific RGB-to-RAW model (section 7.4, step 3)?
+    fund an A1 II-specific RGB-to-RAW model (section 7.4, step 3)? Default:
+    ship the best measured pipeline with a MISSED verdict and open a separate
+    PRD for an A1 II RGB-to-RAW model.
