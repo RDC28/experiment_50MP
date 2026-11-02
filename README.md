@@ -268,6 +268,7 @@ src/                           the shared package, imported as synthetic_raw_lab
   final_report.py              the final experiment report: PRD 34 answers, PRD 33 outcome, best Colab configuration
 src/synthraw/                  the PRD_v3 package, imported as synthraw (PRD_v3 class names)
 prd_v5/                        PRD v5 experiment: notebook, prd_v5 package and tests (see prd_v5/README.md)
+prd_v6/PRD_v6.md               PRD v6 specification (next experiment; notebook not built yet)
 tests/                         pytest suite; cycle 1 notebook execution and real-network tests are opt-in
 inputs/{human,night,universal}/  read-only copies of ingested sources (not in Git)
 outputs/{human,night,universal}/  full-resolution masters per run (not in Git)
