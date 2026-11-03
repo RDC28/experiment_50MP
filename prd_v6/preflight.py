@@ -1,6 +1,8 @@
 """Driver step 3: runtime tier, resources, versions and verified downloads (sections 8.1, 9.1).
 
 Any failure raises PreflightError before heavy work, which makes the run INVALID with the reason.
+The captain's own images are the exception: a bad SOURCE_4K_URL or SOURCE_2K_URL is only recorded,
+and step 5 skips that source and reports it next to the verdict.
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ WARNED_GPUS = ("L4",)
 
 DRIVE_HOSTS = ("drive.google.com", "docs.google.com", "drive.usercontent.google.com")
 DRIVE_DIRECT = "https://drive.google.com/uc?export=download&id={}"
+DRIVE_DOWNLOAD_HOSTS = ("drive.google.com", "drive.usercontent.google.com")
+DRIVE_DOWNLOAD_PATHS = ("/uc", "/download")
 OWN_SOURCES = (("4k_source", "SOURCE_4K_URL"), ("2k_source", "SOURCE_2K_URL"))
 
 
@@ -54,14 +58,23 @@ def own_image_dest(inputs: Path, key: str, url: str) -> Path:
 
 
 def _confirm_url(page: str, base: str) -> str | None:
-    """The large-file confirmation form (or link) of a Drive 'cannot scan for viruses' page."""
+    """The large-file confirmation form (or link) of a Drive 'cannot scan for viruses' page.
+
+    None unless it leads to a Drive download, so a sign-in or access page is never followed.
+    """
     form = re.search(r'<form[^>]*action="([^"]+)"[^>]*>(.*?)</form>', page, re.S)
+    link = re.search(r'href="(/uc\?export=download[^"]+)"', page)
     if form:
         fields = re.findall(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', form.group(2))
         query = urllib.parse.urlencode([(name, html.unescape(value)) for name, value in fields])
-        return urllib.parse.urljoin(base, html.unescape(form.group(1))) + ("?" + query if query else "")
-    link = re.search(r'href="(/uc\?export=download[^"]+)"', page)
-    return urllib.parse.urljoin(base, html.unescape(link.group(1))) if link else None
+        target = urllib.parse.urljoin(base, html.unescape(form.group(1))) + ("?" + query if query else "")
+    elif link:
+        target = urllib.parse.urljoin(base, html.unescape(link.group(1)))
+    else:
+        return None
+    parts = urllib.parse.urlparse(target)
+    is_download = parts.hostname in DRIVE_DOWNLOAD_HOSTS and parts.path in DRIVE_DOWNLOAD_PATHS
+    return target if parts.scheme == "https" and is_download else None
 
 
 def _fetch(url: str, tmp: Path) -> None:
@@ -86,8 +99,8 @@ def _fetch(url: str, tmp: Path) -> None:
     raise PreflightError(f"{url}: Google Drive kept asking for confirmation instead of sending the file")
 
 
-def check_image(path: Path, setting: str) -> None:
-    """Fail early, naming the setting, when a downloaded source image does not decode (e.g. an HTML page)."""
+def check_image(path: Path) -> None:
+    """Raise when a downloaded source image does not decode (e.g. an HTML page) and delete it."""
     from PIL import Image
 
     try:
@@ -97,7 +110,7 @@ def check_image(path: Path, setting: str) -> None:
         size = Path(path).stat().st_size
         Path(path).unlink(missing_ok=True)
         raise PreflightError(
-            f"{setting}: the download ({size} bytes) is not a decodable image ({type(error).__name__}). "
+            f"the download ({size} bytes) is not a decodable image ({type(error).__name__}). "
             "Use a direct image URL or a Google Drive link shared as 'Anyone with the link'."
         ) from error
 
@@ -193,7 +206,7 @@ def runtime_tier(disk_path: Path) -> dict:
 
 
 def run(run_dir: Path, settings: dict, log=print) -> dict:
-    """Check the runtime, download and verify inputs, load HAT-L. Returns the inputs for step 4."""
+    """Check the runtime, download and verify inputs, load HAT-L. Returns the inputs for steps 4 and 5."""
     from prd_v5.dng_validate import ENV_VAR, find_dng_validate
     from prd_v6 import sr
     from prd_v6.install import DNG_VALIDATE_BUILD
@@ -216,11 +229,16 @@ def run(run_dir: Path, settings: dict, log=print) -> dict:
         raise PreflightError(f"dng_validate is not available: {build.get('reason') or 'setup did not build it'}")
     os.environ[ENV_VAR] = str(tool)
     inputs = run_dir / "inputs"
-    for key, setting in OWN_SOURCES:  # the captain's own images: fail now, not after the benchmark
+    source_errors = {}
+    for key, setting in OWN_SOURCES:
         if settings.get(setting):
             dest = own_image_dest(inputs, key, settings[setting])
-            download(settings[setting], dest, size=None, digest=None, log=log)
-            check_image(dest, setting)
+            try:
+                download(settings[setting], dest, size=None, digest=None, log=log)
+                check_image(dest)
+            except Exception as error:  # noqa: BLE001 - own images never gate the benchmark (section 9.2)
+                source_errors[setting] = f"{setting}: {error}"
+                log(f"preflight warning: {source_errors[setting]}; step 5 skips this source")
     arw = download(
         settings.get("REFERENCE_ARW_URL") or constants.REFERENCE_ARW_URL,
         inputs / constants.REFERENCE_ARW_NAME,
@@ -237,6 +255,16 @@ def run(run_dir: Path, settings: dict, log=print) -> dict:
     )
     model, model_info = sr.load_hat_l(checkpoint["path"])
     log(f"HAT-L loaded: {model_info}")
-    environment.update(inputs={"reference_arw": arw, "hat_l": checkpoint}, model=model_info, dng_validate=str(tool))
+    environment.update(
+        inputs={"reference_arw": arw, "hat_l": checkpoint, "source_errors": source_errors},
+        model=model_info,
+        dng_validate=str(tool),
+    )
     (run_dir / "environment.json").write_text(json.dumps(environment, indent=2, default=str))
-    return {"arw": Path(arw["path"]), "model": model, "model_info": model_info, "dng_validate": str(tool)}
+    return {
+        "arw": Path(arw["path"]),
+        "model": model,
+        "model_info": model_info,
+        "dng_validate": str(tool),
+        "source_errors": source_errors,
+    }

@@ -108,13 +108,70 @@ def test_drive_large_file_confirmation_form_is_followed():
     assert preflight._confirm_url("<html>sign in</html>", "https://drive.google.com/uc") is None
 
 
-def test_undecodable_source_fails_early_naming_the_setting(tmp_path):
+@pytest.mark.parametrize(
+    ("page", "base"),
+    [
+        (
+            '<form action="https://accounts.google.com/v3/signin/identifier" method="post">'
+            '<input type="hidden" name="continue" value="x"></form>',
+            "https://accounts.google.com/v3/signin/identifier",
+        ),
+        ('<a href="/uc?export=download&amp;id=abc">Download</a>', "https://accounts.google.com/ServiceLogin"),
+    ],
+)
+def test_a_sign_in_page_is_not_followed(page, base):
+    """A file not shared publicly redirects to sign-in; its forms must not be mistaken for the confirmation."""
+    assert preflight._confirm_url(page, base) is None
+
+
+def test_undecodable_source_is_rejected_and_deleted(tmp_path):
     page = tmp_path / "4k_source.img"
     page.write_bytes(b"<!DOCTYPE html><html>Google Drive</html>")
-    with pytest.raises(preflight.PreflightError, match="SOURCE_4K_URL.*not a decodable image"):
-        preflight.check_image(page, "SOURCE_4K_URL")
+    with pytest.raises(preflight.PreflightError, match="not a decodable image"):
+        preflight.check_image(page)
     assert not page.exists()
     from PIL import Image
 
     Image.new("RGB", (6, 4)).save(tmp_path / "ok.png")
-    preflight.check_image(tmp_path / "ok.png", "SOURCE_2K_URL")
+    preflight.check_image(tmp_path / "ok.png")
+
+
+def test_a_bad_own_image_does_not_gate_preflight(tmp_path, monkeypatch):
+    """A bad SOURCE_4K_URL is recorded naming the setting; a good SOURCE_2K_URL and the benchmark inputs still load."""
+    import json
+
+    from PIL import Image
+
+    from prd_v5 import dng_validate
+    from prd_v6 import sr
+    from prd_v6.install import DNG_VALIDATE_BUILD
+
+    def fake_download(url, dest, *, size, digest, log=print):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.name.startswith("4k_source"):
+            dest.write_bytes(b"<!DOCTYPE html><html>Google Drive</html>")
+        elif dest.name.startswith("2k_source"):
+            Image.new("RGB", (6, 4)).save(dest, format="PNG")
+        else:
+            dest.write_bytes(b"x")
+        return {"url": url, "path": str(dest)}
+
+    tier = {"gpu": "A100", "vram_gb": 80, "ram_gb": 80, "disk_free_gb": 200, "problems": [], "warnings": []}
+    monkeypatch.setattr(preflight, "runtime_tier", lambda run_dir: tier)
+    monkeypatch.setattr(preflight, "versions", lambda: {})
+    monkeypatch.setattr(preflight, "download", fake_download)
+    monkeypatch.setattr(dng_validate, "find_dng_validate", lambda binary: binary)
+    monkeypatch.setattr(sr, "load_hat_l", lambda path: (None, {"name": "stand-in"}))
+    monkeypatch.setenv(dng_validate.ENV_VAR, "unset")
+    (tmp_path / DNG_VALIDATE_BUILD).parent.mkdir()
+    (tmp_path / DNG_VALIDATE_BUILD).write_text(json.dumps({"status": "built", "binary": "dng_validate"}))
+    settings = {
+        "SOURCE_4K_URL": "https://drive.google.com/file/d/abc/view",
+        "SOURCE_2K_URL": "https://example.com/pic.png",
+    }
+    logged = []
+    inputs = preflight.run(tmp_path, settings, logged.append)
+    assert list(inputs["source_errors"]) == ["SOURCE_4K_URL"]
+    assert inputs["source_errors"]["SOURCE_4K_URL"].startswith("SOURCE_4K_URL: the download")
+    assert any("preflight warning: SOURCE_4K_URL" in line for line in logged)
+    assert (tmp_path / "inputs" / "2k_source.png").exists()
