@@ -40,12 +40,35 @@ class Reference:
         return colour.neutral_from_multipliers(self.libraw["camera_whitebalance"])
 
 
+def active_window(raw) -> tuple[slice, slice]:
+    """Rows and columns of the camera's active area inside rawpy's visible array.
+
+    LibRaw reports the Sony A1 II's full 8672 x 5784 array as visible (margins 0) and gives the
+    8640 x 5760 active area, the DNG default crop, as crop_*_margin and crop_width/height. Every
+    array decoded from the file (raw, colours, postprocess output) is cut with this one window.
+    The origin must be even so the CFA phase at the crop origin is the sensor's own.
+    """
+    sizes = raw.sizes
+    top, left, height, width = (
+        int(v) for v in (sizes.crop_top_margin, sizes.crop_left_margin, sizes.crop_height, sizes.crop_width)
+    )
+    if height == 0 or width == 0:  # no crop reported: the visible array is the active area
+        return slice(0, None), slice(0, None)
+    full_h, full_w = int(sizes.iheight), int(sizes.iwidth)
+    if top % 2 or left % 2 or top + height > full_h or left + width > full_w:
+        raise UnsuitableReference(
+            f"active area {height}x{width} at ({top}, {left}) does not fit the {full_h}x{full_w} array"
+        )
+    return slice(top, top + height), slice(left, left + width)
+
+
 def load(arw: str | Path) -> Reference:
     import rawpy
 
     with rawpy.imread(str(arw)) as raw:
-        visible = np.array(raw.raw_image_visible, dtype=np.uint16, copy=True)
-        colours = np.asarray(raw.raw_colors_visible)
+        window = active_window(raw)
+        visible = np.array(raw.raw_image_visible[window], dtype=np.uint16, copy=True)
+        colours = np.asarray(raw.raw_colors_visible)[window]
         desc = raw.color_desc.decode()
         black_per_channel = np.asarray(raw.black_level_per_channel, dtype=np.float32)
         letters = np.array([desc[i] for i in range(len(desc))])
@@ -56,6 +79,8 @@ def load(arw: str | Path) -> Reference:
             "libraw_version": ".".join(str(v) for v in rawpy.libraw_version),
             "rawpy_version": rawpy.__version__,
             "raw_size": [int(raw.sizes.raw_height), int(raw.sizes.raw_width)],
+            "full_visible_size": [int(raw.sizes.iheight), int(raw.sizes.iwidth)],
+            "active_origin": [int(raw.sizes.crop_top_margin), int(raw.sizes.crop_left_margin)],
             "visible_size": list(visible.shape),
             "color_desc": desc,
             "cfa_phase": pattern,
@@ -71,7 +96,7 @@ def load(arw: str | Path) -> Reference:
     return Reference(visible, layout, pattern, black, info)
 
 
-def _postprocess(arw: str | Path, **options) -> np.ndarray:
+def _postprocess(arw: str | Path, **options) -> tuple[np.ndarray, float]:
     import rawpy
 
     with rawpy.imread(str(arw)) as raw:
@@ -84,7 +109,7 @@ def _postprocess(arw: str | Path, **options) -> np.ndarray:
             adjust_maximum_thr=0,
             user_flip=0,
             **options,
-        )
+        )[active_window(raw)]
         span = float(raw.white_level) - float(np.mean(raw.black_level_per_channel))
     return out, span
 
