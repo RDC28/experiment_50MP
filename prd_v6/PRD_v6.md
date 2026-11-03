@@ -104,7 +104,9 @@ same frozen pipeline produces the three outputs for each of them.
 - **Reference ARW.** The real Sony ILCE-1M2 capture measured in PR #13:
   raw 8672x5784, visible 8640x5760, RGGB, 14-bit, black 512, LibRaw maximum
   16383, practical clip 15360, ISO 100, 1/250 s, f/8, 28 mm. Not committed to
-  Git (106 MB, licence unknown, see Q4).
+  Git (106 MB, licence unknown, see Q4). "Visible area" in this document is the
+  camera's active area, which LibRaw reports as its crop (`active_window` in
+  `reference.py`), not rawpy's larger `raw_image_visible` array.
 - **Benchmark render.** A rendered RGB image made from the reference ARW by a
   fixed, declared recipe (section 6.1). It plays the role of "the JPEG/PNG the
   user has". The pipeline sees only the render and camera-model constants.
