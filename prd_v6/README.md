@@ -17,7 +17,7 @@ against that frame's real RAW in linear RAW space. Each output passes only when 
    `_04_benchmark_50mp`). Allow multiple downloads if Chrome asks. If a download was blocked or the kernel
    crashed, paste the recovery line that the driver cell printed first into a new cell.
 
-`SOURCE_4K_URL` and `SOURCE_2K_URL` add 2K, 4K and 50 MP outputs of your own images (no accuracy claim,
+`SOURCE_4K_URL` and `SOURCE_2K_URL` add 2K, 4K and 50 MP outputs of your own images, given as a direct URL or a Google Drive share link (file shared as "Anyone with the link"; no accuracy claim,
 because there is no reference RAW for them). `DRIVE_MIRROR = True` mirrors the summary to Google Drive after
 every step.
 

@@ -73,3 +73,48 @@ def test_production_source_honours_exif_orientation(tmp_path):
     image.save(path, exif=exif)
     rgb, info = production.load_source(path)
     assert info["portrait"] and rgb.shape[:2] == (450, 300)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://drive.google.com/file/d/1AbC_d-9/view?usp=drive_link",
+        "https://drive.google.com/open?id=1AbC_d-9",
+        "https://drive.google.com/uc?export=download&id=1AbC_d-9",
+        "https://docs.google.com/uc?id=1AbC_d-9",
+    ],
+)
+def test_drive_share_links_resolve_to_the_file_id(url):
+    assert preflight.drive_file_id(url) == "1AbC_d-9"
+
+
+def test_non_drive_urls_are_left_alone(tmp_path):
+    assert preflight.drive_file_id("https://example.com/file/d/abc/view") is None
+    assert preflight.own_image_dest(tmp_path, "4k_source", "https://example.com/a/pic.jpg?x=1").name == "4k_source.jpg"
+    assert (
+        preflight.own_image_dest(tmp_path, "4k_source", "https://drive.google.com/file/d/abc/view").name
+        == "4k_source.img"
+    )
+
+
+def test_drive_large_file_confirmation_form_is_followed():
+    page = (
+        '<form id="download-form" action="https://drive.usercontent.google.com/download" method="get">'
+        '<input type="hidden" name="id" value="abc"><input type="hidden" name="confirm" value="t">'
+        '<input type="hidden" name="uuid" value="u&amp;1"></form>'
+    )
+    target = preflight._confirm_url(page, "https://drive.google.com/uc")
+    assert target == "https://drive.usercontent.google.com/download?id=abc&confirm=t&uuid=u%261"
+    assert preflight._confirm_url("<html>sign in</html>", "https://drive.google.com/uc") is None
+
+
+def test_undecodable_source_fails_early_naming_the_setting(tmp_path):
+    page = tmp_path / "4k_source.img"
+    page.write_bytes(b"<!DOCTYPE html><html>Google Drive</html>")
+    with pytest.raises(preflight.PreflightError, match="SOURCE_4K_URL.*not a decodable image"):
+        preflight.check_image(page, "SOURCE_4K_URL")
+    assert not page.exists()
+    from PIL import Image
+
+    Image.new("RGB", (6, 4)).save(tmp_path / "ok.png")
+    preflight.check_image(tmp_path / "ok.png", "SOURCE_2K_URL")

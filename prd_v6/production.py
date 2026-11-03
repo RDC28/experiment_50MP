@@ -13,7 +13,7 @@ import numpy as np
 
 from prd_v6 import benchmark, colour, constants, pipeline, preflight, sr
 
-SOURCES = (("4k_source", "SOURCE_4K_URL"), ("2k_source", "SOURCE_2K_URL"))
+SOURCES = preflight.OWN_SOURCES
 SIZES = {"2k": (1280, 1920), "4k": (2560, 3840), "50mp": constants.VISIBLE_HW}
 
 
@@ -65,7 +65,7 @@ def run(run_dir: Path, settings: dict, model: sr.Model, *, preset: pipeline.Pres
         folder = run_dir / "production" / key
         fetched = preflight.download(
             url,
-            run_dir / "inputs" / f"{key}{Path(url.split('?')[0]).suffix or '.img'}",
+            preflight.own_image_dest(run_dir / "inputs", key, url),
             size=None,
             digest=None,
             log=log,

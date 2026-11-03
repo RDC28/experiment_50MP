@@ -93,6 +93,7 @@ def write_dng(
             subfiletype=0,
             rowsperstrip=_ROWS_PER_STRIP,
             compression=None,
+            extrasamples=False,  # tifffile would add ExtraSamples for 3 samples; dng_validate rejects it
             description=description,
             software="prd_v6",
             metadata=None,
