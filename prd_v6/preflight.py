@@ -1,16 +1,22 @@
 """Driver step 3: runtime tier, resources, versions and verified downloads (sections 8.1, 9.1).
 
 Any failure raises PreflightError before heavy work, which makes the run INVALID with the reason.
+The captain's own images are the exception: a bad SOURCE_4K_URL or SOURCE_2K_URL is only recorded,
+and step 5 skips that source and reports it next to the verdict.
 """
 
 from __future__ import annotations
 
 import hashlib
+import html
+import http.cookiejar
 import json
 import os
 import platform
+import re
 import shutil
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -23,8 +29,90 @@ ACCEPTED_GPUS = ("A100", "H100")
 WARNED_GPUS = ("L4",)
 
 
+DRIVE_HOSTS = ("drive.google.com", "docs.google.com", "drive.usercontent.google.com")
+DRIVE_DIRECT = "https://drive.google.com/uc?export=download&id={}"
+DRIVE_DOWNLOAD_HOSTS = ("drive.google.com", "drive.usercontent.google.com")
+DRIVE_DOWNLOAD_PATHS = ("/uc", "/download")
+OWN_SOURCES = (("4k_source", "SOURCE_4K_URL"), ("2k_source", "SOURCE_2K_URL"))
+
+
 class PreflightError(RuntimeError):
     pass
+
+
+def drive_file_id(url: str) -> str | None:
+    """The file id of a Google Drive share link (file/d/<id>/view, open?id=, uc?id=), else None."""
+    parts = urllib.parse.urlparse(url)
+    if parts.hostname not in DRIVE_HOSTS:
+        return None
+    found = re.search(r"/d/([\w-]+)", parts.path)
+    if found:
+        return found.group(1)
+    ids = urllib.parse.parse_qs(parts.query).get("id")
+    return ids[0] if ids else None
+
+
+def own_image_dest(inputs: Path, key: str, url: str) -> Path:
+    suffix = "" if drive_file_id(url) else Path(url.split("?")[0]).suffix
+    return Path(inputs) / f"{key}{suffix or '.img'}"
+
+
+def _confirm_url(page: str, base: str) -> str | None:
+    """The large-file confirmation form (or link) of a Drive 'cannot scan for viruses' page.
+
+    None unless it leads to a Drive download, so a sign-in or access page is never followed.
+    """
+    form = re.search(r'<form[^>]*action="([^"]+)"[^>]*>(.*?)</form>', page, re.S)
+    link = re.search(r'href="(/uc\?export=download[^"]+)"', page)
+    if form:
+        fields = re.findall(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', form.group(2))
+        query = urllib.parse.urlencode([(name, html.unescape(value)) for name, value in fields])
+        target = urllib.parse.urljoin(base, html.unescape(form.group(1))) + ("?" + query if query else "")
+    elif link:
+        target = urllib.parse.urljoin(base, html.unescape(link.group(1)))
+    else:
+        return None
+    parts = urllib.parse.urlparse(target)
+    is_download = parts.hostname in DRIVE_DOWNLOAD_HOSTS and parts.path in DRIVE_DOWNLOAD_PATHS
+    return target if parts.scheme == "https" and is_download else None
+
+
+def _fetch(url: str, tmp: Path) -> None:
+    """Stream `url` to `tmp`; a Drive link goes through its direct download and large-file confirmation."""
+    file_id = drive_file_id(url)
+    target = DRIVE_DIRECT.format(file_id) if file_id else url
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    for _ in range(3 if file_id else 1):
+        request = urllib.request.Request(target, headers={"User-Agent": USER_AGENT})
+        with opener.open(request, timeout=120) as response:
+            if file_id and response.headers.get_content_type() == "text/html":
+                page = response.read(1 << 22).decode("utf-8", "replace")
+                target = _confirm_url(page, response.geturl())
+                if target is None:
+                    raise PreflightError(
+                        f"{url}: Google Drive returned a web page, not the file; share it as 'Anyone with the link'"
+                    )
+                continue
+            with open(tmp, "wb") as handle:
+                shutil.copyfileobj(response, handle, length=1 << 22)
+            return
+    raise PreflightError(f"{url}: Google Drive kept asking for confirmation instead of sending the file")
+
+
+def check_image(path: Path) -> None:
+    """Raise when a downloaded source image does not decode (e.g. an HTML page) and delete it."""
+    from PIL import Image
+
+    try:
+        with Image.open(path) as opened:
+            opened.verify()
+    except Exception as error:  # noqa: BLE001 - any decode failure means the bytes are not an image
+        size = Path(path).stat().st_size
+        Path(path).unlink(missing_ok=True)
+        raise PreflightError(
+            f"the download ({size} bytes) is not a decodable image ({type(error).__name__}). "
+            "Use a direct image URL or a Google Drive link shared as 'Anyone with the link'."
+        ) from error
 
 
 def sha256(path: Path) -> str:
@@ -45,9 +133,7 @@ def download(url: str, dest: Path, *, size: int | None, digest: str | None, log=
     for attempt in range(1, attempts + 1):
         tmp = dest.with_suffix(dest.suffix + ".part")
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(request, timeout=120) as response, open(tmp, "wb") as handle:
-                shutil.copyfileobj(response, handle, length=1 << 22)
+            _fetch(url, tmp)
             got_size, got_sha = tmp.stat().st_size, sha256(tmp)
             if size is not None and got_size != size:
                 raise PreflightError(f"{url}: {got_size} bytes, expected {size}")
@@ -120,7 +206,7 @@ def runtime_tier(disk_path: Path) -> dict:
 
 
 def run(run_dir: Path, settings: dict, log=print) -> dict:
-    """Check the runtime, download and verify inputs, load HAT-L. Returns the inputs for step 4."""
+    """Check the runtime, download and verify inputs, load HAT-L. Returns the inputs for steps 4 and 5."""
     from prd_v5.dng_validate import ENV_VAR, find_dng_validate
     from prd_v6 import sr
     from prd_v6.install import DNG_VALIDATE_BUILD
@@ -143,6 +229,16 @@ def run(run_dir: Path, settings: dict, log=print) -> dict:
         raise PreflightError(f"dng_validate is not available: {build.get('reason') or 'setup did not build it'}")
     os.environ[ENV_VAR] = str(tool)
     inputs = run_dir / "inputs"
+    source_errors = {}
+    for key, setting in OWN_SOURCES:
+        if settings.get(setting):
+            dest = own_image_dest(inputs, key, settings[setting])
+            try:
+                download(settings[setting], dest, size=None, digest=None, log=log)
+                check_image(dest)
+            except Exception as error:  # noqa: BLE001 - own images never gate the benchmark (section 9.2)
+                source_errors[setting] = f"{setting}: {error}"
+                log(f"preflight warning: {source_errors[setting]}; step 5 skips this source")
     arw = download(
         settings.get("REFERENCE_ARW_URL") or constants.REFERENCE_ARW_URL,
         inputs / constants.REFERENCE_ARW_NAME,
@@ -159,6 +255,16 @@ def run(run_dir: Path, settings: dict, log=print) -> dict:
     )
     model, model_info = sr.load_hat_l(checkpoint["path"])
     log(f"HAT-L loaded: {model_info}")
-    environment.update(inputs={"reference_arw": arw, "hat_l": checkpoint}, model=model_info, dng_validate=str(tool))
+    environment.update(
+        inputs={"reference_arw": arw, "hat_l": checkpoint, "source_errors": source_errors},
+        model=model_info,
+        dng_validate=str(tool),
+    )
     (run_dir / "environment.json").write_text(json.dumps(environment, indent=2, default=str))
-    return {"arw": Path(arw["path"]), "model": model, "model_info": model_info, "dng_validate": str(tool)}
+    return {
+        "arw": Path(arw["path"]),
+        "model": model,
+        "model_info": model_info,
+        "dng_validate": str(tool),
+        "source_errors": source_errors,
+    }

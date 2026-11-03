@@ -38,6 +38,21 @@ def test_linear_raw_dng_reads_back_in_libraw(tmp_path):
     assert np.array_equal(dng.read_samples(path), samples)
 
 
+@pytest.mark.parametrize(
+    ("pattern", "shape", "samples_per_pixel", "photometric"),
+    [(None, (8, 12, 3), 3, 34892), ("RGGB", (8, 12), 1, 32803)],
+)
+def test_dng_has_no_extra_samples_tag(tmp_path, pattern, shape, samples_per_pixel, photometric):
+    """dng_validate rejects ExtraSamples in IFD 0; tifffile adds it for 3-sample images unless told not to."""
+    samples = np.full(shape, constants.BLACK_16, dtype=np.uint16)
+    neutral = colour.prior_neutral(pipeline.camera_matrix())
+    path = dng.write_dng(tmp_path / "t.dng", samples, cfa_pattern=pattern, color_matrix=CAM, as_shot_neutral=neutral)
+    tags = dng.read_dng_tags(path)
+    assert "ExtraSamples" not in tags
+    assert tags["SamplesPerPixel"] == samples_per_pixel
+    assert int(tags["PhotometricInterpretation"]) == photometric
+
+
 def test_libraw_develops_the_forward_model_back_to_its_input(tmp_path):
     """The DNG tags and the colour transform agree: LibRaw recovers the linear values we encoded."""
     hw = (64, 96)

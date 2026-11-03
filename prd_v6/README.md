@@ -18,7 +18,9 @@ against that frame's real RAW in linear RAW space. Each output passes only when 
    crashed, paste the recovery line that the driver cell printed first into a new cell.
 
 `SOURCE_4K_URL` and `SOURCE_2K_URL` add 2K, 4K and 50 MP outputs of your own images (no accuracy claim,
-because there is no reference RAW for them). `DRIVE_MIRROR = True` mirrors the summary to Google Drive after
+because there is no reference RAW for them). Each is a direct URL or a Google Drive share link of a file
+shared as "Anyone with the link". A source that fails to download or decode is skipped and reported next to
+the verdict; it never stops the benchmark. `DRIVE_MIRROR = True` mirrors the summary to Google Drive after
 every step.
 
 ## Layout

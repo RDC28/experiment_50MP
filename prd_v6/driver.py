@@ -45,7 +45,13 @@ def run(run_dir, settings: dict, log=None) -> None:
     )
     _step(run_dir, 4, settings, lambda: benchmark.run(config), gating=True)
     if settings.get("SOURCE_4K_URL") or settings.get("SOURCE_2K_URL"):
-        _step(run_dir, 5, settings, lambda: production.run(run_dir, settings, inputs["model"], log=log), gating=False)
+        _step(
+            run_dir,
+            5,
+            settings,
+            lambda: production.run(run_dir, settings, inputs["model"], inputs["source_errors"], log=log),
+            gating=False,
+        )
     else:
         log("step 5 skipped: no SOURCE_4K_URL or SOURCE_2K_URL, so the run is benchmark-only")
     _step(run_dir, 6, settings, lambda: sweeps.run(run_dir, inputs["arw"], log), gating=False)

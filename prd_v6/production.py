@@ -13,7 +13,7 @@ import numpy as np
 
 from prd_v6 import benchmark, colour, constants, pipeline, preflight, sr
 
-SOURCES = (("4k_source", "SOURCE_4K_URL"), ("2k_source", "SOURCE_2K_URL"))
+SOURCES = preflight.OWN_SOURCES
 SIZES = {"2k": (1280, 1920), "4k": (2560, 3840), "50mp": constants.VISIBLE_HW}
 
 
@@ -47,7 +47,16 @@ def rggb_layout(hw: tuple[int, int]) -> np.ndarray:
     return np.tile(np.array([[0, 1], [1, 2]], dtype=np.int8), (hw[0] // 2, hw[1] // 2))
 
 
-def run(run_dir: Path, settings: dict, model: sr.Model, *, preset: pipeline.Preset = pipeline.MAX, log=print) -> dict:
+def run(
+    run_dir: Path,
+    settings: dict,
+    model: sr.Model,
+    source_errors: dict,
+    *,
+    preset: pipeline.Preset = pipeline.MAX,
+    log=print,
+) -> dict:
+    """Process each set source; a source whose preflight download or decode failed is skipped and raised at the end."""
     run_dir = Path(run_dir)
     verdict = json.loads((run_dir / "verdict.json").read_text()) if (run_dir / "verdict.json").exists() else {}
     prior = colour.prior_neutral(pipeline.camera_matrix())
@@ -62,10 +71,13 @@ def run(run_dir: Path, settings: dict, model: sr.Model, *, preset: pipeline.Pres
         url = settings.get(setting)
         if not url:
             continue
+        if setting in source_errors:
+            record["sources"][key] = {"error": source_errors[setting]}
+            continue
         folder = run_dir / "production" / key
         fetched = preflight.download(
             url,
-            run_dir / "inputs" / f"{key}{Path(url.split('?')[0]).suffix or '.img'}",
+            preflight.own_image_dest(run_dir / "inputs", key, url),
             size=None,
             digest=None,
             log=log,
@@ -96,4 +108,6 @@ def run(run_dir: Path, settings: dict, model: sr.Model, *, preset: pipeline.Pres
         (folder / "production.json").write_text(json.dumps(record["sources"][key], indent=2, default=str))
     (run_dir / "production").mkdir(exist_ok=True)
     (run_dir / "production" / "production.json").write_text(json.dumps(record, indent=2, default=str))
+    if source_errors:
+        raise RuntimeError("; ".join(source_errors.values()))
     return record
