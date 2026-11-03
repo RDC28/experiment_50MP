@@ -16,7 +16,7 @@ dependencies = [
     "pillow>=10.0",
     "opencv-python-headless>=4.8",
     "scikit-image>=0.21",
-    "tifffile>=2023.7.10",
+    "tifffile>=2026.6.1",  # extrasamples=False keeps ExtraSamples out of 3-sample DNGs (prd_v6/dng.py)
     "imagecodecs>=2024.6.1",  # lossless JPEG tiles for DNG_COMPRESSION = "LOSSLESS"
     "OpenEXR>=3.3",
     "PyYAML>=6.0",
