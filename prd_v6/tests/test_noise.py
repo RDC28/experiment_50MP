@@ -94,3 +94,13 @@ def test_cfa_samples_noise_is_reproducible_and_seed_dependent():
     first = pipeline.cfa_samples(linear, neutral, layout, noise_seed=6)[1]
     assert np.array_equal(first, pipeline.cfa_samples(linear, neutral, layout, noise_seed=6)[1])
     assert not np.array_equal(first, pipeline.cfa_samples(linear, neutral, layout, noise_seed=7)[1])
+
+
+def test_cfa_samples_accepts_a_seed_sequence_as_video_v1_passes_it():
+    """video_v1 gives every frame its own SeedSequence; an int seed and the same sequence must agree."""
+    linear = np.full((8, 8, 3), 0.3, dtype=np.float32)
+    neutral = colour.prior_neutral(pipeline.camera_matrix())
+    layout = np.tile(np.array([[0, 1], [1, 2]], dtype=np.int8), (4, 4))
+    _, from_int = pipeline.cfa_samples(linear, neutral, layout, noise_seed=7)
+    _, from_sequence = pipeline.cfa_samples(linear, neutral, layout, noise_seed=np.random.SeedSequence(7))
+    assert np.array_equal(from_int, from_sequence)
