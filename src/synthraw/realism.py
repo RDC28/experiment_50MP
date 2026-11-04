@@ -109,6 +109,22 @@ def _photon_transfer(
     return envelope, fit
 
 
+def _min_blocks(means: np.ndarray) -> int:
+    """Blocks a signal bin needs before its lower envelope counts."""
+    return max(5, means.size // 400)
+
+
+def photon_transfer_fit(plane: np.ndarray, *, black: float, white: float) -> dict[str, float] | None:
+    """Photon-transfer fit of one CFA plane, as `measure_mosaic` reports it; None when too few flat blocks.
+
+    ``dn2_per_dn`` is the variance slope and ``read_variance_dn2`` the intercept, in the plane's own code
+    units, so a caller can see how much noise a mosaic already carries before it adds any.
+    """
+    plane = np.asarray(plane)
+    means, variance = _detrended_blocks(plane, _block_size(plane))
+    return _photon_transfer(means, variance, black, white, min_blocks=_min_blocks(means))[1]
+
+
 def _detilt(tile: np.ndarray) -> np.ndarray:
     """``tile`` minus its least-squares plane a + b*y + c*x."""
     tile = tile.astype(np.float64)
@@ -255,7 +271,7 @@ def measure_mosaic(
         counts, _ = np.histogram(ev, bins=HISTOGRAM_EDGES_EV)
         block = _block_size(plane)
         means, variance = _detrended_blocks(plane, block)
-        envelope, fit = _photon_transfer(means, variance, black, white, min_blocks=max(5, means.size // 400))
+        envelope, fit = _photon_transfer(means, variance, black, white, min_blocks=_min_blocks(means))
         dark, _ = _dark_statistics(plane, means, block, black)
         median = float(np.median(signal))
         planes[name] = {
@@ -287,17 +303,20 @@ def _normalised_neutral(values: Any) -> list[float] | None:
 
 
 def _dng_tags(path: str | Path) -> dict[str, np.ndarray]:
-    """Crop and colour-matrix tags of a raw's first IFD as float arrays; empty for a non-TIFF raw."""
+    """DNGVersion, crop and colour-matrix tags of a raw's first IFD as float arrays; empty for a non-TIFF raw."""
     import tifffile
 
     found: dict[str, np.ndarray] = {}
     try:
         with tifffile.TiffFile(path) as container:
             tags = container.pages[0].tags
-            for name in ("DefaultUserCrop", "DefaultCropOrigin", "DefaultCropSize", "ColorMatrix2"):
+            for name in ("DNGVersion", "DefaultUserCrop", "DefaultCropOrigin", "DefaultCropSize", "ColorMatrix2"):
                 tag = tags.get(tifffile.TIFF.TAGS[name])
                 if tag is not None:
-                    value = np.asarray(tag.value, dtype=float).reshape(-1)
+                    value = tag.value
+                    # BYTE tags (DNGVersion) read as bytes.
+                    value = np.frombuffer(value, np.uint8) if isinstance(value, bytes) else value
+                    value = np.asarray(value, dtype=float).reshape(-1)
                     # RATIONAL and SRATIONAL tags read as numerator, denominator pairs.
                     found[name] = value[0::2] / value[1::2] if int(tag.dtype) in (5, 10) else value
     except tifffile.TiffFileError:
@@ -327,25 +346,50 @@ def _user_crop(tags: Mapping[str, np.ndarray], shape: tuple[int, int], name: str
     return top, left, bottom, right
 
 
+def active_area(raw: Any) -> tuple[slice, slice]:
+    """Rows and columns of a camera raw's active area inside rawpy's visible array.
+
+    LibRaw reports some cameras' full array as visible (the Sony A1 II: 8672 x 5784, margins 0) and
+    gives the active area, the DNG default crop, as crop_*_margin and crop_width/height. Without a
+    reported crop the visible array is the active area. The origin must be even so the CFA phase at the
+    crop origin is the sensor's own; ValueError otherwise, or when the area does not fit the array.
+    """
+    sizes = raw.sizes
+    top, left, height, width = (
+        int(v) for v in (sizes.crop_top_margin, sizes.crop_left_margin, sizes.crop_height, sizes.crop_width)
+    )
+    if height == 0 or width == 0:
+        return slice(0, None), slice(0, None)
+    full_h, full_w = int(sizes.iheight), int(sizes.iwidth)
+    if top % 2 or left % 2 or top + height > full_h or left + width > full_w:
+        raise ValueError(f"active area {height}x{width} at ({top}, {left}) does not fit the {full_h}x{full_w} array")
+    return slice(top, top + height), slice(left, left + width)
+
+
 def measure_raw(path: str | Path) -> dict[str, Any]:
     """Open any LibRaw-readable raw (a camera ARW or the synthetic DNG) and measure it.
 
-    The visible area inside a DNG's default crop and DefaultUserCrop is measured; LibRaw's black and
-    clipping levels, as-shot white balance and XYZ-to-camera matrix are what a raw developer would use.
-    A DNG's D65 ColorMatrix2 is the matrix (LibRaw leaves it at zero for a make it does not know).
+    A camera raw is measured on its active area (`active_area`), not on rawpy's larger visible array;
+    a DNG on the visible area inside its default crop and DefaultUserCrop. LibRaw's black and clipping
+    levels, as-shot white balance and XYZ-to-camera matrix are what a raw developer would use. A DNG's
+    D65 ColorMatrix2 is the matrix (LibRaw leaves it at zero for a make it does not know).
     """
     import rawpy
 
     tags = _dng_tags(path)
     with rawpy.imread(str(path)) as raw:
-        visible = raw.raw_image_visible
+        rows, columns = (slice(0, None), slice(0, None)) if "DNGVersion" in tags else active_area(raw)
+        visible = raw.raw_image_visible[rows, columns]
         top, left, bottom, right = _user_crop(tags, visible.shape, Path(path).name)
         mosaic = visible[top:bottom, left:right].copy()
-        black = float(np.mean(raw.black_level_per_channel))
+        top, bottom = top + rows.start, bottom + rows.start
+        left, right = left + columns.start, right + columns.start
+        pattern = np.asarray(raw.raw_pattern)
+        # Only the colours the mosaic holds: a 3-sample DNG reports a fourth, unused black of 0.
+        black = float(np.mean(np.asarray(raw.black_level_per_channel, dtype=float)[np.unique(pattern)]))
         # Sony raws clip below the container white level (ARW: 15360 of 16383); prefer the camera's.
         camera_white = [value for value in (raw.camera_white_level_per_channel or ()) if value > 0]
         white = float(min(camera_white)) if camera_white else float(raw.white_level)
-        pattern = np.asarray(raw.raw_pattern)
         colours = raw.color_desc.decode()
         camera_wb = np.asarray(raw.camera_whitebalance, dtype=float)[:3]
         xyz_to_camera = np.asarray(raw.rgb_xyz_matrix, dtype=float)[:3]
