@@ -360,6 +360,8 @@ SYNTHETIC_RAW_LAB_HEAVY_TESTS=1 python -m pytest   # also executes the notebooks
 ruff check . && ruff format --check .
 ```
 
+The no-mistakes validation runs only the light test and lint commands fixed in `.no-mistakes.yaml`; notebook, model, conversion and full-size pipeline runs happen on Colab.
+
 For a full local run, open the notebook in Jupyter with `INPUT_MODE` set to `synthetic` or `path`, or call the
 package directly:
 
