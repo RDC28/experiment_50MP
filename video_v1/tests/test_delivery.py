@@ -45,7 +45,7 @@ def test_a_whole_tiny_run_is_complete_and_split_into_archives(run_dir, tmp_path,
     pytest.importorskip("rawpy")
     monkeypatch.setattr(delivery, "PART_MAX_BYTES", 16_000)  # two 64x48 frames (about 6.5 kB each) per part
     clip = make_clip(tmp_path / "beach.mkv", FRAMES)
-    settings = {"VIDEO": str(clip), "MAX_FRAMES": None, "DRIVE_MIRROR": False}
+    settings = {"VIDEO": str(clip), "DRIVE_MIRROR": False}
     driver.run(run_dir, settings, log=lambda message: None)
     verdict, archives = delivery.finalize_run(run_dir, settings, download=False)
     assert verdict["status"] == "COMPLETE", verdict["text"]

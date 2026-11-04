@@ -22,6 +22,8 @@ from prd_v6.delivery import _read_json, _sha256, _write_json
 from video_v1 import sequence, source
 
 STAGES = ("decode", "raw", "write", "libraw", "dng_validate")
+# Stages whose work grows with the output pixel count; decode (with the YCbCr to linear conversion) reads the source.
+OUTPUT_STAGES = ("raw", "write", "libraw", "dng_validate")
 CHECKPOINT_EVERY = 10
 # HAT-L x4 cost measured in v6 run 20261104T064058Z_ad151cd on an A100-SXM4-80GB: 70 tiles of
 # 512 px (128 px overlap) with the x8 self-ensemble in 2386 s (run.log 06:45:23 to 07:25:09).
@@ -68,16 +70,11 @@ def manifest_path(run_dir, clip_name: str) -> Path:
     return sequence_dir(run_dir, clip_name) / f"{clip_name}_manifest.json"
 
 
-def frames_planned(clip: source.Clip, max_frames: int | None) -> int:
-    return clip.frames if not max_frames else min(clip.frames, int(max_frames))
-
-
 def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
     run_dir = Path(run_dir)
     clip: source.Clip = inputs["clip"]
     tools = inputs["tools"]
     rate = Fraction(clip.frame_rate)
-    planned = frames_planned(clip, settings.get("MAX_FRAMES"))
     name = sequence.clip_name(clip.path)
     hw = source.even_crop(clip.size)
     layout = production.rggb_layout(hw)
@@ -86,10 +83,10 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
     neutral, cam_xyz = np.asarray(cal["as_shot_neutral"]), pipeline.camera_matrix()
     folder = sequence_dir(run_dir, name)
     folder.mkdir(parents=True, exist_ok=True)
-    log(f"converting {planned} of {clip.frames} frames at {hw[1]}x{hw[0]} to {folder}")
+    log(f"converting {clip.frames} frames at {hw[1]}x{hw[0]} to {folder}")
     records: list[dict] = []
     started = time.perf_counter()
-    decoded = source.frames(clip, ffmpeg=tools["ffmpeg"], ffmpeg_major=tools.get("major"), limit=planned)
+    decoded = source.frames(clip, ffmpeg=tools["ffmpeg"], ffmpeg_major=tools.get("major"), limit=clip.frames)
     with closing(decoded) as frames:
         while True:
             t0 = time.perf_counter()
@@ -104,7 +101,7 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
                 folder / sequence.frame_name(name, index),
                 samples,
                 index=index,
-                frames=planned,
+                frames=clip.frames,
                 clip=name,
                 rate=rate,
                 color_matrix=cam_xyz,
@@ -131,17 +128,17 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
                     "seconds": dict(zip(STAGES, (t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4), strict=True)),
                 }
             )
-            if (index + 1) % CHECKPOINT_EVERY == 0 or index + 1 == planned:
+            if (index + 1) % CHECKPOINT_EVERY == 0 or index + 1 == clip.frames:
                 elapsed = time.perf_counter() - started
                 log(
-                    f"frame {index + 1}/{planned}: {elapsed / (index + 1):.2f} s per frame, "
-                    f"about {elapsed / (index + 1) * (planned - index - 1) / 60:.1f} min left"
+                    f"frame {index + 1}/{clip.frames}: {elapsed / (index + 1):.2f} s per frame, "
+                    f"about {elapsed / (index + 1) * (clip.frames - index - 1) / 60:.1f} min left"
                 )
-                _write_sequence_manifest(run_dir, clip, name, hw, planned, records, cal)
+                _write_sequence_manifest(run_dir, clip, name, hw, records, cal)
     wall = time.perf_counter() - started
-    _write_sequence_manifest(run_dir, clip, name, hw, planned, records, cal)
+    _write_sequence_manifest(run_dir, clip, name, hw, records, cal)
     _write_timings(run_dir / "timings.csv", records)
-    summary = summarise(records, planned=planned, total=clip.frames, wall_s=wall, hw=hw)
+    summary = summarise(records, total=clip.frames, wall_s=wall, hw=hw)
     summary.update(
         clip_name=name,
         size=list(hw),
@@ -149,11 +146,11 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
         frame_rate=clip.frame_rate,
         sequence_dir=str(folder.relative_to(run_dir)),
         manifest=str(manifest_path(run_dir, name).relative_to(run_dir)),
-        estimate_4k=estimate_4k(summary_seconds(records), hw, planned),
+        estimate_4k=estimate_4k(summary_seconds(records), hw, clip.frames),
     )
-    if summary["frames_converted"] != planned:
+    if summary["frames_converted"] != clip.frames:
         summary["frame_count_mismatch"] = (
-            f"ffmpeg decoded {summary['frames_converted']} frames, ffprobe counted {planned}"
+            f"ffmpeg decoded {summary['frames_converted']} frames, ffprobe counted {clip.frames}"
         )
     _write_json(run_dir / "convert.json", summary)
     log(
@@ -161,19 +158,18 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
         f"({summary['seconds_per_frame']['mean']:.2f} s per frame); validation failures: "
         f"{summary['validation_failures']}"
     )
-    if summary["frames_converted"] != planned:
-        log(f"warning: ffmpeg decoded {summary['frames_converted']} frames, ffprobe counted {planned}")
+    if summary["frames_converted"] != clip.frames:
+        log(f"warning: ffmpeg decoded {summary['frames_converted']} frames, ffprobe counted {clip.frames}")
     return summary
 
 
-def _write_sequence_manifest(run_dir, clip, name, hw, planned, records, cal) -> None:
+def _write_sequence_manifest(run_dir, clip, name, hw, records, cal) -> None:
     _write_json(
         manifest_path(run_dir, name),
         {
             "sequence": name,
             "format": "CinemaDNG-style sequence: one DNG 1.4 CFA (RGGB) file per frame, uncompressed 16-bit",
             "naming": f"{name}_<frame:06d>.dng, frame numbers from 0",
-            "frames_planned": planned,
             "frames_written": len(records),
             "source_frames": clip.frames,
             "size": list(hw),
@@ -204,12 +200,11 @@ def summary_seconds(records: list[dict]) -> dict:
     return {stage: float(np.mean([r["seconds"][stage] for r in records])) for stage in STAGES}
 
 
-def summarise(records: list[dict], *, planned: int, total: int, wall_s: float, hw) -> dict:
+def summarise(records: list[dict], *, total: int, wall_s: float, hw) -> dict:
     totals = [sum(r["seconds"].values()) for r in records] or [0.0]
     failures = [r["frame"] for r in records if r["libraw"] != "passed" or r["dng_validate"] != "passed"]
     return {
         "frames_source": total,
-        "frames_planned": planned,
         "frames_converted": len(records),
         "libraw_passed": sum(r["libraw"] == "passed" for r in records),
         "dng_validate_passed": sum(r["dng_validate"] == "passed" for r in records),
@@ -235,15 +230,18 @@ def sr_tiles(hw) -> int:
 
 
 def estimate_4k(stage_seconds: dict, hw, frames: int) -> dict:
-    """What a 4K UHD version of this clip would cost: v6 SR x4 per frame, then the same stages at 4K.
+    """What a 4K UHD version of this clip would cost: v6 SR x4 per frame, then the output stages at 4K.
 
-    Not measured here. SR uses the v6 run's measured HAT-L seconds per tile on an A100; the other
-    stages scale with the pixel count from this run's measured times.
+    Computed, not measured. SR uses the v6 run's measured HAT-L seconds per tile on an A100. A 4K
+    version still decodes the source, so decode keeps this run's measured time; the output stages
+    scale with the pixel count from this run's measured times.
     """
     per_tile = HAT_L_SECONDS / HAT_L_TILES
     tiles = sr_tiles(hw)
     ratio = (UHD_HW[0] * UHD_HW[1]) / (hw[0] * hw[1])
-    other = sum(stage_seconds.values()) * ratio
+    source_stages = sum(v for k, v in stage_seconds.items() if k not in OUTPUT_STAGES)
+    output_stages = sum(stage_seconds[k] for k in OUTPUT_STAGES) * ratio
+    other = source_stages + output_stages
     with_ensemble = tiles * per_tile + other
     without_ensemble = tiles * per_tile / 8 + other
     return {
@@ -252,15 +250,16 @@ def estimate_4k(stage_seconds: dict, hw, frames: int) -> dict:
         "hat_l_seconds_per_tile_a100": per_tile,
         "hat_l_measured_in": HAT_L_RUN,
         "pixel_ratio": ratio,
-        "other_stages_seconds_per_frame": other,
+        "source_stages_seconds_per_frame": source_stages,
+        "output_stages_seconds_per_frame": output_stages,
         "seconds_per_frame_x8_ensemble": with_ensemble,
         "hours_for_clip_x8_ensemble": with_ensemble * frames / 3600,
         "seconds_per_frame_no_ensemble": without_ensemble,
         "hours_for_clip_no_ensemble": without_ensemble * frames / 3600,
         "dng_bytes_per_frame": UHD_HW[0] * UHD_HW[1] * 2,
         "note": (
-            "Estimate only, A100. Per-frame SR has no temporal model, so a 4K version would also need its own "
-            "flicker check; the v6 benchmark number does not transfer to it either."
+            "Computed estimate, not measured: A100. Per-frame SR has no temporal model, so a 4K version would "
+            "also need its own flicker check; the v6 benchmark number does not transfer to it either."
         ),
     }
 

@@ -350,7 +350,7 @@ def banner(run_dir, verdict: dict, archives: list[Path], settings: dict) -> str:
     if convert.get("seconds_per_frame"):
         lines.append(
             f"  {convert['seconds_per_frame']['mean']:.2f} s per frame, {convert['wall_s'] / 60:.1f} min for "
-            f"{convert['frames_converted']} frames; report.html in the summary archive has the 4K estimate"
+            f"{convert['frames_converted']} frames; report.html in the summary archive has the computed 4K estimate"
         )
     lines.append("Archives (download order):")
     lines += [f"  {a.name}  {a.stat().st_size / 1e6:.1f} MB" for a in archives if a.exists()]

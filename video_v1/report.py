@@ -177,7 +177,9 @@ def _estimate_rows(est: dict) -> list:
         ("Target", _e(est["target"])),
         ("HAT-L tiles per frame", _e(est["sr_tiles_per_frame"])),
         ("HAT-L seconds per tile (A100, x8 ensemble)", _e(tile)),
-        ("Other stages per frame at 4K", _seconds(est["other_stages_seconds_per_frame"])),
+        ("Source decode per frame (as measured, unscaled)", _seconds(est["source_stages_seconds_per_frame"])),
+        (f"RAW, DNG, LibRaw and dng_validate per frame (x{est['pixel_ratio']:.2f} pixels)",
+         _seconds(est["output_stages_seconds_per_frame"])),
         ("Per frame, x8 ensemble (v6 MAX)",
          _per_frame_and_clip(est["seconds_per_frame_x8_ensemble"], est["hours_for_clip_x8_ensemble"])),
         ("Per frame, no ensemble",
@@ -226,10 +228,7 @@ def render_html(data: dict, run_dir: Path) -> str:
             "<h2>DNG sequence</h2>",
             _table(
                 [
-                    (
-                        "Frames",
-                        _e(f"{conv['frames_converted']} of {conv['frames_source']} (planned {conv['frames_planned']})"),
-                    ),
+                    ("Frames", _e(f"{conv['frames_converted']} of {conv['frames_source']}")),
                     (
                         "Size",
                         _e(
@@ -271,7 +270,10 @@ def render_html(data: dict, run_dir: Path) -> str:
             "<p class='muted'>Per-frame timings: <code>timings.csv</code>.</p>",
         ]
         if conv.get("estimate_4k"):
-            out += ["<h2>Estimated cost of a 4K version (not run)</h2>", _table(_estimate_rows(conv["estimate_4k"]))]
+            out += [
+                "<h2>Estimated cost of a 4K version (computed, not measured; not run)</h2>",
+                _table(_estimate_rows(conv["estimate_4k"])),
+            ]
     if check:
         out += _stability_section(check, run_dir)
     out += ["<h2>No accuracy claim</h2>", f"<p>{_e(NO_ACCURACY_CLAIM)}</p>"]
@@ -303,8 +305,8 @@ def render_text(data: dict) -> str:
         est = conv.get("estimate_4k")
         if est:
             lines.append(
-                f"4K estimate (A100): {_duration(est['seconds_per_frame_x8_ensemble'])} per frame with the x8 "
-                f"ensemble ({_duration(est['hours_for_clip_x8_ensemble'] * 3600)} for the clip), "
+                f"4K estimate (computed, not measured; A100): {_duration(est['seconds_per_frame_x8_ensemble'])} "
+                f"per frame with the x8 ensemble ({_duration(est['hours_for_clip_x8_ensemble'] * 3600)} for the clip), "
                 f"{_duration(est['seconds_per_frame_no_ensemble'])} without "
                 f"({_duration(est['hours_for_clip_no_ensemble'] * 3600)})"
             )

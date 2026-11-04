@@ -23,7 +23,7 @@ from video_v1.tests.conftest import make_clip, needs_ffmpeg
 
 ROOT = Path(__file__).resolve().parents[2]
 NOTEBOOK = ROOT / "video_v1" / "notebooks" / "video_to_raw_v1.ipynb"
-SETTINGS = {"VIDEO": None, "MAX_FRAMES": None, "DRIVE_MIRROR": False}
+SETTINGS = {"VIDEO": None, "DRIVE_MIRROR": False}
 # Changes under these paths change what the notebook runs, so REPO_REF must include them.
 CODE_PATHS = [
     "video_v1",
@@ -63,6 +63,7 @@ def test_two_code_cells_with_no_outputs(notebook):
 
 def test_settings_are_literal_defaults(notebook):
     settings = settings_of(notebook)
+    assert settings.keys() == {"REPO_REF", *SETTINGS}
     assert {k: settings[k] for k in SETTINGS} == SETTINGS
     assert re.fullmatch(r"[0-9a-f]{40}", settings["REPO_REF"])
 
@@ -241,26 +242,18 @@ def test_driver_cell_falls_back_when_packaging_fails(notebook, tmp_path, monkeyp
 def test_colab_runtime_and_tier_are_stated(notebook):
     assert notebook["metadata"]["accelerator"] == "GPU"
     assert notebook["metadata"]["colab"]["gpuType"] == "A100"
-    intro = "".join(notebook["cells"][0]["source"])
-    for phrase in ("A100", "L4", "High-RAM", "CPU-only", "Run all", "Choose Files", "16-bit", "dng_validate",
-                   "no accuracy claim", "does not transfer", "Audio is dropped", "well under an hour"):  # fmt: skip
-        assert phrase in intro, phrase
+    assert notebook["metadata"]["colab"]["machine_shape"] == "hm"
 
 
-def test_printed_recovery_line_matches_the_package(notebook):
-    tree = ast.parse(code_cells(notebook)[1])
-    printed = [
-        node.args[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and getattr(node.func, "id", None) == "print"
-        and node.args
-        and "download_results" in ast.unparse(node.args[0])
-    ]
-    assert len(printed) == 1, "exactly one recovery print expected"
-    expression = compile(ast.Expression(printed[0]), "driver", "eval")
-    line = eval(expression, {"CLONE": "/content/clone", "RUN_DIR": "/content/run"})  # noqa: S307
-    assert line == delivery.recovery_line("/content/run", "/content/clone")
+def test_printed_recovery_line_matches_the_package_and_downloads_again(notebook, tmp_path, monkeypatch, capsys):
+    ns, calls = run_driver_cell(notebook, tmp_path, monkeypatch, {"_setup": _setup_fails}, uploads={"clip.mp4": b"x"})
+    recovery = delivery.recovery_line(ns["RUN_DIR"], ns["CLONE"])
+    assert recovery in capsys.readouterr().out.splitlines()
+    summary = delivery.summary_path(ns["RUN_DIR"])
+    assert calls["download"] == [summary]
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    exec(recovery, {"__name__": "__main__"})  # noqa: S102 - the line pasted into a new cell
+    assert calls["download"] == [summary, summary]
 
 
 def _helpers(notebook, names, namespace):

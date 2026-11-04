@@ -13,8 +13,8 @@ changed, and the v6 notebook and its 95% gate are untouched. There is no accurac
 2. **Runtime > Run all**. With `VIDEO = None` (the default) the driver cell shows a **Choose Files** button:
    pick one clip, for example a 1080p MP4 of about 5 seconds. Instead, `VIDEO` can be a direct URL, a Google
    Drive share link of a file shared as "Anyone with the link", or a path on the runtime such as
-   `/content/drive/MyDrive/clip.mp4` (Drive is then mounted first, one prompt). `MAX_FRAMES = 10` converts only
-   the first 10 frames, as a quick test.
+   `/content/drive/MyDrive/clip.mp4` (Drive is then mounted first, one prompt). Every frame of the clip is
+   converted.
 3. A 1080p clip of about 5 seconds should finish well under an hour, setup included. When the run ends, also
    after a failure, the browser downloads `<run>_01_summary.zip`, then the DNG sequence as
    `<run>_02_dng_part1ofN.zip` and onwards. Allow multiple downloads if Chrome asks. If a download was
@@ -133,8 +133,10 @@ built only on Colab. The notebook runs only on Colab.
 
 - **4K estimate.** The estimate is computed, not measured. Super-resolution uses the v6 run
   20261104T064058Z_ad151cd: on an A100, HAT-L x4 took 2386 s for 70 tiles of 512 px with the x8
-  self-ensemble. The other stages scale with pixel count from this run's own measured times. The report
-  gives the cost with and without the ensemble.
+  self-ensemble. A 4K version still decodes the source, so the decode stage (with the YCbCr to linear
+  conversion) keeps this run's measured time. RAW build, DNG write, LibRaw and dng_validate scale with the
+  UHD to source pixel ratio from this run's measured times. The report gives the cost with and without the
+  ensemble.
 - **Per-frame SR.** HAT-L has no temporal model, so a 4K version would need its own flicker check.
 - **Known v6 limits carry over unchanged.**
   - The illuminant is a fixed prior, not an estimate from the frame, and that prior was v6's largest

@@ -22,7 +22,7 @@ def converted(tmp_path, monkeypatch):
     clip = source.probe(make_clip(tmp_path / "beach day.mkv", FRAMES))
     inputs = {"clip": clip, "tools": source.tools(), "dng_validate": None, "path": clip.path}
     run_dir = tmp_path / "run"
-    summary = convert.run(run_dir, inputs, {"MAX_FRAMES": None}, log=lambda message: None)
+    summary = convert.run(run_dir, inputs, {}, log=lambda message: None)
     return run_dir, inputs, summary
 
 
@@ -39,7 +39,7 @@ def test_every_frame_becomes_a_validated_dng(converted):
     folder = run_dir / summary["sequence_dir"]
     assert sorted(p.name for p in folder.glob("*.dng")) == [f"beach_day_{i:06d}.dng" for i in range(FRAMES)]
     manifest = json.loads((run_dir / summary["manifest"]).read_text())
-    assert manifest["frames_written"] == FRAMES and manifest["frame_rate"] == "30000/1001"
+    assert manifest["frames_written"] == manifest["source_frames"] == FRAMES and manifest["frame_rate"] == "30000/1001"
     assert [f["timecode"] for f in manifest["frames"]] == ["00:00:00;00", "00:00:00;01", "00:00:00;02"]
     with open(run_dir / "timings.csv") as handle:
         rows = list(csv.DictReader(handle))
@@ -47,6 +47,18 @@ def test_every_frame_becomes_a_validated_dng(converted):
     estimate = summary["estimate_4k"]
     assert estimate["sr_tiles_per_frame"] == convert.sr_tiles(TINY_HW) == 1
     assert estimate["hours_for_clip_x8_ensemble"] > estimate["hours_for_clip_no_ensemble"] > 0
+
+
+def test_4k_estimate_scales_only_the_output_stages():
+    seconds = {"decode": 1.0, "raw": 2.0, "write": 3.0, "libraw": 4.0, "dng_validate": 5.0}
+    estimate = convert.estimate_4k(seconds, (1080, 1920), 150)
+    sr = convert.sr_tiles((1080, 1920)) * convert.HAT_L_SECONDS / convert.HAT_L_TILES
+    assert estimate["pixel_ratio"] == 4.0
+    assert estimate["source_stages_seconds_per_frame"] == 1.0
+    assert estimate["output_stages_seconds_per_frame"] == 14.0 * 4
+    assert estimate["seconds_per_frame_x8_ensemble"] == pytest.approx(sr + 57.0)
+    assert estimate["seconds_per_frame_no_ensemble"] == pytest.approx(sr / 8 + 57.0)
+    assert estimate["hours_for_clip_x8_ensemble"] == pytest.approx((sr + 57.0) * 150 / 3600)
 
 
 @needs_ffmpeg

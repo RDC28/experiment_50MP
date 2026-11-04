@@ -16,7 +16,7 @@ from pathlib import Path
 
 from prd_v6 import preflight as v6preflight
 from prd_v6.delivery import _write_json
-from video_v1 import convert, source
+from video_v1 import source
 
 MIN_RAM_GB = 8.0
 DISK_MARGIN = 2.2  # the DNGs, their zip copies, and room for the preview
@@ -95,9 +95,6 @@ def run(run_dir, settings: dict, log=print) -> dict:
     from prd_v6.install import DNG_VALIDATE_BUILD
 
     run_dir = Path(run_dir)
-    max_frames = settings.get("MAX_FRAMES")
-    if max_frames is not None and (not isinstance(max_frames, int) or isinstance(max_frames, bool) or max_frames < 1):
-        raise PreflightError(f"MAX_FRAMES {max_frames!r}: use None for every frame or a positive whole number")
     ram_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
     tier = {"gpu": gpu_name(), "ram_gb": ram_gb, "cpus": os.cpu_count()}
     problems, warnings = classify(tier["gpu"], ram_gb)
@@ -128,14 +125,12 @@ def run(run_dir, settings: dict, log=print) -> dict:
             first = next(decoded)
     except source.SourceError as error:
         raise PreflightError(f"{path.name}: {error}") from error
-    planned = convert.frames_planned(clip, settings.get("MAX_FRAMES"))
     hw = source.even_crop(clip.size)
-    need = disk_needed_gb(hw, planned)
+    need = disk_needed_gb(hw, clip.frames)
     free = shutil.disk_usage(run_dir).free / 1e9
     record = clip.as_dict()
     record.update(
         origin=origin,
-        frames_planned=planned,
         output_size=list(hw),
         cropped_to_even=tuple(hw) != tuple(clip.size),
         first_frame={"min": float(first.min()), "max": float(first.max()), "mean": float(first.mean())},
@@ -152,9 +147,11 @@ def run(run_dir, settings: dict, log=print) -> dict:
     environment.update(
         tools=tools,
         dng_validate=str(tool),
-        disk={"free_gb": free, "needed_gb": need, "frames": planned},
+        disk={"free_gb": free, "needed_gb": need, "frames": clip.frames},
     )
     _write_json(run_dir / "environment.json", environment)
     if free < need:
-        raise PreflightError(f"free disk {free:.1f} GB < {need:.1f} GB needed for {planned} frames at {hw[1]}x{hw[0]}")
+        raise PreflightError(
+            f"free disk {free:.1f} GB < {need:.1f} GB needed for {clip.frames} frames at {hw[1]}x{hw[0]}"
+        )
     return {"clip": clip, "tools": tools, "dng_validate": str(tool), "path": path}

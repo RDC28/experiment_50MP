@@ -68,13 +68,13 @@ def setup_done(tmp_path, monkeypatch):
 @needs_ffmpeg
 def test_preflight_probes_the_clip_and_records_it(setup_done, tmp_path):
     clip = make_clip(tmp_path / "clip.mkv", 3)
-    inputs = preflight.run(setup_done, {"VIDEO": str(clip), "MAX_FRAMES": 2}, log=lambda message: None)
+    inputs = preflight.run(setup_done, {"VIDEO": str(clip)}, log=lambda message: None)
     assert inputs["clip"].frames == 3 and inputs["dng_validate"].endswith("dng_validate")
     record = json.loads((setup_done / "source.json").read_text())
-    assert record["frames_planned"] == 2 and record["output_size"] == list(TINY_HW)
+    assert record["frames"] == 3 and record["output_size"] == list(TINY_HW)
     assert record["origin"]["how"] == "runtime path" and record["audio"] == "none in the source"
     environment = json.loads((setup_done / "environment.json").read_text())
-    assert environment["tier"]["gpu"] == "NVIDIA L4" and environment["disk"]["frames"] == 2
+    assert environment["tier"]["gpu"] == "NVIDIA L4" and environment["disk"]["frames"] == 3
 
 
 @needs_ffmpeg
@@ -83,12 +83,6 @@ def test_preflight_stops_on_low_disk(setup_done, tmp_path, monkeypatch):
     clip = make_clip(tmp_path / "clip.mkv", 2)
     with pytest.raises(preflight.PreflightError, match="free disk"):
         preflight.run(setup_done, {"VIDEO": str(clip)}, log=lambda message: None)
-
-
-@pytest.mark.parametrize("value", [0, -1, 2.5, True, "10"])
-def test_preflight_rejects_bad_max_frames(setup_done, value):
-    with pytest.raises(preflight.PreflightError, match="MAX_FRAMES"):
-        preflight.run(setup_done, {"VIDEO": None, "MAX_FRAMES": value}, log=lambda message: None)
 
 
 @needs_ffmpeg
