@@ -166,15 +166,16 @@ def finalize_verdict(run_dir, exception_info: dict | None = None, *, process_los
     )
     if verdict is None or gating_failure or verdict.get("status") not in {"PASS", "MISSED", "INVALID"}:
         reason = errors[0] if errors else "the benchmark did not run to completion"
+        previous = verdict or {}
         verdict = {
             "status": "INVALID",
             "text": f"INVALID: {reason}",
             "invalid_reasons": [reason],
             "warnings": [],
-            "outputs": (verdict or {}).get("outputs", {}),
+            "outputs": previous.get("outputs", {}),
             "accuracy_percent": None,
         }
-        recorded = (verdict or {}).get("illuminant") or _read_json(run_dir / "illuminant.json")
+        recorded = previous.get("illuminant") or _read_json(run_dir / "illuminant.json")
         if recorded:
             verdict["illuminant"] = recorded
             verdict["text"] += f" Illuminant: {recorded['label']}."

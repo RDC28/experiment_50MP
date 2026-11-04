@@ -9,6 +9,7 @@ illuminant and the exposure placement.
 from __future__ import annotations
 
 import math
+import numbers
 
 import numpy as np
 
@@ -97,20 +98,13 @@ def prior_neutral(cam_xyz: np.ndarray) -> np.ndarray:
 def parse_declared_cct(value, name: str = "ILLUMINANT_CCT_K") -> float | None:
     """A notebook CCT declaration (ILLUMINANT_CCT_K, SOURCE_ILLUMINANT_CCT_K).
 
-    None, "" or "estimated" mean no declaration; anything else must be a CCT in kelvin.
-    Accepts a number or a string such as "4300" or "4300 K".
+    None means no declaration; anything else must be a number, a CCT in kelvin.
     """
-    if value is None or (isinstance(value, str) and value.strip().lower() in {"", "estimated"}):
+    if value is None:
         return None
-    bad = ValueError(f"{name} {value!r} is not a colour temperature in kelvin")
-    if isinstance(value, bool):
-        raise bad
-    try:
-        cct = float(value.strip().lower().removesuffix("k").strip() if isinstance(value, str) else value)
-    except (TypeError, ValueError):
-        raise bad from None
-    if not math.isfinite(cct):
-        raise bad
+    if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(value):
+        raise ValueError(f"{name} {value!r} is not a colour temperature in kelvin")
+    cct = float(value)
     if not CCT_RANGE_K[0] <= cct <= CCT_RANGE_K[1]:
         raise ValueError(f"{name} {value!r} is outside {CCT_RANGE_K[0]:.0f}-{CCT_RANGE_K[1]:.0f} K")
     return cct

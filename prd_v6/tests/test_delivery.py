@@ -93,6 +93,20 @@ def test_gating_step_failure_is_invalid(tmp_path):
     assert names(archives) == ["01_summary.zip"]
 
 
+def test_invalid_verdict_keeps_the_step_4_illuminant_record(tmp_path):
+    run_dir = make_run(tmp_path, steps=[(4, "failed")], verdict_status="PASS")
+    declared = {"source": "declared", "cct_k": 4300.0, "label": "user-declared, 4300 K"}
+    delivery.write_illuminant(run_dir, declared)
+    recorded = {**declared, "estimated_prior_results": {"2k": {"passes": False}}}
+    verdict = json.loads((run_dir / "verdict.json").read_text())
+    (run_dir / "verdict.json").write_text(json.dumps({**verdict, "illuminant": recorded}))
+    verdict = delivery.finalize_verdict(run_dir)
+    assert verdict["status"] == "INVALID"
+    assert verdict["illuminant"] == recorded
+    assert verdict["outputs"] == {"2k": OUTPUT}
+    assert verdict["text"].endswith("Illuminant: user-declared, 4300 K.")
+
+
 def test_exception_outside_marked_steps_is_invalid(tmp_path):
     run_dir = make_run(tmp_path, steps=[])
     verdict, _ = delivery.finalize_run(run_dir, {}, {"step": None, "error": "ValueError: bad"}, download=False)

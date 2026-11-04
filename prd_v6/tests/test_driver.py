@@ -97,7 +97,7 @@ def test_only_the_max_preset_exists(tmp_path, calls):
 def test_a_declared_illuminant_reaches_the_benchmark_and_is_recorded(tmp_path, calls, monkeypatch):
     seen = {}
     monkeypatch.setattr(benchmark, "run", lambda config: seen.setdefault("cct", config.illuminant_cct_k))
-    driver.run(tmp_path, {"PRESET": "max", "ILLUMINANT_CCT_K": "4300"}, log=lambda m: None)
+    driver.run(tmp_path, {"PRESET": "max", "ILLUMINANT_CCT_K": 4300}, log=lambda m: None)
     assert seen["cct"] == 4300.0
     recorded = json.loads((tmp_path / "illuminant.json").read_text())
     assert recorded["source"] == "declared" and recorded["cct_k"] == 4300.0
