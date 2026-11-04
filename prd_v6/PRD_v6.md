@@ -196,7 +196,8 @@ source RGB (8-bit sRGB render)
   -> 2K / 4K: three-channel camera RGB on the output grid
        -> 16-bit scale, clip 61440             [2K and 4K DNG]
   -> 50 MP: clean mosaic, RGGB at reference phase   [clean DNG written here]
-       -> electrons, shot + read noise at measured values, clip at full well
+       -> shot + read noise topped up to the measured values (per CFA
+          position, only what the clean mosaic lacks), clip at full well
        -> 16-bit scale, black 2048, clip 61440      [50 MP DNG]
   -> DNG, developed 16-bit TIFF, LibRaw parse, dng_validate, reports
 ```
@@ -260,7 +261,12 @@ The 2K and 4K outputs carry no added noise. The render is a binned image of the
 reference, so it already carries the reference's own binned noise, and the
 inverse reproduces it; adding independent noise would count it twice. The
 50 MP output adds independent noise because SR cannot recover per-photosite
-noise (section 5.1, Q6).
+noise (section 5.1, Q6). SR does carry part of the render's noise up to
+50 MP, though (on the reference, the clean mosaic's G photon-transfer slope
+is about 59% of the camera's), so the pipeline measures the clean mosaic's
+photon transfer at each CFA position and adds only the shot and read variance
+it lacks. Adding the full model on top made the 50 MP DNG about 1.6x as noisy
+as the camera (run 20261104T064058Z: G gain 1.26 against 1.96 e/DN14).
 
 In production (section 8.2) each source makes all three outputs: an output at
 or below the source size is area-downsampled from the inverted source, and a
@@ -435,9 +441,10 @@ INVALID.
   the summary), and error histograms.
 - Secondary noise gate (pass/fail, not part of the 95% target): the 50 MP
   DNG's G-plane conversion gain, measured by photon transfer
-  (`src/synthraw/realism.py`), is within 15% of the reference's. Read noise is
-  reported only, because single-frame estimates are scene-contaminated upper
-  bounds.
+  (`src/synthraw/realism.py`), is within 15% of the reference's. Both files
+  are measured on the visible area of section 4 (the ARW's active area, not
+  LibRaw's full array). Read noise is reported only, because single-frame
+  estimates are scene-contaminated upper bounds.
 
 ### 6.6 Run status
 

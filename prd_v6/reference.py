@@ -45,21 +45,16 @@ def active_window(raw) -> tuple[slice, slice]:
 
     LibRaw reports the Sony A1 II's full 8672 x 5784 array as visible (margins 0) and gives the
     8640 x 5760 active area, the DNG default crop, as crop_*_margin and crop_width/height. Every
-    array decoded from the file (raw, colours, postprocess output) is cut with this one window.
-    The origin must be even so the CFA phase at the crop origin is the sensor's own.
+    array decoded from the file (raw, colours, postprocess output) is cut with this one window, and
+    the noise gate's `synthraw.realism.measure_raw` measures the same window. The origin must be even
+    so the CFA phase at the crop origin is the sensor's own.
     """
-    sizes = raw.sizes
-    top, left, height, width = (
-        int(v) for v in (sizes.crop_top_margin, sizes.crop_left_margin, sizes.crop_height, sizes.crop_width)
-    )
-    if height == 0 or width == 0:  # no crop reported: the visible array is the active area
-        return slice(0, None), slice(0, None)
-    full_h, full_w = int(sizes.iheight), int(sizes.iwidth)
-    if top % 2 or left % 2 or top + height > full_h or left + width > full_w:
-        raise UnsuitableReference(
-            f"active area {height}x{width} at ({top}, {left}) does not fit the {full_h}x{full_w} array"
-        )
-    return slice(top, top + height), slice(left, left + width)
+    from synthraw.realism import active_area
+
+    try:
+        return active_area(raw)
+    except ValueError as error:
+        raise UnsuitableReference(str(error)) from error
 
 
 def load(arw: str | Path) -> Reference:

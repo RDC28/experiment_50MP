@@ -48,7 +48,12 @@ def decode(encoded_uint8: np.ndarray) -> np.ndarray:
 
 
 def to_camera(linear: np.ndarray, neutral) -> np.ndarray:
-    """Linear sRGB to black-subtracted camera RGB in DN16 (render white = sensor clip)."""
+    """Linear sRGB to black-subtracted camera RGB in DN16 (render white = sensor clip).
+
+    LibRaw renders the reference with white at its maximum (16383 - 512 = 15,871 DN14), above the
+    14,848 DN14 clip, so the fitted k reads about +0.096 EV (15,871 / 14,848). Kept so the delivered
+    DNGs (WhiteLevel 61440) develop back to the input render with highlights intact; k absorbs it.
+    """
     return colour.linear_srgb_to_camera(linear, neutral, camera_matrix(), constants.SIGNAL_16)
 
 
@@ -72,14 +77,48 @@ def mosaic(camera_rgb: np.ndarray, layout: np.ndarray) -> np.ndarray:
     return np.take_along_axis(camera_rgb, layout[..., None].astype(np.intp), axis=2)[..., 0]
 
 
-def add_noise(signal16: np.ndarray, seed: int) -> np.ndarray:
-    """Shot and read noise at the measured A1 II values, in DN16 (section 5.1)."""
+def camera_noise_dn16() -> tuple[float, float]:
+    """The A1 II noise model on the 16-bit scale: (shot variance per DN16 of signal, read variance in DN16^2)."""
+    dn16_per_e = constants.SCALE_16 / constants.GAIN_E_PER_DN14
+    return dn16_per_e, (constants.READ_NOISE_E * dn16_per_e) ** 2
+
+
+def add_noise(signal16: np.ndarray, seed, *, existing: tuple[float, float] | None = None) -> np.ndarray:
+    """Shot and read noise at the measured A1 II values, in DN16 (section 5.1).
+
+    `existing` is the (shot variance per DN16, read variance in DN16^2) the signal already carries, as
+    measured by photon transfer; only the remainder up to the camera model is added, so noise inherited
+    from the render is not counted twice. `seed` is anything `np.random.default_rng` takes.
+    """
     rng = np.random.default_rng(seed)
-    gain = constants.GAIN_E_PER_DN14
-    electrons = np.minimum(np.maximum(signal16, 0.0) / constants.SCALE_16 * gain, constants.FULL_WELL_E)
-    noisy = rng.poisson(electrons).astype(np.float32)
-    noisy += rng.normal(0.0, constants.READ_NOISE_E, size=noisy.shape).astype(np.float32)
-    return noisy / gain * constants.SCALE_16
+    dn16_per_e, read_variance = camera_noise_dn16()
+    slope = dn16_per_e
+    if existing is not None:
+        slope = max(slope - max(existing[0], 0.0), 0.0)
+        read_variance = max(read_variance - max(existing[1], 0.0), 0.0)
+    signal = np.clip(signal16, 0.0, constants.FULL_WELL_E * dn16_per_e).astype(np.float32)
+    # Scaled Poisson: variance slope x signal; at the full model, slope DN16 is one electron.
+    noisy = rng.poisson(signal / slope).astype(np.float32) * np.float32(slope) if slope > 0 else signal
+    if read_variance > 0:
+        noisy = noisy + rng.normal(0.0, np.sqrt(read_variance), size=noisy.shape).astype(np.float32)
+    return noisy
+
+
+def existing_noise(signal16: np.ndarray) -> dict[tuple[int, int], tuple[float, float]]:
+    """Photon transfer of a clean mosaic per 2x2 CFA position: the noise it already carries, in DN16.
+
+    SR output inherits the render's own noise (the binned reference noise and 8-bit quantization);
+    a position whose fit fails (too few flat blocks) counts as noise-free.
+    """
+    from synthraw.realism import photon_transfer_fit
+
+    measured = {}
+    for row in range(2):
+        for column in range(2):
+            plane = np.clip(signal16[row::2, column::2], 0, constants.SIGNAL_16)
+            fit = photon_transfer_fit(plane, black=0.0, white=constants.SIGNAL_16)
+            measured[(row, column)] = (fit["dn2_per_dn"], fit["read_variance_dn2"]) if fit else (0.0, 0.0)
+    return measured
 
 
 def upscale_linear(
@@ -149,11 +188,21 @@ def linear_raw_samples(linear: np.ndarray, neutral) -> np.ndarray:
 
 
 def cfa_samples(linear: np.ndarray, neutral, layout: np.ndarray, *, noise_seed: int | None):
-    """50 MP output: (clean, noisy) CFA samples; noisy is None when noise_seed is None."""
-    signal = mosaic(to_camera(linear, neutral), layout)
+    """50 MP output: (clean, noisy) CFA samples; noisy is None when noise_seed is None.
+
+    The noisy mosaic tops each CFA position up to the camera noise model: the clean mosaic's own
+    noise is measured first and only the remainder is added (section 5.1).
+    """
+    signal = np.clip(mosaic(to_camera(linear, neutral), layout), 0, constants.SIGNAL_16)
     clean = quantize_clean(signal)
-    noisy = None if noise_seed is None else quantize(add_noise(np.clip(signal, 0, constants.SIGNAL_16), noise_seed))
-    return clean, noisy
+    if noise_seed is None:
+        return clean, None
+    noisy = np.empty(signal.shape, dtype=np.float32)
+    seeds = np.random.SeedSequence(noise_seed).spawn(4)
+    for seed, (position, existing) in zip(seeds, sorted(existing_noise(signal).items()), strict=True):
+        row, column = position
+        noisy[row::2, column::2] = add_noise(signal[row::2, column::2], seed, existing=existing)
+    return clean, quantize(noisy)
 
 
 def develop_linear_raw(samples: np.ndarray, neutral) -> np.ndarray:
