@@ -48,7 +48,12 @@ def decode(encoded_uint8: np.ndarray) -> np.ndarray:
 
 
 def to_camera(linear: np.ndarray, neutral) -> np.ndarray:
-    """Linear sRGB to black-subtracted camera RGB in DN16 (render white = sensor clip)."""
+    """Linear sRGB to black-subtracted camera RGB in DN16 (render white = sensor clip).
+
+    LibRaw renders the reference with white at its maximum (16383 - 512 = 15,871 DN14), above the
+    14,848 DN14 clip, so the fitted k reads about +0.096 EV (15,871 / 14,848). Kept so the delivered
+    DNGs (WhiteLevel 61440) develop back to the input render with highlights intact; k absorbs it.
+    """
     return colour.linear_srgb_to_camera(linear, neutral, camera_matrix(), constants.SIGNAL_16)
 
 
