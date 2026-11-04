@@ -189,7 +189,8 @@ source RGB (8-bit sRGB render)
                   then area-downsample (or Lanczos for a final step up) to the
                   output grid, then back-projection consistency against the
                   source
-  -> undo illuminant (white-balance gains from the illuminant prior)
+  -> undo illuminant (white-balance gains from the declared CCT or the
+     illuminant prior; section 5.3)
   -> linear sRGB(D65) -> A1 II camera RGB (measured matrix, the inverse of the
      LibRaw rendering transform)
   -> exposure placement (camera-model prior; see 6.2 for how the gate treats it)
@@ -453,8 +454,10 @@ INVALID.
 - Clean mosaic (noise-free) score.
 - Ablation table on the 50 MP clean mosaic: x8 self-ensemble against its
   identity member, HAT-L against Lanczos, back-projection on and off, and the
-  illuminant prior against daylight. A row that breaks the section 5.1 rule is
-  flagged in the verdict.
+  run's illuminant (declared or estimated) against daylight. A row that breaks
+  the section 5.1 rule is flagged in the verdict.
+- With a declared illuminant, the estimated prior's score for every output
+  (section 5.3).
 - Unfitted score (k = 1) and k in EV.
 - Diagnostic per-plane white-balance-fitted score, labelled as diagnostic.
 - L1 variant of P1.
