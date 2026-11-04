@@ -24,6 +24,8 @@ SETTINGS = {
     "PRESET": "max",
     "SOURCE_4K_URL": None,
     "SOURCE_2K_URL": None,
+    "ILLUMINANT_CCT_K": 4300,
+    "SOURCE_ILLUMINANT_CCT_K": None,
     "REFERENCE_ARW_URL": None,
     "DOWNLOAD_ALL": False,
     "DRIVE_MIRROR": False,

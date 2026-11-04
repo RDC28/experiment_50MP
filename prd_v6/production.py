@@ -59,12 +59,18 @@ def run(
     """Process each set source; a source whose preflight download or decode failed is skipped and raised at the end."""
     run_dir = Path(run_dir)
     verdict = json.loads((run_dir / "verdict.json").read_text()) if (run_dir / "verdict.json").exists() else {}
-    prior = colour.prior_neutral(pipeline.camera_matrix())
+    # The benchmark's declaration describes the reference frame only; a source image has its own light.
+    illuminant = colour.resolve_illuminant(
+        pipeline.camera_matrix(), settings.get("SOURCE_ILLUMINANT_CCT_K"), "SOURCE_ILLUMINANT_CCT_K"
+    )
+    neutral = np.asarray(illuminant["neutral"])
     record = {
         "claim": (
             f"The pipeline measured {verdict.get('accuracy_percent')}% on the benchmark ({verdict.get('status')}). "
-            "That number does not transfer automatically to other scenes; these outputs carry no accuracy claim."
+            "That number does not transfer automatically to other scenes; these outputs carry no accuracy claim. "
+            f"Their white balance uses the {illuminant['label']} (the benchmark's own illuminant is in verdict.json)."
         ),
+        "illuminant": {k: illuminant[k] for k in ("source", "cct_k", "neutral", "label")},
         "sources": {},
     }
     for key, setting in SOURCES:
@@ -93,11 +99,11 @@ def run(
                 upscaled = pipeline.run_sr(source, model, preset, log)
             linear = pipeline.linear_output(source, hw, model=model, preset=preset, upscaled=upscaled)
             if name == "50mp":
-                _, samples = pipeline.cfa_samples(linear, prior, rggb_layout(hw), noise_seed=preset.noise_seed)
-                files = benchmark._write_output(folder / name, name, samples, prior, cfa="RGGB")
+                _, samples = pipeline.cfa_samples(linear, neutral, rggb_layout(hw), noise_seed=preset.noise_seed)
+                files = benchmark._write_output(folder / name, name, samples, neutral, cfa="RGGB")
             else:
-                samples = pipeline.linear_raw_samples(linear, prior)
-                files = benchmark._write_output(folder / name, name, samples, prior, cfa=None)
+                samples = pipeline.linear_raw_samples(linear, neutral)
+                files = benchmark._write_output(folder / name, name, samples, neutral, cfa=None)
             outputs[name] = {
                 "size": list(hw),
                 "super_resolution": needs_sr,

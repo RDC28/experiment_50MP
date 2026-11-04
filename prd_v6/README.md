@@ -17,6 +17,26 @@ against that frame's real RAW in linear RAW space. Each output passes only when 
    `_04_benchmark_50mp`). Allow multiple downloads if Chrome asks. If a download was blocked or the kernel
    crashed, paste the recovery line that the driver cell printed first into a new cell.
 
+## White balance: declared illuminant
+
+A white-balanced render does not contain its illuminant, so the pipeline needs one (PRD section 5.3). Two
+settings in the first cell choose it:
+
+- `ILLUMINANT_CCT_K = 4300` declares the benchmark frame's light as a colour temperature in kelvin. The
+  value is the Sony A1 II frame's own as-shot white balance (about 4280 K on the Planckian locus) rounded to
+  the nearest 100 K, the way a person would state it, not the exact camera neutral. It goes through the same
+  Planckian-locus and camera-matrix path as the default. Set it to `None` for the estimated prior (a fixed
+  camera-model point at about 4130 K); that is the behaviour without any declaration.
+- `SOURCE_ILLUMINANT_CCT_K = None` is the same declaration for your own images. The benchmark value does not
+  apply to them: they use the estimated prior unless you give their CCT.
+
+Every report, `verdict.json` and the final banner state which source was used ("user-declared, 4300 K" or
+"estimated prior, 4130 K"). With a declaration, the estimated prior's per-output result is printed beside it
+so the two can be compared. Why 4300 K: run 20261104T064058Z_ad151cd with the estimated prior missed one
+condition, the 2K R-plane P2 (94.31%), entirely because 4130 K is lower than the frame's light. A declared
+score shows what the pipeline reaches given a correct illuminant. It is in-sample and says nothing about
+estimating the light.
+
 `SOURCE_4K_URL` and `SOURCE_2K_URL` add 2K, 4K and 50 MP outputs of your own images (no accuracy claim,
 because there is no reference RAW for them). Each is a direct URL or a Google Drive share link of a file
 shared as "Anyone with the link". A source that fails to download or decode is skipped and reported next to

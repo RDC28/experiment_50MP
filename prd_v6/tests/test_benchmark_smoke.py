@@ -9,7 +9,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from prd_v6 import benchmark, constants, delivery, dng, pipeline, report
+from prd_v6 import benchmark, colour, constants, delivery, dng, pipeline, report
 
 
 def cubic_model(tile: np.ndarray) -> np.ndarray:
@@ -148,3 +148,77 @@ def test_missed_on_a_names_the_failing_plane_and_pass_text_is_unchanged():
     passed = benchmark.build_verdict(_results(**{"2k": PASSING, "4k": PASSING, "50mp": PASSING}), [], [])
     assert passed["text"].startswith("PASS: A = 97.0% (2K, R)."), passed["text"]
     assert passed["outputs"]["2k"]["failing"] == []
+
+
+def test_verdict_states_the_illuminant_source_and_value():
+    results = _results(**{"2k": PASSING, "4k": PASSING, "50mp": PASSING})
+    cam = pipeline.camera_matrix()
+    estimated = benchmark.build_verdict(results, [], [], colour.resolve_illuminant(cam))
+    assert estimated["illuminant"]["source"] == "estimated" and "estimated_prior_results" not in estimated["illuminant"]
+    assert estimated["text"].endswith(" Illuminant: estimated prior, 4130 K.")
+    none = benchmark.build_verdict(results, [], [])
+    assert none["illuminant"] is None and "Illuminant" not in none["text"]
+
+    brief = {"min_P2": 0.943, "passes": False}
+    for name in results:
+        results[name]["reported"] = {"estimated_prior": brief}
+    declared = benchmark.build_verdict(results, [], [], colour.resolve_illuminant(cam, 4300))
+    record = declared["illuminant"]
+    assert record["source"] == "declared" and record["cct_k"] == 4300.0
+    assert record["estimated_prior"] == {"cct_k": constants.PRIOR_CCT_K}
+    assert set(record["estimated_prior_results"]) == set(constants.OUTPUT_ORDER)
+    assert declared["text"].endswith(" Illuminant: user-declared, 4300 K.")
+    assert "estimated prior," not in declared["text"]
+    summary = report.estimate_note(record)
+    assert "estimated prior (4130 K) gives" in summary and "MISSED min P2 94.30%" in summary
+
+
+def test_the_estimated_default_adds_no_comparison_note():
+    cam = pipeline.camera_matrix()
+    assert report.estimate_note(colour.resolve_illuminant(cam)) == ""
+
+
+@pytest.fixture(scope="module")
+def declared_run(tiny_raw, tmp_path_factory):
+    run_dir = tmp_path_factory.mktemp("declared")
+    cfg = benchmark.Config(
+        run_dir=run_dir,
+        arw=tiny_raw,
+        model=cubic_model,
+        preset=replace(pipeline.MAX, tile=32, overlap=8),
+        require_dng_validate=False,
+        expect_camera_size=False,
+        illuminant_cct_k=4300.0,
+        log=lambda message: None,
+    )
+    return run_dir, benchmark.run(cfg)
+
+
+def test_default_run_states_the_estimated_prior(run):
+    run_dir, verdict = run
+    assert verdict["illuminant"]["source"] == "estimated"
+    assert verdict["text"].endswith("Illuminant: estimated prior, 4130 K.")
+    camera = json.loads((run_dir / "camera_model.json").read_text())
+    assert camera["illuminant"]["source"] == "estimated"
+    for name in constants.OUTPUT_ORDER:
+        assert (
+            "estimated_prior" not in json.loads((run_dir / "benchmark" / name / "metrics.json").read_text())["reported"]
+        )
+
+
+def test_declared_run_states_the_declaration_and_reports_the_estimate_beside_it(run, declared_run):
+    run_dir, verdict = declared_run
+    assert verdict["illuminant"]["source"] == "declared" and verdict["illuminant"]["cct_k"] == 4300.0
+    assert verdict["text"].endswith("Illuminant: user-declared, 4300 K.")
+    assert set(verdict["illuminant"]["estimated_prior_results"]) == set(constants.OUTPUT_ORDER)
+    camera = json.loads((run_dir / "camera_model.json").read_text())
+    assert camera["illuminant"]["neutral"] == colour.neutral_for_cct(4300.0, pipeline.camera_matrix()).tolist()
+    assert camera["prior_cct_k"] == constants.PRIOR_CCT_K
+    # The default run's neutral is the prior, the declared run's is not: the gated candidate actually changed.
+    default_dir, _ = run
+    default_dng = dng.read_samples(default_dir / "benchmark" / "2k" / "exp50v6_2k.dng")
+    declared_dng = dng.read_samples(run_dir / "benchmark" / "2k" / "exp50v6_2k.dng")
+    assert not np.array_equal(default_dng, declared_dng)
+    report.write(run_dir)
+    assert "user-declared, 4300 K" in (run_dir / "summary.txt").read_text()
+    assert "user-declared, 4300 K" in (run_dir / "report.html").read_text()

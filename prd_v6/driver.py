@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from prd_v6 import delivery
+from prd_v6 import colour, delivery
 
 
 def _step(run_dir: Path, step: int, settings: dict, task, *, gating: bool):
@@ -34,12 +34,17 @@ def run(run_dir, settings: dict, log=None) -> None:
     log = log or (lambda message: delivery.log(run_dir, message))
     if settings.get("PRESET", "max") != "max":
         raise ValueError(f"PRESET {settings.get('PRESET')!r}: v6 defines only the 'max' preset (section 9.3)")
+    # Parse both declarations before any download: a bad value fails at the start, not after step 3.
+    benchmark_cct = colour.parse_declared_cct(settings.get("ILLUMINANT_CCT_K"))
+    colour.parse_declared_cct(settings.get("SOURCE_ILLUMINANT_CCT_K"), "SOURCE_ILLUMINANT_CCT_K")
+    delivery.write_illuminant(run_dir, colour.resolve_illuminant(pipeline.camera_matrix(), benchmark_cct))
     inputs = _step(run_dir, 3, settings, lambda: preflight.run(run_dir, settings, log), gating=True)
     config = benchmark.Config(
         run_dir=run_dir,
         arw=inputs["arw"],
         model=inputs["model"],
         preset=pipeline.MAX,
+        illuminant_cct_k=benchmark_cct,
         dng_validate_binary=inputs["dng_validate"],
         log=log,
     )

@@ -39,6 +39,7 @@ class Config:
     require_dng_validate: bool = True
     dng_validate_binary: str | None = None
     expect_camera_size: bool = True
+    illuminant_cct_k: float | None = None  # a user-declared CCT (section 5.3, Q2); None: the estimated prior
     log: Callable[[str], None] = print
     timings: dict = field(default_factory=dict)
 
@@ -308,7 +309,11 @@ def run(cfg: Config) -> dict:
     preset = cfg.preset
     icc = colour.srgb_icc_profile()
     cam_xyz = pipeline.camera_matrix()
-    prior = colour.prior_neutral(cam_xyz)
+    prior = colour.prior_neutral(cam_xyz)  # the estimated prior: the default, and the comparison when declared
+    illuminant = colour.resolve_illuminant(cam_xyz, cfg.illuminant_cct_k)
+    neutral = np.asarray(illuminant["neutral"])
+    declared = illuminant["source"] == "declared"
+    cfg.log(f"[benchmark] illuminant: {illuminant['label']}")
     daylight = colour.daylight_neutral(cam_xyz)
     invalid: list[str] = []
     warnings: list[str] = []
@@ -355,6 +360,7 @@ def run(cfg: Config) -> dict:
         "xyz_to_camera_d65": cam_xyz.tolist(),
         "libraw_rgb_xyz_matrix_for_r1": ref.libraw["rgb_xyz_matrix"],
         "matrix_max_abs_difference": float(np.max(np.abs(np.asarray(ref.libraw["rgb_xyz_matrix"]) - cam_xyz))),
+        "illuminant": {k: v for k, v in illuminant.items() if k != "label"},
         "prior_cct_k": constants.PRIOR_CCT_K,
         "prior_neutral": prior.tolist(),
         "daylight_neutral": daylight.tolist(),
@@ -383,8 +389,8 @@ def run(cfg: Config) -> dict:
             variance = _variance_fn(binned)
             folder = root / name
             linear = pipeline.decode(renders[("R1", name)])
-            samples = pipeline.linear_raw_samples(linear, prior)
-            files = _write_output(folder, name, samples, prior, cfa=None)
+            samples = pipeline.linear_raw_samples(linear, neutral)
+            files = _write_output(folder, name, samples, neutral, cfa=None)
             y = _candidate_from_dng(files["dng"], None)
             extra = {"source_clipped": clipped_src[name]}
             gated = metrics.score(
@@ -394,20 +400,29 @@ def run(cfg: Config) -> dict:
             rung_l2 = metrics.score(
                 x, pipeline.stored_to_signal(oracle_samples), None, mask, variance=variance, candidate_noisy=False
             )
-            r2_samples = pipeline.linear_raw_samples(pipeline.decode(renders[("R2", name)]), prior)
+            r2_samples = pipeline.linear_raw_samples(pipeline.decode(renders[("R2", name)]), neutral)
             r2_score = metrics.score(
                 x, pipeline.stored_to_signal(r2_samples), None, mask, variance=variance, candidate_noisy=False
             )
+            reported = {"R2_stress": _brief(r2_score)}
+            if declared:
+                est_samples = pipeline.linear_raw_samples(linear, prior)
+                reported["estimated_prior"] = _brief(
+                    metrics.score(
+                        x, pipeline.stored_to_signal(est_samples), None, mask, variance=variance, candidate_noisy=False
+                    )
+                )
+                del est_samples
             noop = {
                 "camera_transform_not_identity": bool(np.abs(cam_xyz - np.eye(3)).max() > 1e-3),
-                "neutral_not_unity": bool(np.abs(prior - 1).max() > 1e-3),
+                "neutral_not_unity": bool(np.abs(neutral - 1).max() > 1e-3),
             }
             results[name] = {
                 "size": list(sizes[name]),
                 "layout": "LinearRaw",
                 "gated": gated,
                 "ladder": {"L0": _brief(gated), "L2": _brief(rung_l2)},
-                "reported": {"R2_stress": _brief(r2_score)},
+                "reported": reported,
                 "integrity": _integrity(files, sizes[name], None, cfg),
                 "noop_checks": noop,
                 "files": {k: str(Path(v).relative_to(cfg.run_dir)) for k, v in files.items()},
@@ -437,8 +452,8 @@ def run(cfg: Config) -> dict:
         hr = resample.back_project(
             hr_plain, source_linear, iterations=preset.back_projection_iterations, source_clipped=clipped_src["4k"]
         )
-        clean, noisy = pipeline.cfa_samples(hr, prior, layout, noise_seed=preset.noise_seed)
-        files = _write_output(folder, name, noisy, prior, cfa=ref.pattern, clean=clean)
+        clean, noisy = pipeline.cfa_samples(hr, neutral, layout, noise_seed=preset.noise_seed)
+        files = _write_output(folder, name, noisy, neutral, cfa=ref.pattern, clean=clean)
         y0 = _candidate_from_dng(files["dng"], layout)
         y1 = _candidate_from_dng(files["clean_dng"], layout)
         src50 = resample.nearest(clipped_src["4k"].astype(np.uint8), hw).astype(bool)
@@ -463,7 +478,7 @@ def run(cfg: Config) -> dict:
     with _timed(cfg, "50 MP ladder"):
         l2 = clean_score(hr, oracle)
         full_linear = pipeline.decode(r1_full)
-        l3 = clean_score(full_linear, prior)
+        l3 = clean_score(full_linear, neutral)
         l4 = clean_score(full_linear, oracle)
         del full_linear
     with _timed(cfg, "50 MP ablation"):
@@ -480,10 +495,10 @@ def run(cfg: Config) -> dict:
             source_clipped=clipped_src["4k"],
         )
         rows = {
-            "x8 self-ensemble (vs identity member)": clean_score(hr_identity, prior),
-            "HAT-L (vs Lanczos)": clean_score(hr_lanczos, prior),
-            "back-projection (vs off)": clean_score(hr_plain, prior),
-            "illuminant prior (vs daylight)": clean_score(hr, daylight),
+            "x8 self-ensemble (vs identity member)": clean_score(hr_identity, neutral),
+            "HAT-L (vs Lanczos)": clean_score(hr_lanczos, neutral),
+            "back-projection (vs off)": clean_score(hr_plain, neutral),
+            f"illuminant ({illuminant['source']}, vs daylight)": clean_score(hr, daylight),
         }
         ablation = {}
         for row, without in rows.items():
@@ -534,13 +549,21 @@ def run(cfg: Config) -> dict:
             ("R2_stress", renders[("R2", "4k")], 2),
         ):
             linear = pipeline.linear_output(render, hw, model=cfg.model, preset=preset, progress=cfg.log)
-            _, noisy_v = pipeline.cfa_samples(linear, prior, layout, noise_seed=preset.noise_seed + seed)
+            _, noisy_v = pipeline.cfa_samples(linear, neutral, layout, noise_seed=preset.noise_seed + seed)
             reported[label] = _brief(
                 metrics.score(
                     x, pipeline.stored_to_signal(noisy_v), layout, mask, variance=variance, candidate_noisy=True
                 )
             )
             del linear, noisy_v
+        if declared:
+            _, noisy_est = pipeline.cfa_samples(hr, prior, layout, noise_seed=preset.noise_seed)
+            reported["estimated_prior"] = _brief(
+                metrics.score(
+                    x, pipeline.stored_to_signal(noisy_est), layout, mask, variance=variance, candidate_noisy=True
+                )
+            )
+            del noisy_est
 
     rungs = {"L0": gated, "L1": l1, "L2": l2, "L3": l3, "L4": l4}
     results[name] = {
@@ -582,7 +605,7 @@ def run(cfg: Config) -> dict:
         if not out.get("tile_seams", {"passed": True})["passed"]:
             invalid.append(f"{constants.OUTPUT_LABELS[name]} tile seams: {out['tile_seams']}")
 
-    verdict = build_verdict(results, invalid, warnings)
+    verdict = build_verdict(results, invalid, warnings, illuminant)
     verdict["timings_s"] = dict(cfg.timings)
     verdict["preset"] = preset.as_dict()
     _write_json(Path(cfg.run_dir) / "verdict.json", verdict)
@@ -609,7 +632,22 @@ def _failing(planes: dict) -> list[dict]:
     return sorted(misses, key=_shortfall, reverse=True)
 
 
-def build_verdict(results: dict, invalid: list[str], warnings: list[str]) -> dict:
+def _illuminant_record(results: dict, illuminant: dict | None) -> dict | None:
+    """What the verdict states about the white-balance neutral: its source, value and, if declared, the estimate."""
+    if not illuminant:
+        return None
+    record = {k: illuminant[k] for k in ("source", "cct_k", "neutral", "label")}
+    if illuminant["source"] == "declared":
+        record["estimated_prior"] = {"cct_k": constants.PRIOR_CCT_K}
+        record["estimated_prior_results"] = {
+            name: results[name]["reported"]["estimated_prior"]
+            for name in constants.OUTPUT_ORDER
+            if "estimated_prior" in results[name].get("reported", {})
+        }
+    return record
+
+
+def build_verdict(results: dict, invalid: list[str], warnings: list[str], illuminant: dict | None = None) -> dict:
     outputs = {}
     for name in constants.OUTPUT_ORDER:
         gated = results[name]["gated"]
@@ -659,9 +697,13 @@ def build_verdict(results: dict, invalid: list[str], warnings: list[str]) -> dic
             )
             if len(top) > 1:
                 text += f" Next: {top[1]['step']} (-{top[1]['points']:.1f} points)."
+    illuminant_record = _illuminant_record(results, illuminant)
+    if illuminant_record:
+        text += f" Illuminant: {illuminant_record['label']}."
     return {
         "status": status,
         "text": text,
+        "illuminant": illuminant_record,
         "headline": {
             "output": headline_name,
             "label": headline["label"],
