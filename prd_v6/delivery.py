@@ -139,6 +139,11 @@ def failed_steps(state: dict) -> list[dict]:
 # ---------------------------------------------------------------- verdict
 
 
+def write_illuminant(run_dir, illuminant: dict) -> None:
+    """The benchmark's white-balance source, recorded before any step so even an INVALID verdict states it."""
+    _write_json(Path(run_dir) / "illuminant.json", illuminant)
+
+
 def finalize_verdict(run_dir, exception_info: dict | None = None, *, process_lost: bool = False) -> dict:
     """Write the final verdict (section 6.6) from the step-4 verdict and the run state.
 
@@ -161,14 +166,19 @@ def finalize_verdict(run_dir, exception_info: dict | None = None, *, process_los
     )
     if verdict is None or gating_failure or verdict.get("status") not in {"PASS", "MISSED", "INVALID"}:
         reason = errors[0] if errors else "the benchmark did not run to completion"
+        previous = verdict or {}
         verdict = {
             "status": "INVALID",
             "text": f"INVALID: {reason}",
             "invalid_reasons": [reason],
             "warnings": [],
-            "outputs": (verdict or {}).get("outputs", {}),
+            "outputs": previous.get("outputs", {}),
             "accuracy_percent": None,
         }
+        recorded = previous.get("illuminant") or _read_json(run_dir / "illuminant.json")
+        if recorded:
+            verdict["illuminant"] = recorded
+            verdict["text"] += f" Illuminant: {recorded['label']}."
     elif errors:
         verdict["text"] = f"{verdict['text']} Completed with errors: {'; '.join(errors)}."
     verdict["completed_with_errors"] = errors
@@ -353,6 +363,8 @@ def _download(paths: list[Path], run_dir) -> list[dict]:
 
 
 def banner(run_dir, verdict: dict, archives: list[Path], settings: dict) -> str:
+    from prd_v6 import report
+
     rule = "=" * 78
     lines = [rule, f"PRD v6 RUN {run_id(run_dir)}: {verdict.get('status')}", verdict.get("text", "")]
     for name, out in (verdict.get("outputs") or {}).items():
@@ -360,6 +372,9 @@ def banner(run_dir, verdict: dict, archives: list[Path], settings: dict) -> str:
             f"{p} A {100 * v['A']:.2f}% P2 {100 * v['P2']:.2f}%" for p, v in (out.get("planes") or {}).items()
         )
         lines.append(f"  {out.get('label', name)}: {'PASS' if out.get('passes') else 'MISSED'}  {planes}")
+    illuminant = verdict.get("illuminant")
+    if illuminant:
+        lines.append(f"  illuminant: {illuminant['label']}" + report.estimate_note(illuminant))
     for warning in verdict.get("warnings", [])[:10]:
         lines.append(f"  warning: {warning}")
     lines.append("Archives (download order):")

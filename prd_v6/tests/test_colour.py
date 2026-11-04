@@ -43,3 +43,45 @@ def test_neutral_from_libraw_multipliers():
 def test_uint16_encoding_uses_the_full_range():
     encoded = np.array([0.0, 0.5, 1.0, 1.2], dtype=np.float32)
     assert colour.to_uint16(encoded).tolist() == [0, 32768, 65535, 65535]
+
+
+def test_no_declaration_parses_to_none():
+    assert colour.parse_declared_cct(None) is None
+
+
+@pytest.mark.parametrize("value, kelvin", [(4300, 4300.0), (4300.0, 4300.0), (np.float32(5600), 5600.0)])
+def test_a_declared_cct_parses_to_kelvin(value, kelvin):
+    assert colour.parse_declared_cct(value) == kelvin
+
+
+@pytest.mark.parametrize("value", ["4300", "", "estimated", True, float("nan"), float("inf"), 1000, 30000, -4300])
+def test_a_bad_declaration_is_rejected(value):
+    with pytest.raises(ValueError, match="ILLUMINANT_CCT_K"):
+        colour.parse_declared_cct(value)
+
+
+def test_default_illuminant_is_exactly_the_estimated_prior():
+    cam = pipeline.camera_matrix()
+    illuminant = colour.resolve_illuminant(cam, None)
+    assert illuminant["source"] == "estimated"
+    assert illuminant["cct_k"] == constants.PRIOR_CCT_K
+    assert illuminant["neutral"] == colour.prior_neutral(cam).tolist()
+    assert "estimated prior" in illuminant["label"] and "declared" not in illuminant["label"]
+
+
+def test_a_declared_illuminant_goes_through_the_planckian_path_and_is_labelled_declared():
+    cam = pipeline.camera_matrix()
+    illuminant = colour.resolve_illuminant(cam, 4300)
+    assert illuminant["source"] == "declared" and illuminant["cct_k"] == 4300.0
+    assert illuminant["neutral"] == colour.neutral_for_cct(4300.0, cam).tolist()
+    assert illuminant["neutral"] != colour.prior_neutral(cam).tolist()
+    assert illuminant["label"] == "user-declared, 4300 K"
+    # Declaring the prior's own CCT reproduces the prior neutral, but is still labelled declared.
+    same = colour.resolve_illuminant(cam, constants.PRIOR_CCT_K)
+    assert same["neutral"] == pytest.approx(colour.prior_neutral(cam).tolist()) and same["source"] == "declared"
+
+
+def test_a_warmer_declaration_raises_red_and_lowers_blue():
+    cam = pipeline.camera_matrix()
+    warm, cool = (colour.resolve_illuminant(cam, k)["neutral"] for k in (3200, 6500))
+    assert warm[0] > cool[0] and warm[2] < cool[2] and warm[1] == cool[1] == 1.0

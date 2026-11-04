@@ -33,6 +33,8 @@ CODE_PATHS = [
     "pyproject.toml",
     ":!video_v1/notebooks",
     ":!video_v1/tests",
+    ":!prd_v6/notebooks",
+    ":!prd_v6/tests",
     ":!*.md",
 ]
 

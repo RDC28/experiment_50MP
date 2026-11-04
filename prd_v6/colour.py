@@ -8,6 +8,9 @@ illuminant and the exposure placement.
 
 from __future__ import annotations
 
+import math
+import numbers
+
 import numpy as np
 
 from prd_v6 import constants
@@ -60,10 +63,13 @@ def daylight_neutral(cam_xyz: np.ndarray) -> np.ndarray:
     return normalise_neutral(np.asarray(cam_xyz, dtype=np.float64) @ SRGB_TO_XYZ @ np.ones(3))
 
 
+CCT_RANGE_K = (1667.0, 25000.0)  # the Planckian formula's validity range
+
+
 def planckian_xy(cct_k: float) -> tuple[float, float]:
     """CIE 1931 xy of a blackbody (Kim et al. 2002 cubic spline, 1667 K to 25000 K)."""
     t = float(cct_k)
-    if not 1667.0 <= t <= 25000.0:
+    if not CCT_RANGE_K[0] <= t <= CCT_RANGE_K[1]:
         raise ValueError("CCT outside 1667-25000 K")
     if t <= 4000.0:
         x = -0.2661239e9 / t**3 - 0.2343589e6 / t**2 + 0.8776956e3 / t + 0.179910
@@ -87,6 +93,37 @@ def neutral_for_cct(cct_k: float, cam_xyz: np.ndarray) -> np.ndarray:
 def prior_neutral(cam_xyz: np.ndarray) -> np.ndarray:
     """Section 5.3: the camera neutral at the mired midpoint of 2850 K to 7500 K."""
     return neutral_for_cct(constants.PRIOR_CCT_K, cam_xyz)
+
+
+def parse_declared_cct(value, name: str = "ILLUMINANT_CCT_K") -> float | None:
+    """A notebook CCT declaration (ILLUMINANT_CCT_K, SOURCE_ILLUMINANT_CCT_K).
+
+    None means no declaration; anything else must be a number, a CCT in kelvin.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(value):
+        raise ValueError(f"{name} {value!r} is not a colour temperature in kelvin")
+    cct = float(value)
+    if not CCT_RANGE_K[0] <= cct <= CCT_RANGE_K[1]:
+        raise ValueError(f"{name} {value!r} is outside {CCT_RANGE_K[0]:.0f}-{CCT_RANGE_K[1]:.0f} K")
+    return cct
+
+
+def resolve_illuminant(cam_xyz: np.ndarray, declared_cct_k=None, name: str = "ILLUMINANT_CCT_K") -> dict:
+    """The white-balance neutral for a run and where it came from (PRD v6 section 5.3, Q2).
+
+    A declared CCT goes through the same Planckian-locus and camera-matrix path as the prior. With no
+    declaration this is exactly the estimated prior. `source` is never "estimated" for a declared value.
+    """
+    declared = parse_declared_cct(declared_cct_k, name)
+    if declared is None:
+        source, cct, neutral = "estimated", constants.PRIOR_CCT_K, prior_neutral(cam_xyz)
+        label = f"estimated prior, {cct:.0f} K"
+    else:
+        source, cct, neutral = "declared", declared, neutral_for_cct(declared, cam_xyz)
+        label = f"user-declared, {cct:.0f} K"
+    return {"source": source, "cct_k": float(cct), "neutral": neutral.tolist(), "label": label}
 
 
 def neutral_from_multipliers(multipliers) -> np.ndarray:

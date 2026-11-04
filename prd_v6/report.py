@@ -41,9 +41,24 @@ def _plane_rows(score: dict, keys=("A", "P2")) -> list[list[str]]:
     return [[p] + [_pct(planes.get(p, {}).get(k)) for k in keys] for p in PLANES]
 
 
+def estimate_note(illuminant: dict) -> str:
+    """For a declared illuminant, the estimated prior's per-output result printed beside it."""
+    results = illuminant.get("estimated_prior_results") or {}
+    if illuminant.get("source") != "declared" or not results:
+        return ""
+    parts = ", ".join(
+        f"{name} {'PASS' if r.get('passes') else 'MISSED'} min P2 {100 * r['min_P2']:.2f}%"
+        for name, r in results.items()
+    )
+    return f"; the estimated prior ({illuminant['estimated_prior']['cct_k']:.0f} K) gives {parts}"
+
+
 def summary_text(run_dir: Path) -> str:
     verdict = _load(run_dir / "verdict.json") or {}
     lines = [f"run {run_dir.name}", f"status: {verdict.get('status', 'not decided yet')}", verdict.get("text", "")]
+    illuminant = verdict.get("illuminant")
+    if illuminant:
+        lines.append(f"illuminant: {illuminant['label']}" + estimate_note(illuminant))
     for name, label in OUTPUTS:
         out = (verdict.get("outputs") or {}).get(name)
         if out:
@@ -77,6 +92,10 @@ def write(run_dir) -> Path:
         f"<p><b>{html.escape(verdict.get('text', ''))}</b></p>",
         f"<p>{html.escape(verdict.get('in_sample', ''))}</p>",
     ]
+    illuminant = verdict.get("illuminant")
+    if illuminant:
+        note = estimate_note(illuminant)
+        parts.append(f"<p>Illuminant: <b>{html.escape(illuminant['label'])}</b>{html.escape(note)}</p>")
     for key, title in (("invalid_reasons", "Invalid"), ("warnings", "Warnings"), ("completed_with_errors", "Errors")):
         if verdict.get(key):
             items = "".join(f"<li>{html.escape(str(item))}</li>" for item in verdict[key])

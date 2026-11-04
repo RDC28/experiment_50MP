@@ -92,3 +92,40 @@ def test_only_the_max_preset_exists(tmp_path, calls):
     with pytest.raises(ValueError, match="only the 'max' preset"):
         driver.run(tmp_path, {"PRESET": "fast"}, log=lambda m: None)
     assert not (tmp_path / "state.json").exists() or json.loads((tmp_path / "state.json").read_text())["steps"] == []
+
+
+def test_a_declared_illuminant_reaches_the_benchmark_and_is_recorded(tmp_path, calls, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(benchmark, "run", lambda config: seen.setdefault("cct", config.illuminant_cct_k))
+    driver.run(tmp_path, {"PRESET": "max", "ILLUMINANT_CCT_K": 4300}, log=lambda m: None)
+    assert seen["cct"] == 4300.0
+    recorded = json.loads((tmp_path / "illuminant.json").read_text())
+    assert recorded["source"] == "declared" and recorded["cct_k"] == 4300.0
+
+
+def test_no_declaration_keeps_the_estimated_prior(tmp_path, calls, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(benchmark, "run", lambda config: seen.setdefault("cct", config.illuminant_cct_k))
+    driver.run(tmp_path, {"PRESET": "max"}, log=lambda m: None)
+    assert seen["cct"] is None
+    assert json.loads((tmp_path / "illuminant.json").read_text())["source"] == "estimated"
+
+
+@pytest.mark.parametrize("setting", ["ILLUMINANT_CCT_K", "SOURCE_ILLUMINANT_CCT_K"])
+def test_a_bad_declaration_fails_before_any_step(tmp_path, calls, setting):
+    with pytest.raises(ValueError, match=setting):
+        driver.run(tmp_path, {"PRESET": "max", setting: "warm"}, log=lambda m: None)
+    assert calls == []
+
+
+def test_an_invalid_verdict_still_states_the_illuminant(tmp_path, calls, monkeypatch):
+    def reject(*args, **kwargs):
+        raise preflight.PreflightError("no GPU")
+
+    monkeypatch.setattr(preflight, "run", reject)
+    with pytest.raises(preflight.PreflightError):
+        driver.run(tmp_path, {"PRESET": "max", "ILLUMINANT_CCT_K": 4300}, log=lambda m: None)
+    verdict = delivery.finalize_verdict(tmp_path)
+    assert verdict["status"] == "INVALID"
+    assert verdict["illuminant"]["source"] == "declared"
+    assert verdict["text"].endswith("Illuminant: user-declared, 4300 K.")
