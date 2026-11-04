@@ -119,13 +119,15 @@ tests/       tests on tiny synthetic clips (a few 64x48 frames, no models and no
 ## Tests
 
 ```sh
-.venv/bin/python -m pytest video_v1/tests
+.venv/bin/python -m pytest                 # the whole project suite, video_v1/tests included
+.venv/bin/python -m pytest video_v1/tests  # only these tests
 ```
 
-These tests are not in the default `testpaths` in `pyproject.toml`. Adding them there would change
-`pyproject.toml`, which the v6 notebook pins. The tests need ffmpeg and ffprobe on the PATH (they skip
-otherwise), and they stand in a script for dng_validate, which is built only on Colab. The notebook runs only
-on Colab.
+A plain `pytest` run adds `video_v1/tests` through the root `conftest.py`, not through `testpaths` in
+`pyproject.toml`. The v6 notebook test requires `pyproject.toml` to stay as it was at the v6 notebook's
+`REPO_REF`. The project has no CI workflow, so a plain `pytest` run is where every test runs. The tests need
+ffmpeg and ffprobe on the PATH (they skip otherwise), and they stand in a script for dng_validate, which is
+built only on Colab. The notebook runs only on Colab.
 
 ## Notes
 
