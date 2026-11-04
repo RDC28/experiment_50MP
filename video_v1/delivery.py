@@ -243,15 +243,12 @@ def split_parts(entries: list[tuple[Path, Path]], limit: int) -> list[list[tuple
     return parts
 
 
-def build_dng_archives(run_dir, *, only_missing: bool = False) -> list[Path]:
+def build_dng_archives(run_dir) -> list[Path]:
     """The DNG sequence in parts of at most PART_MAX_BYTES, each with the sequence manifest; _partial
     when step 4 did not finish."""
     run_dir = Path(run_dir)
     rid = run_id(run_dir)
-    existing = sorted((run_dir / "archives").glob(f"{rid}_*_dng_part*.zip"))
-    if only_missing and existing:
-        return existing
-    for old in existing:
+    for old in (run_dir / "archives").glob(f"{rid}_*_dng_part*.zip"):
         old.unlink()
     folder = run_dir / DNG_DIR
     if not folder.is_dir():
@@ -367,11 +364,11 @@ def banner(run_dir, verdict: dict, archives: list[Path], settings: dict) -> str:
     return "\n".join(lines)
 
 
-def _package(run_dir, settings: dict, verdict: dict, *, download: bool, only_missing: bool) -> list[Path]:
+def _package(run_dir, settings: dict, verdict: dict, *, download: bool) -> list[Path]:
     run_dir = Path(run_dir)
     _render_report(run_dir)
     write_manifest(run_dir)
-    data = build_dng_archives(run_dir, only_missing=only_missing)
+    data = build_dng_archives(run_dir)
     _write_json(
         run_dir / "archives.json",
         [{"archive": summary_path(run_dir).name, "sha256": "self"}]
@@ -391,7 +388,7 @@ def finalize_run(run_dir, settings: dict | None = None, exception_info: dict | N
     run_dir = Path(run_dir)
     settings = settings if settings is not None else load_settings(run_dir)
     verdict = finalize_verdict(run_dir, exception_info)
-    archives = _package(run_dir, settings, verdict, download=download, only_missing=False)
+    archives = _package(run_dir, settings, verdict, download=download)
     _write_json(run_dir / "run_status.json", {"finalized": True, "at": now(), "status": verdict["status"]})
     return verdict, archives
 
@@ -399,7 +396,7 @@ def finalize_run(run_dir, settings: dict | None = None, exception_info: dict | N
 def download_results(run_dir, download: bool = True):
     """Recovery after a blocked download, a closed tab or a kernel crash.
 
-    Rebuilds the summary, builds any missing archives without recomputing results, and downloads. If
+    Rebuilds the summary and every DNG part without recomputing results, and downloads. If
     the `finally` block never ran, the process was lost: the verdict records the step it was lost in.
     """
     run_dir = Path(run_dir)
@@ -413,4 +410,4 @@ def download_results(run_dir, download: bool = True):
             run_dir / "run_status.json",
             {"finalized": True, "at": now(), "status": verdict["status"], "by": "download_results"},
         )
-    return verdict, _package(run_dir, settings, verdict, download=download, only_missing=True)
+    return verdict, _package(run_dir, settings, verdict, download=download)

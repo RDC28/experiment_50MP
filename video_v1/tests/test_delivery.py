@@ -122,6 +122,22 @@ def test_recovery_after_a_lost_process_packages_a_partial_sequence(run_dir, caps
     assert "Recovery, in a new cell" in capsys.readouterr().out
 
 
+def test_recovery_rebuilds_a_dng_part_lost_while_packaging(run_dir, monkeypatch):
+    monkeypatch.setattr(delivery, "PART_MAX_BYTES", 250)  # two 100-byte frames per part
+    _converted(run_dir)
+    frames = run_dir / "dng" / "beach"
+    frames.mkdir(parents=True)
+    for index in range(FRAMES):
+        (frames / f"beach_{index:06d}.dng").write_bytes(b"\0" * 100)
+    (frames / "beach_manifest.json").write_text("{}")
+    _, built = delivery.finalize_run(run_dir, download=False)
+    built[2].unlink()  # the kernel died while zipping part 2, before run_status.json
+    (run_dir / "run_status.json").unlink()
+    _, archives = delivery.download_results(run_dir, download=False)
+    assert [a.name for a in archives] == [a.name for a in built]
+    assert [n for n in _names(archives[2]) if n.endswith(".dng")] == ["dng/beach/beach_000002.dng"]
+
+
 def test_split_parts_keeps_frame_order_and_gives_a_large_frame_its_own_part(tmp_path):
     sizes = [4, 4, 9, 2, 2]
     entries = []
