@@ -108,7 +108,7 @@ def _flags(convert: dict, check: dict | None, state: dict) -> list[str]:
     flags = []
     if convert.get("validation_failures"):
         checks = (
-            "LibRaw, dng_validate or the TIFF read-back" if convert.get("dng_written", True) else "the TIFF read-back"
+            "LibRaw, dng_validate or the TIFF read-back" if convert.get("dng_written") else "the TIFF read-back"
         )
         flags.append(
             f"{convert['validation_failures']} of {convert['frames_converted']} frames failed {checks} "
@@ -141,7 +141,7 @@ def outputs_text(convert: dict) -> str:
         outputs.append(f"a {convert['mlv']['bits']}-bit MLV clip")
     if convert.get("tiff_dir"):
         outputs.append("developed 16-bit sRGB TIFFs")
-    if convert.get("dng_written", True):
+    if convert.get("dng_written"):
         outputs.append("16-bit RGGB DNGs")
     return ", ".join(outputs[:-1]) + (" and " if len(outputs) > 1 else "") + outputs[-1]
 

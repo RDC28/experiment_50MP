@@ -56,7 +56,7 @@ def classify(gpu: str | None, ram_gb: float) -> tuple[list[str], list[str]]:
     return problems, warnings
 
 
-def disk_needed_gb(hw, frames: int, *, write_dng: bool = True) -> float:
+def disk_needed_gb(hw, frames: int, *, write_dng: bool = False) -> float:
     """The DNG (2 bytes a pixel), the TIFF (6 bytes a pixel before deflate) and the 14-bit MLV frame, per frame."""
     per_frame = hw[0] * hw[1] * (6 + 14 / 8) + (hw[0] * hw[1] * 2 + DNG_HEADER_BYTES if write_dng else 0)
     return per_frame * frames * DISK_MARGIN / 1e9 + DISK_RESERVE_GB
@@ -127,7 +127,7 @@ def run(run_dir, settings: dict, log=print) -> dict:
     except source.SourceError as error:
         raise PreflightError(f"{path.name}: {error}") from error
     hw = source.even_crop(clip.size)
-    need = disk_needed_gb(hw, clip.frames, write_dng=settings.get("WRITE_DNG") is not False)
+    need = disk_needed_gb(hw, clip.frames, write_dng=bool(settings.get("WRITE_DNG")))
     free = shutil.disk_usage(run_dir).free / 1e9
     record = clip.as_dict()
     record.update(

@@ -23,7 +23,7 @@ from video_v1.tests.conftest import make_clip, needs_ffmpeg
 
 ROOT = Path(__file__).resolve().parents[2]
 NOTEBOOK = ROOT / "video_v1" / "notebooks" / "video_to_raw_v1.ipynb"
-SETTINGS = {"VIDEO": None, "DRIVE_MIRROR": False, "WRITE_DNG": True, "MLV_CHUNK_MB": 480}
+SETTINGS = {"VIDEO": None, "DRIVE_MIRROR": False, "WRITE_DNG": False}
 # Changes under these paths change what the notebook runs, so REPO_REF must include them.
 CODE_PATHS = [
     "video_v1",
@@ -206,16 +206,15 @@ def test_an_uploaded_clip_runs_to_complete_outputs(notebook, tmp_path, monkeypat
         f"{rid}_01_summary.zip",
         f"{rid}_02_mlv_part1of1.zip",
         f"{rid}_03_tiff_part1of1.zip",
-        f"{rid}_04_dng_part1of1.zip",
     ]
     with zipfile.ZipFile(calls["download"][1]) as archive:
         assert "mlv/beach_day.MLV" in archive.namelist()
     with zipfile.ZipFile(calls["download"][2]) as archive:
         tiffs = [n for n in archive.namelist() if n.endswith(".tif")]
     assert tiffs == [f"tiff/beach_day/beach_day_{i:06d}.tif" for i in range(3)]
-    with zipfile.ZipFile(calls["download"][3]) as archive:
-        dngs = [n for n in archive.namelist() if n.endswith(".dng")]
-    assert dngs == [f"dng/beach_day/beach_day_{i:06d}.dng" for i in range(3)]
+    for path in calls["download"]:
+        with zipfile.ZipFile(path) as archive:
+            assert not any(n.endswith(".dng") for n in archive.namelist()), path.name
     assert calls["mount"] == [] and f"VIDEO v1 RUN {rid}: COMPLETE" in capsys.readouterr().out
 
 

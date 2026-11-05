@@ -1,6 +1,6 @@
 """The DNG sequence: one CFA DNG per frame with CinemaDNG frame metadata, plus its manifest.
 
-Every file carries the tags of the v6 CFA DNG (`prd_v6.dng.dng_tags`, checked by a test) with the
+Every file carries the tags of the v6 CFA DNG (`prd_v6.dng.write_dng`, checked by a test) with the
 clip's BaselineExposure, plus the three per-frame tags the CinemaDNG profile of DNG 1.4 defines or
 uses: FrameRate (51044), TimeCodes (51043, SMPTE 12M) and ImageNumber (37393, TIFF/EP). Files are
 named `<clip>_<frame:06d>.dng` from frame 0, so any CinemaDNG reader orders them by name.
@@ -99,11 +99,30 @@ def base_tags(
     white: int = constants.WHITE_16,
     baseline_exposure: float = 0.0,
 ) -> list[tuple]:
-    """The v6 CFA DNG tag set (`prd_v6.dng.dng_tags`), with the clip's BaselineExposure."""
-    return v6dng.dng_tags(
-        width, height, cfa_pattern=cfa_pattern, color_matrix=color_matrix, as_shot_neutral=as_shot_neutral,
-        black=black, white=white, baseline_exposure=baseline_exposure,
-    )  # fmt: skip
+    """The v6 CFA DNG tag set (same order, types and values as `prd_v6.dng.write_dng`), with the clip's
+    BaselineExposure."""
+    code = {"R": 0, "G": 1, "B": 2}
+    return [
+        (50706, "B", 4, (1, 4, 0, 0), False),  # DNGVersion
+        (50707, "B", 4, (1, 1, 0, 0), False),  # DNGBackwardVersion
+        (271, "s", 0, v6dng.MAKE, False),
+        (272, "s", 0, v6dng.MODEL, False),
+        (50708, "s", 0, v6dng.UNIQUE_CAMERA_MODEL, False),
+        (274, "H", 1, (1,), False),  # Orientation
+        (50713, "H", 2, (2, 2), False),  # BlackLevelRepeatDim
+        (50714, "2I", 4, v6dng._rationals([black] * 4, signed=False), False),
+        (50717, "I", 1, (white,), False),  # WhiteLevel
+        (50721, "2i", 9, v6dng._rationals(color_matrix, signed=True), False),  # ColorMatrix1
+        (50778, "H", 1, (v6dng.D65,), False),  # CalibrationIlluminant1
+        (50728, "2I", 3, v6dng._rationals(np.asarray(as_shot_neutral, dtype=np.float64)[:3], signed=False), False),
+        (50719, "I", 2, (0, 0), False),  # DefaultCropOrigin
+        (50720, "I", 2, (width, height), False),  # DefaultCropSize
+        (50730, "2i", 1, v6dng._rationals([baseline_exposure], signed=True), False),  # BaselineExposure
+        (33421, "H", 2, (2, 2), False),  # CFARepeatPatternDim
+        (33422, "B", 4, tuple(code[c] for c in cfa_pattern), False),  # CFAPattern
+        (50710, "B", 3, (0, 1, 2), False),  # CFAPlaneColor
+        (50711, "H", 1, (1,), False),  # CFALayout
+    ]
 
 
 def frame_tags(index: int, rate: Fraction) -> list[tuple]:

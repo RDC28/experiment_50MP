@@ -3,10 +3,9 @@
 One Colab notebook: [video_to_raw_v1.ipynb](notebooks/video_to_raw_v1.ipynb). It converts one video clip into
 synthetic Sony A1 II style RAW with the PRD v6 pipeline, imported from `prd_v6` (inverse ISP to a linear RGGB
 mosaic, A1 II shot and read noise, 16-bit DNG writer). It writes three outputs: one 14-bit MLV raw video file
-per clip, one developed 16-bit sRGB TIFF per frame and, optionally, one 16-bit DNG per frame. Nothing from v6
-is copied. One shared v6 fix applies to v6 too: its DNG tags now carry a ForwardMatrix1 and accept a
-BaselineExposure (see Notes). The v6 notebook and its 95% gate are otherwise untouched. There is no accuracy
-claim (section 4).
+per clip, one developed 16-bit sRGB TIFF per frame and, optionally (`WRITE_DNG = True`), one 16-bit DNG per
+frame. Nothing from v6 is copied or changed: the v6 notebook, its DNGs and its 95% gate are untouched. There is
+no accuracy claim (section 4).
 
 ## Run in Colab
 
@@ -19,9 +18,9 @@ claim (section 4).
    `/content/drive/MyDrive/clip.mp4` (Drive is then mounted first, one prompt). Every frame of the clip is
    converted.
 3. A 1080p clip of about 5 seconds should finish well under an hour, setup included. When the run ends, also
-   after a failure, the browser downloads `<run>_01_summary.zip`, then the MLV clip, the TIFFs and the DNGs
-   as `<run>_02_mlv_part1ofN.zip`, `<run>_03_tiff_part1ofN.zip`, `<run>_04_dng_part1ofN.zip` and onwards
-   (section 5). Allow multiple downloads if Chrome asks. If a download was
+   after a failure, the browser downloads `<run>_01_summary.zip`, then the MLV clip, the TIFFs and (with
+   `WRITE_DNG = True`) the DNGs as `<run>_NN_mlv_partKofN.zip`, then `<run>_NN_tiff_partKofN.zip`, then
+   `<run>_NN_dng_partKofN.zip`, with NN numbered on continuously from 02 (section 5). Allow multiple downloads if Chrome asks. If a download was
    blocked or the kernel crashed, paste the recovery line that the driver cell printed first into a new cell.
 
 `DRIVE_MIRROR = True` mirrors the summary to Google Drive after every step, and the archives at the end.
@@ -60,7 +59,7 @@ from the same per-frame RGGB mosaic, noise included.
   RGGB, with the RAWI, RAWC, IDNT, EXPO and WBAL blocks, one VIDF block per frame and the clip frame rate in
   the file header. The 14-bit samples are the DNG samples rounded to 14 bits (black 512, white 15360). The
   ColorMatrix1, the D65 white balance and a 180 degree shutter are recorded. A long clip is split into
-  chunks of at most `MLV_CHUNK_MB` (480 MB), named `.MLV`, `.M00`, `.M01` as a camera names them; keep them
+  chunks of at most 480 MB, named `.MLV`, `.M00`, `.M01` as a camera names them; keep them
   in one folder.
   - [MLV App](https://mlv.app/) opens the clip (open the `.MLV`; it reads the `.Mnn` chunks beside it) and
     exports it to ProRes or CinemaDNG for DaVinci Resolve or Premiere Pro.
@@ -71,12 +70,13 @@ from the same per-frame RGGB mosaic, noise included.
 - **Developed TIFFs**, `tiff/<clip>/<clip>_000000.tif` and onwards: each frame's DNG developed through LibRaw
   exactly as v6 develops its 50 MP output (as-shot neutral, AHD demosaic), as 16-bit sRGB RGB with an
   embedded sRGB ICC profile and lossless deflate. Each is read back (size, 16 bits, ICC profile).
-- **DNG sequence** (optional, `WRITE_DNG = True` by default), `dng/<clip>/<clip>_000000.dng` and onwards: one
+- **DNG sequence** (optional, off by default; set `WRITE_DNG = True`), `dng/<clip>/<clip>_000000.dng` and onwards: one
   16-bit RGGB DNG per frame, named as a CinemaDNG-style sequence. Each DNG carries the v6 tag set plus
   ImageNumber, FrameRate and, at 30 fps or below, a SMPTE TimeCodes tag (29.97 fps uses drop-frame time
   code), and BaselineExposure -0.5 EV. Every frame must open in LibRaw at the right size and pattern and pass
-  Adobe `dng_validate`, as in v6. With `WRITE_DNG = False` the DNG is written to a temporary folder only to
-  develop the TIFF, then deleted; the TIFFs and the MLV are identical either way.
+  Adobe `dng_validate`, as in v6. With `WRITE_DNG = False` (the default) the DNG is written to a temporary
+  folder only to develop the TIFF, then deleted, and no DNG goes into the archives; the TIFFs and the MLV are
+  identical either way.
 - The manifests, `dng/<clip>/<clip>_manifest.json` and `tiff/<clip>/<clip>_manifest.json`, hold each frame's
   time code, seed, timings and validation results.
 - `timings.csv` records the seconds per frame for decode, RAW, write, LibRaw, dng_validate, develop, TIFF and
@@ -111,11 +111,12 @@ from the same per-frame RGGB mosaic, noise included.
 
 - `<run>_01_summary.zip`: report.html, summary.txt, the verdict, the manifest, convert.json, check.json,
   timings.csv, the preview MP4, the plot and the thumbnails.
-- Then one set of split archives per output, at most 500 MB each, numbered on in download order:
-  - `<run>_02_mlv_part1ofN.zip`: the MLV clip, its chunks in play order, and its read-back check. Each chunk
+- Then one set of split archives per output, at most 500 MB each. NN is numbered on continuously in
+  download order from 02 across all three sets, and K counts the parts of one set:
+  - `<run>_NN_mlv_partKofN.zip`: the MLV clip, its chunks in play order, and its read-back check. Each chunk
     fits whole in one part; extract every part into one folder before opening the `.MLV`.
-  - `<run>_03_tiff_part1ofN.zip`: the TIFFs in frame order, with their manifest.
-  - `<run>_04_dng_part1ofN.zip`: the DNGs in frame order, with their manifest (only with `WRITE_DNG = True`).
+  - `<run>_NN_tiff_partKofN.zip`: the TIFFs in frame order, with their manifest.
+  - `<run>_NN_dng_partKofN.zip`: the DNGs in frame order, with their manifest (only with `WRITE_DNG = True`).
 - A run that ends early marks its last parts `_partial`.
 - The source clip stays on the runtime. Only its small text records are packaged.
 
@@ -174,9 +175,9 @@ built only on Colab. The notebook runs only on Colab.
   them with off colours and a soft, noisy look:
   - Colour: the DNGs were encoded the way LibRaw renders (white balance in camera space, then a fixed D65
     camera matrix) with a non-D65 as-shot neutral and only ColorMatrix1. A DNG-spec reader then adapts
-    from the white that neutral implies, which shifts saturated colours. The DNGs now carry a ForwardMatrix1
-    (the same LibRaw transform, adapted from D65 to the D50 profile white), so DNG-spec readers render the
-    colours LibRaw renders, and the video neutral is D65.
+    from the white that neutral implies, which shifts saturated colours. The video neutral is now the
+    source's own D65 white, so ColorMatrix1 alone gives DNG-spec readers the colours LibRaw renders. This is
+    a video_v1 calibration choice; the shared v6 DNG writer is unchanged.
   - Look: default raw rendering adds sharpening and a contrast tone curve that lifts mid-grey and the grain.
     BaselineExposure -0.5 EV brings that default rendering close to the source. The pixel data is
     unchanged; a raw editor can still set any rendering.

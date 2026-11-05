@@ -199,7 +199,7 @@ def _output_rows(conv: dict) -> list:
         else ""
     )
     rows = [("Frames", _e(f"{frames} of {conv['frames_source']}, {size}"))]
-    if conv.get("dng_written", True):
+    if conv.get("dng_written"):
         rows += [
             ("DNG sequence", _e("one RGGB, 16-bit, uncompressed DNG 1.4 per frame")
              + f": <code>{_e(conv['sequence_dir'])}</code>, <code>{_e(conv['manifest'])}</code>"),
@@ -312,7 +312,7 @@ def render_text(data: dict) -> str:
             f"{_duration(conv['wall_s'])} in all; "
             + (
                 f"LibRaw {conv['libraw_passed']}, dng_validate {conv['dng_validate_passed']} passed; "
-                if conv.get("dng_written", True)
+                if conv.get("dng_written")
                 else "no DNGs; "
             )
             + f"TIFF {conv.get('tiff_passed')} passed; MLV {(conv.get('mlv') or {}).get('status')}"

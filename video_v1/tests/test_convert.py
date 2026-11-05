@@ -28,7 +28,7 @@ def _convert(tmp_path, monkeypatch, settings: dict):
 
 @pytest.fixture
 def converted(tmp_path, monkeypatch):
-    return _convert(tmp_path, monkeypatch, {})
+    return _convert(tmp_path, monkeypatch, {"WRITE_DNG": True})
 
 
 def _samples(path) -> np.ndarray:
@@ -96,7 +96,6 @@ def test_the_source_white_is_the_neutral_and_the_dng_carries_the_baseline_exposu
     assert calibration["illuminant"] == "source white (D65)"
     with tifffile.TiffFile(run_dir / summary["sequence_dir"] / "beach_day_000000.dng") as tif:
         assert tuple(tif.pages[0].tags[50730].value) == (-1, 2)  # BaselineExposure -0.5 EV
-        assert 50964 in tif.pages[0].tags  # ForwardMatrix1
 
 
 @needs_ffmpeg
@@ -129,12 +128,12 @@ def test_the_mlv_holds_each_dng_mosaic_at_14_bits(converted):
 
 
 @needs_ffmpeg
-def test_without_dngs_the_tiffs_and_mlv_are_the_same(converted, tmp_path, monkeypatch):
+def test_by_default_no_dngs_are_kept_and_the_tiffs_and_mlv_are_the_same(converted, tmp_path, monkeypatch):
     run_dir, _inputs, summary = converted
     (tmp_path / "no_dng").mkdir()
-    other, _, without = _convert(tmp_path / "no_dng", monkeypatch, {"WRITE_DNG": False})
+    other, _, without = _convert(tmp_path / "no_dng", monkeypatch, {})
     assert without["dng_written"] is False and without["sequence_dir"] is None and without["validation_failures"] == 0
-    assert not list((other / "dng").rglob("*.dng"))
+    assert not (other / "dng").exists()
     for index in range(FRAMES):
         name = f"beach_day_{index:06d}.tif"
         np.testing.assert_array_equal(

@@ -157,17 +157,17 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
     name = sequence.clip_name(clip.path)
     hw = source.even_crop(clip.size)
     layout = production.rggb_layout(hw)
-    keep_dng = bool(setting(settings, "WRITE_DNG", True))
-    chunk_mb = float(setting(settings, "MLV_CHUNK_MB", MLV_CHUNK_MB))
+    keep_dng = bool(setting(settings, "WRITE_DNG", False))
     cal = calibration()
     _write_json(run_dir / "calibration.json", cal)
     neutral, cam_xyz = np.asarray(cal["as_shot_neutral"]), pipeline.camera_matrix()
     folder, tiffs = sequence_dir(run_dir, name), tiff_dir(run_dir, name)
-    folder.mkdir(parents=True, exist_ok=True)
+    if keep_dng:
+        folder.mkdir(parents=True, exist_ok=True)
     tiffs.mkdir(parents=True, exist_ok=True)
     icc = colour.srgb_icc_profile()
     info = mlv_info(hw, rate, cal)
-    writer = mlv.Writer(mlv_dir(run_dir), name, info, chunk_bytes=int(chunk_mb * 1e6))
+    writer = mlv.Writer(mlv_dir(run_dir), name, info, chunk_bytes=int(MLV_CHUNK_MB * 1e6))
     scratch = tempfile.TemporaryDirectory(prefix="video_v1_dng_")
     outputs = ("DNG, " if keep_dng else "") + "TIFF and MLV"
     log(f"converting {clip.frames} frames at {hw[1]}x{hw[0]} to {outputs} under {run_dir}")
@@ -379,7 +379,7 @@ def _frame_passed(record: dict, dng_written: bool) -> bool:
     return dng_ok and record.get("tiff_check", "passed") == "passed"
 
 
-def summarise(records: list[dict], *, total: int, wall_s: float, hw, dng_written: bool = True) -> dict:
+def summarise(records: list[dict], *, total: int, wall_s: float, hw, dng_written: bool = False) -> dict:
     """Per-frame totals. A frame fails validation when its DNG fails LibRaw or dng_validate, or its TIFF
     reads back wrong; the MLV is checked as a whole after the last frame."""
     totals = [sum(r["seconds"].values()) for r in records] or [0.0]

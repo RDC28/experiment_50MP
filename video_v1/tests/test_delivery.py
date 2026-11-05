@@ -10,7 +10,7 @@ import pytest
 
 from prd_v5.dng_validate import ENV_VAR
 from prd_v6.install import DNG_VALIDATE_BUILD
-from video_v1 import delivery, driver, preflight
+from video_v1 import convert, delivery, driver, preflight
 from video_v1.tests.conftest import make_clip, needs_ffmpeg
 
 FRAMES = 3
@@ -51,7 +51,8 @@ def test_a_whole_tiny_run_is_complete_and_split_into_archives(run_dir, tmp_path,
     monkeypatch.setattr(delivery, "PART_MAX_BYTES", 16_000)  # two 64x48 DNGs (about 6.5 kB each) per part
     clip = make_clip(tmp_path / "beach.mkv", FRAMES)
     # 64x48 at 14 bits is 5376 bytes a frame: 12 kB chunks hold two frames, so the clip spans .MLV and .M00
-    settings = {"VIDEO": str(clip), "DRIVE_MIRROR": False, "MLV_CHUNK_MB": 0.012}
+    monkeypatch.setattr(convert, "MLV_CHUNK_MB", 0.012)
+    settings = {"VIDEO": str(clip), "DRIVE_MIRROR": False, "WRITE_DNG": True}
     driver.run(run_dir, settings, log=lambda message: None)
     verdict, archives = delivery.finalize_run(run_dir, settings, download=False)
     assert verdict["status"] == "COMPLETE", verdict["text"]
@@ -90,7 +91,7 @@ def _converted(run_dir, *, check_passed=True, failures=0):
         delivery.mark_step_started(run_dir, step)
         delivery.mark_step_finished(run_dir, step)
     convert = {"frames_source": 3, "frames_converted": 3, "validation_failures": failures, "failed_frames": [],
-               "size": [48, 64]}  # fmt: skip
+               "size": [48, 64], "dng_written": True}  # fmt: skip
     (run_dir / "convert.json").write_text(json.dumps(convert))
     (run_dir / "check.json").write_text(json.dumps({"passed": check_passed, "metrics": {"level": {"passed": False}}}))
 
