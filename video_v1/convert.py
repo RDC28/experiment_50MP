@@ -1,7 +1,7 @@
 """Driver step 4: every frame to raw outputs at source resolution (README sections 2-3).
 
 Per frame the v6 50 MP path makes one RGGB mosaic, and three outputs carry exactly that mosaic: a
-validated 16-bit DNG (optional, on by default), a developed 16-bit sRGB TIFF, and the next frame of
+validated 16-bit DNG (optional, off by default), a developed 16-bit sRGB TIFF, and the next frame of
 the clip's 14-bit MLV.
 
 The clip calibration (camera neutral, white balance and exposure) is fixed once, before the first
