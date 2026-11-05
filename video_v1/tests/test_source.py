@@ -8,6 +8,7 @@ from fractions import Fraction
 import numpy as np
 import pytest
 
+from prd_v6 import colour
 from video_v1 import source, ycbcr
 from video_v1.tests.conftest import TINY_HW, make_clip, needs_ffmpeg
 
@@ -120,5 +121,5 @@ def test_rotation_matches_ffmpeg_autorotate(tmp_path):
         check=True,
     )
     reference = np.frombuffer(done.stdout, np.uint8).reshape(h, w).astype(np.float32)
-    luma = ours @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    luma = colour.srgb_encode(ours) @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)  # Y' like ffmpeg's gray
     assert np.corrcoef(luma.ravel(), reference.ravel())[0, 1] > 0.98

@@ -51,6 +51,36 @@ def camera_from_srgb(cam_xyz: np.ndarray) -> np.ndarray:
     return cam_rgb / cam_rgb.sum(axis=1, keepdims=True)
 
 
+# The DNG profile connection space white: D50 at CIE xy (0.3457, 0.3585), as the DNG SDK defines it.
+D50_XYZ = np.array([0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585])
+BRADFORD = np.array(
+    [
+        [0.8951, 0.2664, -0.1614],
+        [-0.7502, 1.7135, 0.0367],
+        [0.0389, -0.0685, 1.0296],
+    ]
+)
+
+
+def bradford(src_xyz, dst_xyz) -> np.ndarray:
+    """Bradford chromatic adaptation from one white (XYZ) to another, as the DNG SDK applies it."""
+    cone = BRADFORD @ np.asarray(src_xyz, dtype=np.float64), BRADFORD @ np.asarray(dst_xyz, dtype=np.float64)
+    return np.linalg.inv(BRADFORD) @ np.diag(cone[1] / cone[0]) @ BRADFORD
+
+
+def forward_matrix(cam_xyz: np.ndarray) -> np.ndarray:
+    """DNG ForwardMatrix: white-balanced camera RGB to XYZ D50, matching the LibRaw rendering exactly.
+
+    The outputs are encoded with LibRaw's model (white balance in camera space, then the fixed D65
+    `camera_from_srgb`). A DNG-spec reader given only ColorMatrix1 instead adapts from the white that
+    AsShotNeutral implies, which shifts saturated colours whenever the neutral is not D65. This matrix
+    is the same LibRaw transform, adapted from D65 to the PCS white, so both readers agree for any
+    neutral. It maps camera (1, 1, 1) to D50, as the DNG specification requires.
+    """
+    srgb_white = SRGB_TO_XYZ @ np.ones(3)
+    return bradford(srgb_white, D50_XYZ) @ SRGB_TO_XYZ @ np.linalg.inv(camera_from_srgb(cam_xyz))
+
+
 def normalise_neutral(values) -> np.ndarray:
     values = np.asarray(values, dtype=np.float64)[:3]
     if values.shape != (3,) or not np.all(np.isfinite(values)) or np.any(values <= 0):

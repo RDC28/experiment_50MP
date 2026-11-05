@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
-from prd_v6 import constants
+from prd_v6 import colour, constants
 
 PHOTOMETRIC_CFA = 32803
 PHOTOMETRIC_LINEAR_RAW = 34892
@@ -37,6 +37,53 @@ def _rationals(values, *, signed: bool) -> tuple[int, ...]:
     return tuple(encoded)
 
 
+def dng_tags(
+    width: int,
+    height: int,
+    *,
+    cfa_pattern: str | None,
+    color_matrix: np.ndarray,
+    as_shot_neutral,
+    black: int = constants.BLACK_16,
+    white: int = constants.WHITE_16,
+    baseline_exposure: float = 0.0,
+) -> list[tuple]:
+    """The DNG tags every output carries (tifffile `extratags`), shared with the video_v1 frame writer.
+
+    ForwardMatrix1 makes DNG-spec readers (Adobe Camera Raw, DaVinci Resolve) render the colours LibRaw
+    renders; see `colour.forward_matrix`. BaselineExposure is 0 unless a caller places its default
+    rendering differently.
+    """
+    cfa = cfa_pattern is not None
+    channels = 1 if cfa else 3
+    tags = [
+        (50706, "B", 4, (1, 4, 0, 0), False),  # DNGVersion
+        (50707, "B", 4, (1, 1, 0, 0), False),  # DNGBackwardVersion
+        (271, "s", 0, MAKE, False),
+        (272, "s", 0, MODEL, False),
+        (50708, "s", 0, UNIQUE_CAMERA_MODEL, False),
+        (274, "H", 1, (1,), False),  # Orientation
+        (50713, "H", 2, (2, 2) if cfa else (1, 1), False),  # BlackLevelRepeatDim
+        (50714, "2I", 4 if cfa else 3, _rationals([black] * (4 if cfa else 3), signed=False), False),
+        (50717, "I", channels, (white,) * channels, False),  # WhiteLevel
+        (50721, "2i", 9, _rationals(color_matrix, signed=True), False),  # ColorMatrix1
+        (50964, "2i", 9, _rationals(colour.forward_matrix(color_matrix), signed=True), False),  # ForwardMatrix1
+        (50778, "H", 1, (D65,), False),  # CalibrationIlluminant1
+        (50728, "2I", 3, _rationals(np.asarray(as_shot_neutral, dtype=np.float64)[:3], signed=False), False),
+        (50719, "I", 2, (0, 0), False),  # DefaultCropOrigin
+        (50720, "I", 2, (width, height), False),  # DefaultCropSize
+        (50730, "2i", 1, _rationals([baseline_exposure], signed=True), False),  # BaselineExposure
+    ]
+    if cfa:
+        tags += [
+            (33421, "H", 2, (2, 2), False),  # CFARepeatPatternDim
+            (33422, "B", 4, tuple(_COLOUR_CODE[c] for c in cfa_pattern), False),  # CFAPattern
+            (50710, "B", 3, (0, 1, 2), False),  # CFAPlaneColor
+            (50711, "H", 1, (1,), False),  # CFALayout
+        ]
+    return tags
+
+
 def write_dng(
     path: str | Path,
     samples: np.ndarray,
@@ -58,31 +105,10 @@ def write_dng(
     if not cfa and (samples.ndim != 3 or samples.shape[2] != 3):
         raise ValueError("a LinearRaw DNG needs (H, W, 3) samples")
     height, width = samples.shape[:2]
-    channels = 1 if cfa else 3
-    tags = [
-        (50706, "B", 4, (1, 4, 0, 0), False),  # DNGVersion
-        (50707, "B", 4, (1, 1, 0, 0), False),  # DNGBackwardVersion
-        (271, "s", 0, MAKE, False),
-        (272, "s", 0, MODEL, False),
-        (50708, "s", 0, UNIQUE_CAMERA_MODEL, False),
-        (274, "H", 1, (1,), False),  # Orientation
-        (50713, "H", 2, (2, 2) if cfa else (1, 1), False),  # BlackLevelRepeatDim
-        (50714, "2I", 4 if cfa else 3, _rationals([black] * (4 if cfa else 3), signed=False), False),
-        (50717, "I", channels, (white,) * channels, False),  # WhiteLevel
-        (50721, "2i", 9, _rationals(color_matrix, signed=True), False),  # ColorMatrix1
-        (50778, "H", 1, (D65,), False),  # CalibrationIlluminant1
-        (50728, "2I", 3, _rationals(np.asarray(as_shot_neutral, dtype=np.float64)[:3], signed=False), False),
-        (50719, "I", 2, (0, 0), False),  # DefaultCropOrigin
-        (50720, "I", 2, (width, height), False),  # DefaultCropSize
-        (50730, "2i", 1, _rationals([0.0], signed=True), False),  # BaselineExposure
-    ]
-    if cfa:
-        tags += [
-            (33421, "H", 2, (2, 2), False),  # CFARepeatPatternDim
-            (33422, "B", 4, tuple(_COLOUR_CODE[c] for c in cfa_pattern), False),  # CFAPattern
-            (50710, "B", 3, (0, 1, 2), False),  # CFAPlaneColor
-            (50711, "H", 1, (1,), False),  # CFALayout
-        ]
+    tags = dng_tags(
+        width, height, cfa_pattern=cfa_pattern, color_matrix=color_matrix, as_shot_neutral=as_shot_neutral,
+        black=black, white=white,
+    )  # fmt: skip
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tifffile.TiffWriter(path, byteorder="<", bigtiff=False) as writer:

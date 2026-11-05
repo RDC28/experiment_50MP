@@ -16,12 +16,16 @@ needs_ffmpeg = pytest.mark.skipif(
 
 
 def tiny_rgb(index: int, hw=TINY_HW) -> np.ndarray:
-    """Smooth non-linear R'G'B' in [0.05, 0.85] with a moving bar, so frames differ a little."""
+    """Smooth non-linear R'G'B' in [0.05, 0.85] with a moving bar, so frames differ a little.
+
+    The bar stays clear of the 8 px border the stability check ignores: demosaic edge error as it crosses
+    that border moves the colour ratios of a frame this small by about 0.5%, the flicker threshold.
+    """
     y, x = np.mgrid[0 : hw[0], 0 : hw[1]].astype(np.float32)
     y /= hw[0]
     x /= hw[1]
     rgb = np.stack([0.15 + 0.6 * x, 0.2 + 0.5 * y, 0.6 - 0.4 * x * y], axis=-1)
-    column = (8 + 4 * index) % hw[1]
+    column = (16 + 4 * index) % hw[1]
     rgb[:, column : column + 4] = [0.8, 0.75, 0.7]
     return np.clip(rgb, 0.05, 0.85)
 

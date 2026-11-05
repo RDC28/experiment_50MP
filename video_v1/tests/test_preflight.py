@@ -23,10 +23,12 @@ def test_classify_warns_without_a_gpu_and_stops_on_low_ram():
     assert problems and warnings
 
 
-def test_disk_estimate_covers_the_dngs_and_their_zips():
-    one_frame = 1080 * 1920 * 2
+def test_disk_estimate_covers_the_outputs_and_their_zips():
+    pixels = 1080 * 1920
+    one_frame = pixels * 2 + pixels * 6 + pixels * 14 // 8  # DNG, uncompressed TIFF, 14-bit MLV
     need = preflight.disk_needed_gb((1080, 1920), 150)
     assert need > one_frame * 150 * 2 / 1e9 + preflight.DISK_RESERVE_GB
+    assert preflight.disk_needed_gb((1080, 1920), 150, write_dng=False) < need
 
 
 def test_video_dest_names():

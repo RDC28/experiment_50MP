@@ -152,7 +152,7 @@ def _stability_section(check: dict, run_dir: Path) -> list[str]:
     if check.get("plot"):
         out.append(f"<img src='{_e(check['plot'])}' alt='stability plot'>")
     if check.get("preview"):
-        out.append("<h2>Preview: source (left) and developed from the DNGs (right)</h2>")
+        out.append("<h2>Preview: source (left) and the developed TIFFs (right)</h2>")
         out.append(f"<video controls loop muted playsinline preload='metadata' src='{_e(check['preview'])}'></video>")
         out.append(f"<p class='muted'>{_e(check.get('develop'))}. Encoder: {_e(check.get('preview_encoder'))}.</p>")
     thumbs = check.get("thumbnails") or []
@@ -178,15 +178,51 @@ def _estimate_rows(est: dict) -> list:
         ("HAT-L tiles per frame", _e(est["sr_tiles_per_frame"])),
         ("HAT-L seconds per tile (A100, x8 ensemble)", _e(tile)),
         ("Source decode per frame (as measured, unscaled)", _seconds(est["source_stages_seconds_per_frame"])),
-        (f"RAW, DNG, LibRaw and dng_validate per frame (x{est['pixel_ratio']:.2f} pixels)",
+        (f"RAW, DNG, checks, TIFF and MLV per frame (x{est['pixel_ratio']:.2f} pixels)",
          _seconds(est["output_stages_seconds_per_frame"])),
         ("Per frame, x8 ensemble (v6 MAX)",
          _per_frame_and_clip(est["seconds_per_frame_x8_ensemble"], est["hours_for_clip_x8_ensemble"])),
         ("Per frame, no ensemble",
          _per_frame_and_clip(est["seconds_per_frame_no_ensemble"], est["hours_for_clip_no_ensemble"])),
         ("DNG size per frame", _e(f"{est['dng_bytes_per_frame'] / 1e6:.1f} MB")),
+        ("MLV size per frame", _e(f"{est['mlv_bytes_per_frame'] / 1e6:.1f} MB" if "mlv_bytes_per_frame" in est
+                                  else "-")),
         ("Note", _e(est["note"])),
     ]  # fmt: skip
+
+
+def _output_rows(conv: dict) -> list:
+    frames = conv["frames_converted"]
+    size = f"{conv['size'][1]}x{conv['size'][0]}" + (
+        f" (cropped to even from {conv['cropped_from'][1]}x{conv['cropped_from'][0]})"
+        if conv.get("cropped_from")
+        else ""
+    )
+    rows = [("Frames", _e(f"{frames} of {conv['frames_source']}, {size}"))]
+    if conv.get("dng_written", True):
+        rows += [
+            ("DNG sequence", _e("one RGGB, 16-bit, uncompressed DNG 1.4 per frame")
+             + f": <code>{_e(conv['sequence_dir'])}</code>, <code>{_e(conv['manifest'])}</code>"),
+            ("DNG validation", _e(f"LibRaw {conv['libraw_passed']}/{frames}, dng_validate "
+                                  f"{conv['dng_validate_passed']}/{frames}; {conv['bytes'] / 1e6:.1f} MB")),
+        ]  # fmt: skip
+    else:
+        rows.append(("DNG sequence", _e("not written (WRITE_DNG = False)")))
+    if conv.get("tiff_dir"):
+        rows.append(
+            ("TIFF sequence", _e("one developed 16-bit sRGB TIFF per frame, sRGB ICC profile")
+             + f": <code>{_e(conv['tiff_dir'])}</code>; "
+             + _e(f"{conv.get('tiff_passed')}/{frames} read back; {conv.get('tiff_bytes', 0) / 1e6:.1f} MB"))
+        )  # fmt: skip
+    clip = conv.get("mlv")
+    if clip:
+        files = ", ".join(f"<code>{_e(f)}</code>" for f in clip["files"])
+        state = "read back bit-exact" if clip["status"] == "passed" else f"check FAILED: {'; '.join(clip['problems'])}"
+        rows.append(
+            ("MLV clip", _e(f"{clip['bits']}-bit RGGB, {clip['width']} wide, ") + files
+             + _e(f"; {state}; {clip['bytes'] / 1e6:.1f} MB"))
+        )  # fmt: skip
+    return rows
 
 
 def render_html(data: dict, run_dir: Path) -> str:
@@ -217,6 +253,7 @@ def render_html(data: dict, run_dir: Path) -> str:
                     ("Illuminant", _e(f"{cal['method']}: {cal['cct_k']:.0f} K")),
                     ("As-shot neutral", _e(", ".join(f"{v:.4f}" for v in cal["as_shot_neutral"]))),
                     ("Exposure", _e(cal["exposure"])),
+                    ("DNG BaselineExposure", _e(f"{cal.get('baseline_exposure_ev', 0.0):+.2f} EV")),
                     ("Per-frame estimation", "none"),
                 ]
             ),  # fmt: skip
@@ -225,35 +262,8 @@ def render_html(data: dict, run_dir: Path) -> str:
         spf = conv["seconds_per_frame"]
         stages = ", ".join(f"{k} {v:.3f} s" for k, v in conv["stage_seconds_mean"].items())
         out += [
-            "<h2>DNG sequence</h2>",
-            _table(
-                [
-                    ("Frames", _e(f"{conv['frames_converted']} of {conv['frames_source']}")),
-                    (
-                        "Size",
-                        _e(
-                            f"{conv['size'][1]}x{conv['size'][0]} RGGB, 16-bit, uncompressed DNG 1.4"
-                            + (
-                                f" (cropped to even from {conv['cropped_from'][1]}x{conv['cropped_from'][0]})"
-                                if conv.get("cropped_from")
-                                else ""
-                            )
-                        ),
-                    ),
-                    (
-                        "Folder and manifest",
-                        f"<code>{_e(conv['sequence_dir'])}</code>, <code>{_e(conv['manifest'])}</code>",
-                    ),
-                    (
-                        "Validation",
-                        _e(
-                            f"LibRaw {conv['libraw_passed']}/{conv['frames_converted']}, "
-                            f"dng_validate {conv['dng_validate_passed']}/{conv['frames_converted']}"
-                        ),
-                    ),
-                    ("Total size", _e(f"{conv['bytes'] / 1e6:.1f} MB")),
-                ]
-            ),  # fmt: skip
+            "<h2>Outputs</h2>",
+            _table(_output_rows(conv)),
             "<h2>Timings</h2>",
             _table(
                 [
@@ -299,8 +309,13 @@ def render_text(data: dict) -> str:
     if conv:
         lines.append(
             f"convert: {conv['frames_converted']} frames, {conv['seconds_per_frame']['mean']:.2f} s per frame, "
-            f"{_duration(conv['wall_s'])} in all; LibRaw {conv['libraw_passed']}, "
-            f"dng_validate {conv['dng_validate_passed']} passed"
+            f"{_duration(conv['wall_s'])} in all; "
+            + (
+                f"LibRaw {conv['libraw_passed']}, dng_validate {conv['dng_validate_passed']} passed; "
+                if conv.get("dng_written", True)
+                else "no DNGs; "
+            )
+            + f"TIFF {conv.get('tiff_passed')} passed; MLV {(conv.get('mlv') or {}).get('status')}"
         )
         est = conv.get("estimate_4k")
         if est:

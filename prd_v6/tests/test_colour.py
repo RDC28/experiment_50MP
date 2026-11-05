@@ -85,3 +85,24 @@ def test_a_warmer_declaration_raises_red_and_lowers_blue():
     cam = pipeline.camera_matrix()
     warm, cool = (colour.resolve_illuminant(cam, k)["neutral"] for k in (3200, 6500))
     assert warm[0] > cool[0] and warm[2] < cool[2] and warm[1] == cool[1] == 1.0
+
+
+def test_forward_matrix_maps_camera_white_to_the_d50_pcs_white():
+    """DNG 1.4: ForwardMatrix maps white-balanced camera (1, 1, 1) to D50; dng_validate allows 0.01."""
+    forward = colour.forward_matrix(pipeline.camera_matrix())
+    np.testing.assert_allclose(forward @ np.ones(3), colour.D50_XYZ, atol=1e-9)
+
+
+@pytest.mark.parametrize("cct", [2850.0, constants.PRIOR_CCT_K, 6504.0, 7500.0])
+def test_a_dng_spec_reader_with_the_forward_matrix_renders_what_libraw_renders(cct):
+    """The DNG SDK path (camera / AsShotNeutral, ForwardMatrix to XYZ D50, Bradford to D65, sRGB) gives back
+    the encoded linear sRGB, up to one exposure scale, for any neutral; ColorMatrix1 alone does not."""
+    cam_xyz = pipeline.camera_matrix()
+    neutral = colour.neutral_for_cct(cct, cam_xyz)
+    linear = np.array([[0.6, 0.1, 0.1], [0.1, 0.5, 0.1], [0.1, 0.1, 0.6], [0.7, 0.6, 0.1], [0.2, 0.2, 0.2]])
+    camera = colour.linear_srgb_to_camera(linear, neutral, cam_xyz, 1.0).astype(np.float64)
+    pcs = (camera / neutral) @ colour.forward_matrix(cam_xyz).T
+    srgb_white = colour.SRGB_TO_XYZ @ np.ones(3)
+    to_srgb = np.linalg.inv(colour.SRGB_TO_XYZ) @ colour.bradford(colour.D50_XYZ, srgb_white)
+    rendered = pcs @ to_srgb.T
+    np.testing.assert_allclose(rendered / rendered[-1, 1] * 0.2, linear, atol=1e-6)

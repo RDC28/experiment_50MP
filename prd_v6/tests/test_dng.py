@@ -25,6 +25,9 @@ def test_cfa_dng_reads_back_in_libraw(tmp_path):
     assert dng.libraw_check(path, expected_hw=(48, 64), cfa_pattern="RGGB")["status"] == "passed"
     tags = dng.read_dng_tags(path)
     assert tags["Make"] == "Synthetic"
+    forward = np.asarray(tags["ForwardMatrix1"], dtype=np.float64).reshape(9, 2)
+    np.testing.assert_allclose(forward[:, 0] / forward[:, 1], colour.forward_matrix(CAM).reshape(9), atol=1e-6)
+    assert tuple(tags["BaselineExposure"]) == (0, 1)
 
 
 def test_linear_raw_dng_reads_back_in_libraw(tmp_path):
