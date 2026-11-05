@@ -107,9 +107,7 @@ def _flags(convert: dict, check: dict | None, state: dict) -> list[str]:
     """Why a run that converted every frame is FLAGGED rather than COMPLETE."""
     flags = []
     if convert.get("validation_failures"):
-        checks = (
-            "LibRaw, dng_validate or the TIFF read-back" if convert.get("dng_written") else "the TIFF read-back"
-        )
+        checks = "LibRaw, dng_validate or the TIFF read-back" if convert.get("dng_written") else "the TIFF read-back"
         flags.append(
             f"{convert['validation_failures']} of {convert['frames_converted']} frames failed {checks} "
             f"(frames {convert.get('failed_frames')})"
