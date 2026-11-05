@@ -34,7 +34,7 @@ CHECKPOINT_EVERY = 10
 # DNG BaselineExposure. Adobe Camera Raw, Resolve and macOS place linear mid grey well above the sRGB
 # rendering by default (macOS renders linear 0.18 at 0.65 instead of 0.46 with 0 EV); -0.5 EV brings
 # their default look within reach of the source without crushing it. LibRaw, the TIFFs and the MLV
-# ignore it. README section 2 has the measurements.
+# ignore it. README Notes explain the default raw look.
 BASELINE_EXPOSURE_EV = -0.5
 MLV_BITS = 14  # the deepest raw MLV App reads; 16-bit samples are rounded to it
 MLV_CHUNK_MB = 480  # each .MLV/.Mnn chunk fits whole in one archive part (README section 5)

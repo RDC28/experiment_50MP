@@ -20,8 +20,9 @@ no accuracy claim (section 4).
 3. A 1080p clip of about 5 seconds should finish well under an hour, setup included. When the run ends, also
    after a failure, the browser downloads `<run>_01_summary.zip`, then the MLV clip, the TIFFs and (with
    `WRITE_DNG = True`) the DNGs as `<run>_NN_mlv_partKofN.zip`, then `<run>_NN_tiff_partKofN.zip`, then
-   `<run>_NN_dng_partKofN.zip`, with NN numbered on continuously from 02 (section 5). Allow multiple downloads if Chrome asks. If a download was
-   blocked or the kernel crashed, paste the recovery line that the driver cell printed first into a new cell.
+   `<run>_NN_dng_partKofN.zip`, with NN numbered on continuously from 02 (section 5). Allow multiple
+   downloads if Chrome asks. If a download was blocked or the kernel crashed, paste the recovery line that
+   the driver cell printed first into a new cell.
 
 `DRIVE_MIRROR = True` mirrors the summary to Google Drive after every step, and the archives at the end.
 
@@ -70,15 +71,16 @@ from the same per-frame RGGB mosaic, noise included.
 - **Developed TIFFs**, `tiff/<clip>/<clip>_000000.tif` and onwards: each frame's DNG developed through LibRaw
   exactly as v6 develops its 50 MP output (as-shot neutral, AHD demosaic), as 16-bit sRGB RGB with an
   embedded sRGB ICC profile and lossless deflate. Each is read back (size, 16 bits, ICC profile).
-- **DNG sequence** (optional, off by default; set `WRITE_DNG = True`), `dng/<clip>/<clip>_000000.dng` and onwards: one
-  16-bit RGGB DNG per frame, named as a CinemaDNG-style sequence. Each DNG carries the v6 tag set plus
-  ImageNumber, FrameRate and, at 30 fps or below, a SMPTE TimeCodes tag (29.97 fps uses drop-frame time
-  code), and BaselineExposure -0.5 EV. Every frame must open in LibRaw at the right size and pattern and pass
-  Adobe `dng_validate`, as in v6. With `WRITE_DNG = False` (the default) the DNG is written to a temporary
-  folder only to develop the TIFF, then deleted, and no DNG goes into the archives; the TIFFs and the MLV are
-  identical either way.
-- The manifests, `dng/<clip>/<clip>_manifest.json` and `tiff/<clip>/<clip>_manifest.json`, hold each frame's
-  time code, seed, timings and validation results.
+- **DNG sequence** (optional, off by default; set `WRITE_DNG = True`), `dng/<clip>/<clip>_000000.dng` and
+  onwards: one 16-bit RGGB DNG per frame, named as a CinemaDNG-style sequence. Each DNG carries the v6 tag
+  set plus ImageNumber, FrameRate and, at 30 fps or below, a SMPTE TimeCodes tag (29.97 fps uses drop-frame
+  time code), and BaselineExposure -0.5 EV. Every frame must open in LibRaw at the right size and pattern
+  and pass Adobe `dng_validate`, as in v6. With `WRITE_DNG = False` (the default) the DNG is written to a
+  temporary folder only to develop the TIFF, then deleted, and no DNG goes into the archives; the TIFFs and
+  the MLV are identical either way.
+- The TIFF manifest, `tiff/<clip>/<clip>_manifest.json`, holds each frame's time code and TIFF read-back
+  result. With `WRITE_DNG = True` the DNG manifest, `dng/<clip>/<clip>_manifest.json`, adds each frame's seed,
+  timings and LibRaw and dng_validate results.
 - `timings.csv` records the seconds per frame for decode, RAW, write, LibRaw, dng_validate, develop, TIFF and
   MLV.
 - The report estimates what a 4K UHD version would cost (see Notes).
@@ -167,8 +169,8 @@ built only on Colab. The notebook runs only on Colab.
   20261104T064058Z_ad151cd: on an A100, HAT-L x4 took 2386 s for 70 tiles of 512 px with the x8
   self-ensemble. A 4K version still decodes the source, so the decode stage (with the YCbCr to linear
   conversion) keeps this run's measured time. RAW build, DNG write, LibRaw, dng_validate, develop, TIFF and
-  MLV scale with the UHD to source pixel ratio from this run's measured times. The report gives the cost with and without the
-  ensemble.
+  MLV scale with the UHD to source pixel ratio from this run's measured times. The report gives the cost
+  with and without the ensemble.
 - **Per-frame SR.** HAT-L has no temporal model, so a 4K version would need its own flicker check.
 - **Why the first DNGs looked off in other apps.** Run 20261105T110627Z_c030e67 wrote DNGs whose data
   matched the source (the pipeline's own develop was within dE 0.4), but macOS Preview and Adobe rendered

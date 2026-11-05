@@ -57,7 +57,7 @@ def classify(gpu: str | None, ram_gb: float) -> tuple[list[str], list[str]]:
 
 
 def disk_needed_gb(hw, frames: int, *, write_dng: bool = False) -> float:
-    """The DNG (2 bytes a pixel), the TIFF (6 bytes a pixel before deflate) and the 14-bit MLV frame, per frame."""
+    """Per frame: the TIFF (6 bytes a pixel before deflate), the 14-bit MLV frame and the DNG when written."""
     per_frame = hw[0] * hw[1] * (6 + 14 / 8) + (hw[0] * hw[1] * 2 + DNG_HEADER_BYTES if write_dng else 0)
     return per_frame * frames * DISK_MARGIN / 1e9 + DISK_RESERVE_GB
 
