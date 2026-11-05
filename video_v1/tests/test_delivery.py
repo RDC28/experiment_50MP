@@ -10,7 +10,7 @@ import pytest
 
 from prd_v5.dng_validate import ENV_VAR
 from prd_v6.install import DNG_VALIDATE_BUILD
-from video_v1 import delivery, driver, preflight
+from video_v1 import convert, delivery, driver, preflight
 from video_v1.tests.conftest import make_clip, needs_ffmpeg
 
 FRAMES = 3
@@ -40,34 +40,49 @@ def run_dir(tmp_path, monkeypatch):
     return run
 
 
+def _frames_by_part(archives, kind: str) -> list[list[str]]:
+    parts = [a for a in archives if f"_{kind}_part" in a.name]
+    return [[n for n in _names(a) if not n.endswith(".json")] for a in parts]
+
+
 @needs_ffmpeg
 def test_a_whole_tiny_run_is_complete_and_split_into_archives(run_dir, tmp_path, monkeypatch, capsys):
     pytest.importorskip("rawpy")
-    monkeypatch.setattr(delivery, "PART_MAX_BYTES", 16_000)  # two 64x48 frames (about 6.5 kB each) per part
+    monkeypatch.setattr(delivery, "PART_MAX_BYTES", 16_000)  # two 64x48 DNGs (about 6.5 kB each) per part
     clip = make_clip(tmp_path / "beach.mkv", FRAMES)
-    settings = {"VIDEO": str(clip), "DRIVE_MIRROR": False}
+    # 64x48 at 14 bits is 5376 bytes a frame: 12 kB chunks hold two frames, so the clip spans .MLV and .M00
+    monkeypatch.setattr(convert, "MLV_CHUNK_MB", 0.012)
+    settings = {"VIDEO": str(clip), "DRIVE_MIRROR": False, "WRITE_DNG": True}
     driver.run(run_dir, settings, log=lambda message: None)
     verdict, archives = delivery.finalize_run(run_dir, settings, download=False)
     assert verdict["status"] == "COMPLETE", verdict["text"]
+    assert "a 14-bit MLV clip, developed 16-bit sRGB TIFFs and 16-bit RGGB DNGs" in verdict["text"]
     assert verdict["text"].endswith(delivery.NO_ACCURACY_CLAIM)
-    assert [a.name for a in archives] == [
-        f"{RUN_ID}_01_summary.zip",
-        f"{RUN_ID}_02_dng_part1of2.zip",
-        f"{RUN_ID}_03_dng_part2of2.zip",
+    names = [a.name for a in archives]
+    assert names[0] == f"{RUN_ID}_01_summary.zip"
+    assert [n.split("_")[3] for n in names[1:]] == sorted(
+        (n.split("_")[3] for n in names[1:]), key=["mlv", "tiff", "dng"].index
+    )
+    assert [int(n.split("_")[2]) for n in names[1:]] == list(range(2, len(names) + 1))
+    assert _frames_by_part(archives, "mlv") == [["mlv/beach.MLV"], ["mlv/beach.M00"]]
+    assert sum(_frames_by_part(archives, "tiff"), []) == [f"tiff/beach/beach_{i:06d}.tif" for i in range(FRAMES)]
+    assert _frames_by_part(archives, "dng") == [
+        ["dng/beach/beach_000000.dng", "dng/beach/beach_000001.dng"],
+        ["dng/beach/beach_000002.dng"],
     ]
     summary = _names(archives[0])
     expected_files = ["report.html", "summary.txt", "verdict.json", "convert.json", "check.json", "timings.csv"]
     expected_files += ["check/preview_side_by_side.mp4", "check/stability.png", "dng/beach/beach_manifest.json"]
+    expected_files += ["tiff/beach/beach_manifest.json", "mlv/beach_mlv_check.json"]
     for expected in expected_files:
         assert expected in summary, expected
-    assert not any(name.endswith(".dng") for name in summary)
+    assert not any(name.endswith((".dng", ".tif", ".MLV", ".M00")) for name in summary)
     assert not any(name.startswith("inputs/") and not name.endswith(".json") for name in summary)
-    part1, part2 = _names(archives[1]), _names(archives[2])
-    assert [n for n in part1 if n.endswith(".dng")] == ["dng/beach/beach_000000.dng", "dng/beach/beach_000001.dng"]
-    assert [n for n in part2 if n.endswith(".dng")] == ["dng/beach/beach_000002.dng"]
-    assert "dng/beach/beach_manifest.json" in part1 and "dng/beach/beach_manifest.json" in part2
+    for archive in archives[1:]:
+        kind = archive.name.split("_")[3]
+        assert any(n.startswith(f"{kind}/") and n.endswith(".json") for n in _names(archive)), archive.name
     report = (run_dir / "report.html").read_text()
-    assert "No accuracy claim" in report and "4K" in report
+    assert "No accuracy claim" in report and "4K" in report and "read back bit-exact" in report
     assert f"VIDEO v1 RUN {RUN_ID}: COMPLETE" in capsys.readouterr().out
 
 
@@ -76,7 +91,7 @@ def _converted(run_dir, *, check_passed=True, failures=0):
         delivery.mark_step_started(run_dir, step)
         delivery.mark_step_finished(run_dir, step)
     convert = {"frames_source": 3, "frames_converted": 3, "validation_failures": failures, "failed_frames": [],
-               "size": [48, 64]}  # fmt: skip
+               "size": [48, 64], "dng_written": True}  # fmt: skip
     (run_dir / "convert.json").write_text(json.dumps(convert))
     (run_dir / "check.json").write_text(json.dumps({"passed": check_passed, "metrics": {"level": {"passed": False}}}))
 
@@ -95,8 +110,20 @@ def test_a_validation_failure_or_a_step_5_error_is_flagged(run_dir):
     delivery.mark_step_finished(run_dir, 5, RuntimeError("the preview encoder failed (exit 1)"))
     verdict = delivery.finalize_verdict(run_dir)
     assert verdict["status"] == "FLAGGED"
-    assert any("failed LibRaw or dng_validate" in r for r in verdict["reasons"])
+    assert any("failed LibRaw, dng_validate or the TIFF read-back" in r for r in verdict["reasons"])
     assert any("preview encoder" in r for r in verdict["reasons"])
+
+
+def test_an_mlv_check_failure_is_flagged(run_dir):
+    _converted(run_dir)
+    convert = json.loads((run_dir / "convert.json").read_text())
+    convert["mlv"] = {"bits": 14, "status": "failed", "problems": ["1 decoded frames differ"]}
+    (run_dir / "convert.json").write_text(json.dumps(convert))
+    (run_dir / "check.json").write_text(json.dumps({"passed": True, "metrics": {}}))
+    delivery.mark_step_started(run_dir, 5)
+    delivery.mark_step_finished(run_dir, 5)
+    verdict = delivery.finalize_verdict(run_dir)
+    assert verdict["status"] == "FLAGGED" and "the MLV check failed: 1 decoded frames differ" in verdict["text"]
 
 
 def test_a_gating_failure_is_invalid(run_dir):

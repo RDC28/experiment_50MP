@@ -1,9 +1,9 @@
 """The DNG sequence: one CFA DNG per frame with CinemaDNG frame metadata, plus its manifest.
 
-Every file carries exactly the tags of the v6 CFA DNG (`prd_v6.dng.write_dng`, checked by a test),
-plus the three per-frame tags the CinemaDNG profile of DNG 1.4 defines or uses: FrameRate (51044),
-TimeCodes (51043, SMPTE 12M) and ImageNumber (37393, TIFF/EP). Files are named
-`<clip>_<frame:06d>.dng` from frame 0, so any CinemaDNG reader orders them by name.
+Every file carries the tags of the v6 CFA DNG (`prd_v6.dng.write_dng`, checked by a test) with the
+clip's BaselineExposure, plus the three per-frame tags the CinemaDNG profile of DNG 1.4 defines or
+uses: FrameRate (51044), TimeCodes (51043, SMPTE 12M) and ImageNumber (37393, TIFF/EP). Files are
+named `<clip>_<frame:06d>.dng` from frame 0, so any CinemaDNG reader orders them by name.
 """
 
 from __future__ import annotations
@@ -97,8 +97,10 @@ def base_tags(
     as_shot_neutral,
     black: int = constants.BLACK_16,
     white: int = constants.WHITE_16,
+    baseline_exposure: float = 0.0,
 ) -> list[tuple]:
-    """The v6 CFA DNG tag set, unchanged (same order, types and values as `prd_v6.dng.write_dng`)."""
+    """The v6 CFA DNG tag set (same order, types and values as `prd_v6.dng.write_dng`), with the clip's
+    BaselineExposure."""
     code = {"R": 0, "G": 1, "B": 2}
     return [
         (50706, "B", 4, (1, 4, 0, 0), False),  # DNGVersion
@@ -115,7 +117,7 @@ def base_tags(
         (50728, "2I", 3, v6dng._rationals(np.asarray(as_shot_neutral, dtype=np.float64)[:3], signed=False), False),
         (50719, "I", 2, (0, 0), False),  # DefaultCropOrigin
         (50720, "I", 2, (width, height), False),  # DefaultCropSize
-        (50730, "2i", 1, v6dng._rationals([0.0], signed=True), False),  # BaselineExposure
+        (50730, "2i", 1, v6dng._rationals([baseline_exposure], signed=True), False),  # BaselineExposure
         (33421, "H", 2, (2, 2), False),  # CFARepeatPatternDim
         (33422, "B", 4, tuple(code[c] for c in cfa_pattern), False),  # CFAPattern
         (50710, "B", 3, (0, 1, 2), False),  # CFAPlaneColor
@@ -145,16 +147,20 @@ def write_frame(
     rate: Fraction,
     color_matrix,
     as_shot_neutral,
+    baseline_exposure: float = 0.0,
     cfa_pattern: str = constants.CFA_PATTERN,
 ) -> Path:
-    """Write one uint16 (H, W) RGGB frame exactly as the v6 CFA DNG, plus the frame tags."""
+    """Write one uint16 (H, W) RGGB frame as the v6 CFA DNG, plus the frame tags."""
     samples = np.ascontiguousarray(samples)
     if samples.dtype != np.uint16 or samples.ndim != 2:
         raise TypeError("a frame DNG needs (H, W) uint16 samples")
     height, width = samples.shape
     if height % 2 or width % 2:
         raise ValueError("a CFA frame needs even height and width")
-    tags = base_tags(width, height, cfa_pattern=cfa_pattern, color_matrix=color_matrix, as_shot_neutral=as_shot_neutral)
+    tags = base_tags(
+        width, height, cfa_pattern=cfa_pattern, color_matrix=color_matrix, as_shot_neutral=as_shot_neutral,
+        baseline_exposure=baseline_exposure,
+    )  # fmt: skip
     tags += frame_tags(index, rate)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

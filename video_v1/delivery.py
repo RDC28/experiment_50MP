@@ -25,10 +25,13 @@ SUMMARY_SUFFIXES = {".json", ".html", ".txt", ".log", ".md", ".csv"}
 SUMMARY_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 SUMMARY_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 SUMMARY_VIDEO_SUFFIXES = {".mp4"}
-STORED_SUFFIXES = {".dng", ".zip", ".jpg", ".jpeg", ".png", ".mp4"}
+STORED_SUFFIXES = {".dng", ".tif", ".zip", ".jpg", ".jpeg", ".png", ".mp4"}
 EXCLUDED_DIRS = {"archives"}
 INPUTS_DIR = "inputs"  # the source clip stays on the runtime; only its small text records are packaged
 DNG_DIR = "dng"
+# The frame outputs, in download order: the MLV clip, the developed TIFFs, then the DNG sequence. Each
+# is split into parts of whole files; only their .json manifests and checks go in the summary.
+OUTPUT_DIRS = ("mlv", "tiff", DNG_DIR)
 PART_MAX_BYTES = 500 * 1000 * 1000
 NO_ACCURACY_CLAIM = (
     "No accuracy claim: there is no real RAW of this clip to score against, and the v6 benchmark result "
@@ -104,10 +107,14 @@ def _flags(convert: dict, check: dict | None, state: dict) -> list[str]:
     """Why a run that converted every frame is FLAGGED rather than COMPLETE."""
     flags = []
     if convert.get("validation_failures"):
+        checks = "LibRaw, dng_validate or the TIFF read-back" if convert.get("dng_written") else "the TIFF read-back"
         flags.append(
-            f"{convert['validation_failures']} of {convert['frames_converted']} DNGs failed LibRaw or dng_validate "
+            f"{convert['validation_failures']} of {convert['frames_converted']} frames failed {checks} "
             f"(frames {convert.get('failed_frames')})"
         )
+    clip = convert.get("mlv")
+    if clip and clip.get("status") != "passed":
+        flags.append(f"the MLV check failed: {'; '.join(clip.get('problems') or [])}")
     if convert.get("frame_count_mismatch"):
         flags.append(convert["frame_count_mismatch"])
     step5 = next((r for r in state["steps"] if r["step"] == 5), {})
@@ -124,6 +131,17 @@ def _flags(convert: dict, check: dict | None, state: dict) -> list[str]:
             + (f" ({check['reason']})" if check.get("reason") else "")
         )
     return flags
+
+
+def outputs_text(convert: dict) -> str:
+    outputs = []
+    if convert.get("mlv"):
+        outputs.append(f"a {convert['mlv']['bits']}-bit MLV clip")
+    if convert.get("tiff_dir"):
+        outputs.append("developed 16-bit sRGB TIFFs")
+    if convert.get("dng_written"):
+        outputs.append("16-bit RGGB DNGs")
+    return ", ".join(outputs[:-1]) + (" and " if len(outputs) > 1 else "") + outputs[-1]
 
 
 def finalize_verdict(run_dir, exception_info: dict | None = None, *, process_lost: bool = False) -> dict:
@@ -154,7 +172,7 @@ def finalize_verdict(run_dir, exception_info: dict | None = None, *, process_los
             reasons.append(errors[-1])
         status = "FLAGGED" if reasons else "COMPLETE"
         frames = f"{convert['frames_converted']} of {convert['frames_source']} frames"
-        what = f"{frames} converted to 16-bit RGGB DNGs at {convert['size'][1]}x{convert['size'][0]}"
+        what = f"{frames} at {convert['size'][1]}x{convert['size'][0]} converted to " + outputs_text(convert)
         text = f"{status}: {what}" + (f"; {'; '.join(reasons)}." if reasons else ", all validated, stability passed.")
     verdict = {
         "status": status,
@@ -187,8 +205,8 @@ def _files(root: Path, base: Path):
 
 def _in_summary(path: Path, rel: Path) -> bool:
     suffix = path.suffix.lower()
-    if rel.parts[0] == DNG_DIR:
-        return suffix == ".json"  # the sequence manifest, not the frames
+    if rel.parts[0] in OUTPUT_DIRS:
+        return suffix == ".json"  # the manifests and checks, not the frames
     if suffix in SUMMARY_SUFFIXES or suffix in SUMMARY_VIDEO_SUFFIXES:
         return True
     return suffix in SUMMARY_IMAGE_SUFFIXES and path.stat().st_size <= SUMMARY_IMAGE_MAX_BYTES
@@ -199,7 +217,8 @@ def _zip(target: Path, entries) -> Path:
     tmp = target.with_suffix(".zip.tmp")
     with zipfile.ZipFile(tmp, "w", allowZip64=True) as archive:
         for path, rel in entries:
-            method = zipfile.ZIP_STORED if path.suffix.lower() in STORED_SUFFIXES else zipfile.ZIP_DEFLATED
+            stored = path.suffix.lower() in STORED_SUFFIXES or rel.parts[0] == "mlv"  # .MLV, .M00, ...
+            method = zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED
             archive.write(path, str(rel), compress_type=method)
     os.replace(tmp, target)
     return target
@@ -243,27 +262,39 @@ def split_parts(entries: list[tuple[Path, Path]], limit: int) -> list[list[tuple
     return parts
 
 
-def build_dng_archives(run_dir) -> list[Path]:
-    """The DNG sequence in parts of at most PART_MAX_BYTES, each with the sequence manifest; _partial
-    when step 4 did not finish."""
+def _play_order(entry: tuple[Path, Path]) -> tuple:
+    """Frames by name; an MLV clip's chunks as Magic Lantern numbers them: .MLV, then .M00, .M01, ..."""
+    path, rel = entry
+    suffix = path.suffix.upper()
+    if suffix == ".MLV" or (len(suffix) == 4 and suffix[:2] == ".M" and suffix[2:].isdigit()):
+        return (str(rel.with_suffix("")), -1 if suffix == ".MLV" else int(suffix[2:]))
+    return (str(rel), 0)
+
+
+def build_output_archives(run_dir) -> list[Path]:
+    """Each output folder (OUTPUT_DIRS) in parts of at most PART_MAX_BYTES, each part with that output's
+    manifests; numbered on from the summary (02, 03, ...) in download order, and _partial when step 4
+    did not finish."""
     run_dir = Path(run_dir)
     rid = run_id(run_dir)
-    for old in (run_dir / "archives").glob(f"{rid}_*_dng_part*.zip"):
-        old.unlink()
-    folder = run_dir / DNG_DIR
-    if not folder.is_dir():
-        return []
-    entries = list(_files(folder, run_dir))
-    frames = [(p, r) for p, r in entries if p.suffix.lower() == ".dng"]
-    manifests = [(p, r) for p, r in entries if p.suffix.lower() == ".json"]
-    if not frames:
-        return []
+    for kind in OUTPUT_DIRS:
+        for old in (run_dir / "archives").glob(f"{rid}_*_{kind}_part*.zip"):
+            old.unlink()
     partial = "" if 4 in finished_steps(load_state(run_dir)) else "_partial"
-    parts = split_parts(frames, PART_MAX_BYTES)
-    built = []
-    for number, part in enumerate(parts, start=1):
-        target = run_dir / "archives" / f"{rid}_{number + 1:02d}_dng_part{number}of{len(parts)}{partial}.zip"
-        built.append(_zip(target, manifests + part))
+    built: list[Path] = []
+    for kind in OUTPUT_DIRS:
+        folder = run_dir / kind
+        if not folder.is_dir():
+            continue
+        entries = list(_files(folder, run_dir))
+        manifests = [(p, r) for p, r in entries if p.suffix.lower() == ".json"]
+        frames = sorted(((p, r) for p, r in entries if p.suffix.lower() != ".json"), key=_play_order)
+        if not frames:
+            continue
+        parts = split_parts(frames, PART_MAX_BYTES)
+        for number, part in enumerate(parts, start=1):
+            name = f"{rid}_{len(built) + 2:02d}_{kind}_part{number}of{len(parts)}{partial}.zip"
+            built.append(_zip(run_dir / "archives" / name, manifests + part))
     return built
 
 
@@ -368,7 +399,7 @@ def _package(run_dir, settings: dict, verdict: dict, *, download: bool) -> list[
     run_dir = Path(run_dir)
     _render_report(run_dir)
     write_manifest(run_dir)
-    data = build_dng_archives(run_dir)
+    data = build_output_archives(run_dir)
     _write_json(
         run_dir / "archives.json",
         [{"archive": summary_path(run_dir).name, "sha256": "self"}]
@@ -396,7 +427,7 @@ def finalize_run(run_dir, settings: dict | None = None, exception_info: dict | N
 def download_results(run_dir, download: bool = True):
     """Recovery after a blocked download, a closed tab or a kernel crash.
 
-    Rebuilds the summary and every DNG part without recomputing results, and downloads. If
+    Rebuilds the summary and every output part without recomputing results, and downloads. If
     the `finally` block never ran, the process was lost: the verdict records the step it was lost in.
     """
     run_dir = Path(run_dir)

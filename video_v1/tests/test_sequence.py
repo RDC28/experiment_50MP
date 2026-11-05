@@ -94,6 +94,18 @@ def test_frame_dng_opens_in_libraw(tmp_path):
     assert record["status"] == "passed", record
 
 
+def test_baseline_exposure_is_tagged_and_leaves_the_libraw_develop_unchanged(tmp_path):
+    pytest.importorskip("rawpy")
+    rng = np.random.default_rng(5)
+    samples = rng.integers(2048, 40000, size=TINY_HW, dtype=np.uint16)
+    kwargs = dict(index=0, frames=1, clip="c", rate=Fraction(25), color_matrix=pipeline.camera_matrix(),
+                  as_shot_neutral=[0.5, 1.0, 0.7])  # fmt: skip
+    plain = sequence.write_frame(tmp_path / "plain.dng", samples, **kwargs)
+    placed = sequence.write_frame(tmp_path / "placed.dng", samples, baseline_exposure=-0.5, **kwargs)
+    assert tuple(_tags(placed)[0][50730]) == (-1, 2)
+    np.testing.assert_array_equal(pipeline.develop_cfa_dng(placed), pipeline.develop_cfa_dng(plain))
+
+
 def test_write_frame_rejects_odd_or_wrong_samples(tmp_path):
     kwargs = dict(index=0, frames=1, clip="c", rate=Fraction(25), color_matrix=np.eye(3), as_shot_neutral=[1, 1, 1])
     with pytest.raises(TypeError):

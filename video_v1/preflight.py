@@ -19,7 +19,7 @@ from prd_v6.delivery import _write_json
 from video_v1 import source
 
 MIN_RAM_GB = 8.0
-DISK_MARGIN = 2.2  # the DNGs, their zip copies, and room for the preview
+DISK_MARGIN = 2.2  # the outputs, their zip copies, and room for the preview
 DISK_RESERVE_GB = 1.0
 DNG_HEADER_BYTES = 64 * 1024
 UPLOAD_RECORD = "inputs/upload.json"
@@ -56,8 +56,9 @@ def classify(gpu: str | None, ram_gb: float) -> tuple[list[str], list[str]]:
     return problems, warnings
 
 
-def disk_needed_gb(hw, frames: int) -> float:
-    per_frame = hw[0] * hw[1] * 2 + DNG_HEADER_BYTES
+def disk_needed_gb(hw, frames: int, *, write_dng: bool = False) -> float:
+    """Per frame: the TIFF (6 bytes a pixel before deflate), the 14-bit MLV frame and the DNG when written."""
+    per_frame = hw[0] * hw[1] * (6 + 14 / 8) + (hw[0] * hw[1] * 2 + DNG_HEADER_BYTES if write_dng else 0)
     return per_frame * frames * DISK_MARGIN / 1e9 + DISK_RESERVE_GB
 
 
@@ -126,7 +127,7 @@ def run(run_dir, settings: dict, log=print) -> dict:
     except source.SourceError as error:
         raise PreflightError(f"{path.name}: {error}") from error
     hw = source.even_crop(clip.size)
-    need = disk_needed_gb(hw, clip.frames)
+    need = disk_needed_gb(hw, clip.frames, write_dng=bool(settings.get("WRITE_DNG")))
     free = shutil.disk_usage(run_dir).free / 1e9
     record = clip.as_dict()
     record.update(

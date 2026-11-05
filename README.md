@@ -13,9 +13,10 @@ targets a single Colab "Run all" at maximum quality that downloads its results a
 accuracy against a real Sony A1 II RAW in linear RAW space, separately for 2K, 4K and 50 MP 16-bit outputs.
 Its notebook, code and tests live in `prd_v6/`; see [prd_v6/README.md](prd_v6/README.md).
 
-**Video variant: [video_v1](video_v1/README.md)** turns one video clip into a sequence of synthetic RAW
-frames (one 16-bit RGGB DNG per frame at the source resolution) with the PRD v6 pipeline, imported from
-`prd_v6`, from a single Colab "Run all". It makes no accuracy claim: the v6 benchmark does not transfer to video.
+**Video variant: [video_v1](video_v1/README.md)** turns one video clip into synthetic RAW at the source
+resolution (a 14-bit MLV raw video file and one developed 16-bit TIFF per frame, DNGs optional) with the
+PRD v6 pipeline, imported from `prd_v6`, from a single Colab "Run all". It makes no accuracy claim: the v6
+benchmark does not transfer to video.
 
 **Previous experiment: [PRD v5](prd_v5/PRD_v5.md)** ("Final Single-Colab Synthetic 50 MP RAW Camera
 Reconstruction"). Its notebook, code and tests live in `prd_v5/`; see [prd_v5/README.md](prd_v5/README.md).

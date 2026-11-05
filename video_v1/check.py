@@ -1,7 +1,8 @@
-"""Driver step 5: develop the DNG sequence back, check its stability, and make the preview (README section 4).
+"""Driver step 5: check the developed frames' stability and make the preview (README section 4).
 
-Each DNG is developed through LibRaw exactly as v6 develops its 50 MP output (as-shot neutral, AHD,
-linear, sRGB transfer) and compared with the decoded source frame it came from. The check is about
+Each developed TIFF (step 4 develops every frame's mosaic through LibRaw exactly as v6 develops its
+50 MP output: as-shot neutral, AHD, linear, sRGB transfer) is compared with the decoded source frame
+it came from. The check is about
 consistency over time, not accuracy: per frame it takes the developed/source ratio of mean luma and
 of the R/G and B/G colour ratios, and asks that those ratios do not jump between frames or drift over
 the clip. A pipeline with no per-frame decisions should keep them flat; a jump means flicker.
@@ -16,8 +17,9 @@ from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
+import tifffile
 
-from prd_v6 import colour, pipeline
+from prd_v6 import colour
 from prd_v6.delivery import _write_json
 from video_v1 import convert, source
 
@@ -29,7 +31,7 @@ LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)  # BT.709 luma weigh
 METRICS = ("level", "red_green", "blue_green")
 PREVIEW_CRF = 16
 THUMB_COUNT = 3
-LABELS = ("source (decoded)", "developed from DNG")
+LABELS = ("source (decoded)", "developed TIFF (from the raw mosaic)")
 
 
 def frame_stats(src_linear: np.ndarray, dev_linear: np.ndarray) -> dict:
@@ -183,8 +185,8 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
         raise RuntimeError("step 4 wrote no frames")
     count = int(converted["frames_converted"])
     hw = tuple(converted["size"])
-    folder = run_dir / converted["sequence_dir"]
-    files = [folder / f"{converted['clip_name']}_{i:06d}.dng" for i in range(count)]
+    folder = run_dir / converted["tiff_dir"]
+    files = [folder / convert.tiff_name(converted["clip_name"], i) for i in range(count)]
     rate = Fraction(clip.frame_rate)
     out = run_dir / "check"
     out.mkdir(parents=True, exist_ok=True)
@@ -201,7 +203,7 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
             for index, (src, path) in enumerate(zip(decoded, files, strict=False)):
                 t0 = time.perf_counter()
                 src = np.clip(src[: hw[0], : hw[1]], 0.0, 1.0)
-                dev_encoded = pipeline.develop_cfa_dng(path)
+                dev_encoded = tifffile.imread(path).astype(np.float32) / 65535.0
                 t1 = time.perf_counter()
                 stats = frame_stats(src, colour.srgb_decode(dev_encoded))
                 pair = side_by_side(colour.srgb_encode(src), dev_encoded)
@@ -214,7 +216,7 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
                     small = cv2.resize(pair, (pair.shape[1] // 2, pair.shape[0] // 2), interpolation=cv2.INTER_AREA)
                     cv2.imwrite(str(out / f"frame_{index:06d}.jpg"), small[..., ::-1], [cv2.IMWRITE_JPEG_QUALITY, 92])
                 per_frame.append(
-                    {"frame": index, "stats": stats, "ratios": ratios(stats), "develop_s": t1 - t0,
+                    {"frame": index, "stats": stats, "ratios": ratios(stats), "read_s": t1 - t0,
                      "total_s": time.perf_counter() - t0}
                 )  # fmt: skip
                 if (index + 1) % convert.CHECKPOINT_EVERY == 0:
@@ -234,13 +236,13 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
         frames_checked=len(per_frame),
         frames_expected=count,
         wall_s=time.perf_counter() - started,
-        develop_seconds_mean=float(np.mean([f["develop_s"] for f in per_frame])) if per_frame else None,
+        read_seconds_mean=float(np.mean([f["read_s"] for f in per_frame])) if per_frame else None,
         preview=str(preview.relative_to(run_dir)) if code == 0 and preview.exists() else None,
         preview_encoder="libx264" if tools.get("libx264") else "mpeg4",
         thumbnails=sorted(str(p.relative_to(run_dir)) for p in out.glob("frame_*.jpg")),
         develop=(
-            "LibRaw (rawpy) as in v6: as-shot neutral, AHD demosaic, linear sRGB, then the sRGB transfer; "
-            "compared with the decoded source frame clipped to [0, 1]"
+            "the step 4 TIFFs, developed by LibRaw (rawpy) as in v6: as-shot neutral, AHD demosaic, linear sRGB, "
+            "then the sRGB transfer; compared with the decoded source frame clipped to [0, 1]"
         ),
         per_frame=per_frame,
     )
