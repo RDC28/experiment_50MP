@@ -83,7 +83,15 @@ def build_dng_validate(run_dir, clone_dir, log=print) -> dict:
     return result
 
 
-def run(run_dir, clone_dir, log=print) -> dict:
-    record = {"install": install(clone_dir, log), "dng_validate": build_dng_validate(run_dir, clone_dir, log)}
-    (Path(run_dir) / "inputs" / "setup.json").write_text(json.dumps(record, indent=2))
+def run(run_dir, clone_dir, log=print, *, dng_validate: bool = True) -> dict:
+    """Install, then build dng_validate unless the run writes no DNG to validate (video_v1 with WRITE_DNG off)."""
+    record = {"install": install(clone_dir, log)}
+    if dng_validate:
+        record["dng_validate"] = build_dng_validate(run_dir, clone_dir, log)
+    else:
+        record["dng_validate"] = {"status": "skipped", "reason": "the run writes no DNG"}
+        log("dng_validate: skipped (the run writes no DNG)")
+    target = Path(run_dir) / "inputs" / "setup.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(record, indent=2))
     return record

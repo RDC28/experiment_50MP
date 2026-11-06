@@ -80,6 +80,11 @@ def reduce_bits(samples16: np.ndarray, bits: int) -> np.ndarray:
     return np.minimum(reduced, (1 << bits) - 1).astype(np.uint16)
 
 
+def frame_timestamp_us(index: int, frame_rate) -> int:
+    """A VIDF block's timestamp: the frame's start time in microseconds at the clip frame rate."""
+    return int(round(index * 1_000_000 / Fraction(frame_rate)))
+
+
 def _matrix_rationals(matrix) -> list[int]:
     out: list[int] = []
     for value in np.asarray(matrix, dtype=np.float64).reshape(9):
@@ -175,7 +180,7 @@ class Writer:
     # -------------------------------------------------------------- frames
 
     def timestamp(self, index: int) -> int:
-        return int(round(index * 1_000_000 / Fraction(self.info.frame_rate)))
+        return frame_timestamp_us(index, self.info.frame_rate)
 
     def write(self, samples: np.ndarray) -> None:
         """Append one (H, W) frame of samples already at `info.bits`."""
@@ -295,6 +300,12 @@ def read(first: str | Path) -> Clip:
         "color_matrix": (matrix[:, 0] / matrix[:, 1]).reshape(3, 3).tolist(),
         "dynamic_range_ev": raw[39] / 100,
     }
+    if "EXPO" in blocks:
+        _iso_mode, iso, _analog, _digital, shutter_us = EXPO.unpack(blocks["EXPO"][0][: EXPO.size])
+        info.update(iso=iso, shutter_us=shutter_us)
+    if "WBAL" in blocks:
+        _mode, kelvin, *gains, _shift_gm, _shift_ba = WBAL.unpack(blocks["WBAL"][0][: WBAL.size])
+        info.update(kelvin=kelvin, wb_gains=gains)
     frames.sort(key=lambda f: f[0])
     return Clip(paths=paths, headers=headers, blocks=blocks, info=info, frames=frames)
 
@@ -302,9 +313,10 @@ def read(first: str | Path) -> Clip:
 def verify(first: str | Path, expected: dict) -> dict:
     """Read the clip back and check it against what was written.
 
-    `expected` holds width, height, bits, black, white, cfa_pattern, color_matrix, frame_rate, frames
+    `expected` holds what `expected_metadata` gives for the written `ClipInfo`, the frame count (`frames`)
     and, per frame, the sha256 of the samples written (`frame_sha256`); every frame is decoded and
-    must hash the same, so the clip is proven bit for bit.
+    must hash the same, so the clip is proven bit for bit. The EXPO and WBAL values and every VIDF
+    timestamp are checked too.
     """
     problems: list[str] = []
     try:
@@ -324,6 +336,10 @@ def verify(first: str | Path, expected: dict) -> dict:
     for kind in ("RAWC", "IDNT", "EXPO", "WBAL"):
         if kind not in clip.blocks:
             problems.append(f"no {kind} block")
+    for kind, keys in (("EXPO", ("iso", "shutter_us")), ("WBAL", ("kelvin", "wb_gains"))):
+        for key in keys:
+            if kind in clip.blocks and info[key] != expected[key]:
+                problems.append(f"{kind} {key} {info[key]} != {expected[key]}")
     rate = Fraction(expected["frame_rate"])
     if Fraction(first_header["fps_nom"], first_header["fps_denom"] or 1) != rate:
         problems.append(f"frame rate {first_header['fps_nom']}/{first_header['fps_denom']} != {rate}")
@@ -336,6 +352,9 @@ def verify(first: str | Path, expected: dict) -> dict:
                         f"expected {expected['frames']}")  # fmt: skip
     if [f[0] for f in clip.frames] != list(range(len(clip.frames))):
         problems.append("VIDF frame numbers are not 0, 1, 2, ...")
+    late = [number for number, *_, stamp in clip.frames if stamp != frame_timestamp_us(number, rate)]
+    if late:
+        problems.append(f"{len(late)} VIDF timestamps do not match the frame rate (first {late[:10]})")
     mismatched = [
         number
         for number, digest in enumerate(expected.get("frame_sha256", []))
@@ -352,6 +371,13 @@ def verify(first: str | Path, expected: dict) -> dict:
         "info": info,
         "header": first_header,
     }
+
+
+def expected_metadata(info: ClipInfo) -> dict:
+    """What `verify` checks the metadata blocks and file header against, from the `ClipInfo` written."""
+    keys = ("width", "height", "bits", "black", "white", "cfa_pattern", "color_matrix", "frame_rate", "iso",
+            "shutter_us", "kelvin")  # fmt: skip
+    return {**{key: getattr(info, key) for key in keys}, "wb_gains": list(info.wb_gains)}
 
 
 def samples_sha256(samples: np.ndarray) -> str:

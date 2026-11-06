@@ -7,7 +7,8 @@ the clip's 14-bit MLV.
 The clip calibration (camera neutral, white balance and exposure) is fixed once, before the first
 frame, and every frame uses it unchanged: the source's own white (D65, the sRGB/BT.709 white) as the
 as-shot neutral and render white = sensor clip. Nothing is estimated per frame, so nothing can
-flicker. Each frame gets fresh v6 shot and read noise from its own seed.
+flicker. Each frame gets the full v6 shot and read noise from its own seed, which also folds in the
+source file's sha256, so no two clips share a noise field.
 """
 
 from __future__ import annotations
@@ -71,14 +72,23 @@ def calibration() -> dict:
     }
 
 
-def frame_seed(index: int) -> np.random.SeedSequence:
-    """Independent, reproducible noise for every frame (v6 NOISE_SEED, frame index)."""
-    return np.random.SeedSequence((constants.NOISE_SEED, int(index)))
+def frame_seed(index: int, source_sha256: str) -> np.random.SeedSequence:
+    """Independent, reproducible noise for every frame of every clip (v6 NOISE_SEED, source sha256, frame).
+
+    The same clip always gets the same noise; frame N of two different clips does not.
+    """
+    return np.random.SeedSequence((constants.NOISE_SEED, int(source_sha256, 16), int(index)))
 
 
-def raw_frame(linear: np.ndarray, neutral, layout: np.ndarray, index: int) -> np.ndarray:
-    """Linear BT.709 frame to stored RGGB samples with the frame's own v6 noise (the 50 MP path, no SR)."""
-    _clean, noisy = pipeline.cfa_samples(linear, neutral, layout, noise_seed=frame_seed(index))
+def raw_frame(linear: np.ndarray, neutral, layout: np.ndarray, index: int, source_sha256: str) -> np.ndarray:
+    """Linear BT.709 frame to stored RGGB samples with the frame's own v6 noise (the 50 MP path, no SR).
+
+    The full camera model is added, not v6's top-up: a frame at source resolution carries no SR-inherited
+    noise, and photon transfer on it reads fur, hair and motion blur as noise, so the top-up cancelled
+    the shot noise and left only read noise (run 20261106T043244Z).
+    """
+    seed = frame_seed(index, source_sha256)
+    _clean, noisy = pipeline.cfa_samples(linear, neutral, layout, noise_seed=seed, top_up=False)
     return noisy
 
 
@@ -158,6 +168,7 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
     hw = source.even_crop(clip.size)
     layout = production.rggb_layout(hw)
     keep_dng = bool(setting(settings, "WRITE_DNG", False))
+    source_sha256 = _sha256(Path(clip.path))
     cal = calibration()
     _write_json(run_dir / "calibration.json", cal)
     neutral, cam_xyz = np.asarray(cal["as_shot_neutral"]), pipeline.camera_matrix()
@@ -182,7 +193,7 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
                 break
             index = len(records)
             t1 = time.perf_counter()
-            samples = raw_frame(linear[: hw[0], : hw[1]], neutral, layout, index)
+            samples = raw_frame(linear[: hw[0], : hw[1]], neutral, layout, index, source_sha256)
             t2 = time.perf_counter()
             path = sequence.write_frame(
                 (folder if keep_dng else Path(scratch.name)) / sequence.frame_name(name, index),
@@ -228,7 +239,7 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
             record.update(
                 time_s=float(index / rate),
                 timecode=sequence.timecode_text(index, rate),
-                noise_seed=[constants.NOISE_SEED, index],
+                noise_seed=[constants.NOISE_SEED, source_sha256, index],
                 tiff=tiff.name,
                 tiff_bytes=tiff.stat().st_size,
                 tiff_check=tiff_record["status"],
@@ -248,9 +259,7 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
     mlv_check = mlv.verify(
         writer.paths[0],
         {
-            **{k: getattr(info, k) for k in ("width", "height", "bits", "black", "white", "cfa_pattern")},
-            "color_matrix": info.color_matrix,
-            "frame_rate": rate,
+            **mlv.expected_metadata(info),
             "frames": len(records),
             "frame_sha256": [r["mlv_sha256"] for r in records],
         },
@@ -269,6 +278,7 @@ def run(run_dir, inputs: dict, settings: dict, log=print) -> dict:
     summary = summarise(records, total=clip.frames, wall_s=wall, hw=hw, dng_written=keep_dng)
     summary.update(
         clip_name=name,
+        source_sha256=source_sha256,
         size=list(hw),
         cropped_from=list(clip.size) if tuple(hw) != tuple(clip.size) else None,
         frame_rate=clip.frame_rate,
