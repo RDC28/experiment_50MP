@@ -70,7 +70,7 @@ def setup_done(tmp_path, monkeypatch):
 @needs_ffmpeg
 def test_preflight_probes_the_clip_and_records_it(setup_done, tmp_path):
     clip = make_clip(tmp_path / "clip.mkv", 3)
-    inputs = preflight.run(setup_done, {"VIDEO": str(clip)}, log=lambda message: None)
+    inputs = preflight.run(setup_done, {"VIDEO": str(clip), "WRITE_DNG": True}, log=lambda message: None)
     assert inputs["clip"].frames == 3 and inputs["dng_validate"].endswith("dng_validate")
     record = json.loads((setup_done / "source.json").read_text())
     assert record["frames"] == 3 and record["output_size"] == list(TINY_HW)
@@ -88,7 +88,20 @@ def test_preflight_stops_on_low_disk(setup_done, tmp_path, monkeypatch):
 
 
 @needs_ffmpeg
-def test_preflight_needs_dng_validate(tmp_path, monkeypatch):
+def test_preflight_needs_dng_validate_only_when_writing_dngs(tmp_path, monkeypatch):
     monkeypatch.setattr(preflight, "gpu_name", lambda: None)
     with pytest.raises(preflight.PreflightError, match="dng_validate"):
-        preflight.run(tmp_path, {"VIDEO": None}, log=lambda message: None)
+        preflight.run(tmp_path, {"VIDEO": None, "WRITE_DNG": True}, log=lambda message: None)
+    clip = make_clip(tmp_path / "clip.mkv", 2)
+    inputs = preflight.run(tmp_path, {"VIDEO": str(clip)}, log=lambda message: None)  # setup skipped the build
+    assert inputs["dng_validate"] is None
+    assert json.loads((tmp_path / "environment.json").read_text())["dng_validate"] is None
+
+
+@needs_ffmpeg
+def test_preflight_says_every_output_drops_the_audio(setup_done, tmp_path):
+    audio = ("-f", "lavfi", "-i", "sine=duration=0.2", "-map", "0:v", "-map", "1:a", "-c:a", "flac", "-shortest")
+    clip = make_clip(tmp_path / "clip.mkv", 3, extra_inputs=audio)
+    preflight.run(setup_done, {"VIDEO": str(clip)}, log=lambda message: None)
+    record = json.loads((setup_done / "source.json").read_text())
+    assert record["audio"] == "dropped: the MLV, TIFF and DNG outputs carry no audio"

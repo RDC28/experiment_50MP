@@ -83,7 +83,7 @@ def make_clip(
     command = [
         "ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", pix_fmt,
         "-s", f"{hw[1]}x{hw[0]}", "-framerate", rate, *(colour if tags else []), "-i", "pipe:0",
-        *extra_inputs, *codec, *(siting if tags else []), *extra_output, str(path),
+        *extra_inputs, *codec, *(siting if tags else []), *extra_output, "-fflags", "+bitexact", str(path),
     ]  # fmt: skip
     subprocess.run(command, input=raw, check=True)
     return path

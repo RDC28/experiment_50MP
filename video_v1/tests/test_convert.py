@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import csv
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 import tifffile
 
-from prd_v6 import colour, pipeline
+from prd_v6 import colour, constants, pipeline
 from video_v1 import check, convert, mlv, source
 from video_v1.tests.conftest import TINY_HW, make_clip, needs_ffmpeg
 
@@ -17,9 +18,9 @@ pytest.importorskip("rawpy")
 FRAMES = 3
 
 
-def _convert(tmp_path, monkeypatch, settings: dict):
+def _convert(tmp_path, monkeypatch, settings: dict, clip_path=None):
     monkeypatch.setattr(convert, "run_dng_validate", lambda path, binary: {"status": "passed", "error_lines": []})
-    clip = source.probe(make_clip(tmp_path / "beach day.mkv", FRAMES))
+    clip = source.probe(clip_path or make_clip(tmp_path / "beach day.mkv", FRAMES))
     inputs = {"clip": clip, "tools": source.tools(), "dng_validate": None, "path": clip.path}
     run_dir = tmp_path / "run"
     summary = convert.run(run_dir, inputs, settings, log=lambda message: None)
@@ -75,7 +76,9 @@ def test_calibration_is_fixed_and_noise_is_fresh_per_frame(converted, tmp_path):
     calibration = json.loads((run_dir / "calibration.json").read_text())
     assert calibration["per_frame_estimation"] is False
     manifest = json.loads((run_dir / summary["manifest"]).read_text())
-    assert [f["noise_seed"][1] for f in manifest["frames"]] == list(range(FRAMES))
+    digest = convert._sha256(Path(inputs["clip"].path))
+    assert summary["source_sha256"] == digest
+    assert [f["noise_seed"] for f in manifest["frames"]] == [[6, digest, i] for i in range(FRAMES)]
     neutral = np.asarray(calibration["as_shot_neutral"])
     with tifffile.TiffFile(run_dir / summary["sequence_dir"] / "beach_day_000002.dng") as tif:
         stored = tif.pages[0].tags[50728].value
@@ -83,9 +86,47 @@ def test_calibration_is_fixed_and_noise_is_fresh_per_frame(converted, tmp_path):
     # The same frame from the same seed is reproducible; a different seed gives different noise.
     first = next(source.frames(inputs["clip"]))
     layout = convert.production.rggb_layout(TINY_HW)
-    again = convert.raw_frame(first, neutral, layout, 0)
+    again = convert.raw_frame(first, neutral, layout, 0, digest)
     np.testing.assert_array_equal(again, _samples(run_dir / summary["sequence_dir"] / "beach_day_000000.dng"))
-    assert not np.array_equal(again, convert.raw_frame(first, neutral, layout, 1))
+    assert not np.array_equal(again, convert.raw_frame(first, neutral, layout, 1, digest))
+    # Another clip with the same frame index gets a different noise field.
+    assert not np.array_equal(again, convert.raw_frame(first, neutral, layout, 0, "0" * 64))
+
+
+def test_frame_seed_is_per_clip_and_reproducible():
+    clip_a, clip_b = "ab" * 32, "cd" * 32
+    draw = lambda seed: np.random.default_rng(seed).normal(size=64)  # noqa: E731
+    np.testing.assert_array_equal(draw(convert.frame_seed(5, clip_a)), draw(convert.frame_seed(5, clip_a)))
+    assert not np.array_equal(draw(convert.frame_seed(5, clip_a)), draw(convert.frame_seed(5, clip_b)))
+    assert not np.array_equal(draw(convert.frame_seed(5, clip_a)), draw(convert.frame_seed(6, clip_a)))
+
+
+def test_a_textured_frame_gets_the_full_camera_noise_at_mid_grey():
+    """Regression (run 20261106T043244Z): fur and blur texture read as existing noise.
+
+    v6's top-up fitted slopes far above the camera model and cancelled the shot noise, so every frame got
+    only the read noise (variance about 60 DN16^2 at every level). The delivered variance at mid grey
+    must match the A1 II model.
+    """
+    hw = (512, 768)
+    rng = np.random.default_rng(3)
+    levels = np.repeat(np.geomspace(0.003, 0.5, hw[1] // 32), 32).astype(np.float32)
+    texture = np.exp(0.3 * rng.normal(size=hw)).astype(np.float32)  # fur-like, at every scale of signal
+    linear = np.clip((levels[None, :] * texture)[..., None] * np.ones(3, np.float32), 0.0, 1.0)
+    neutral = colour.daylight_neutral(pipeline.camera_matrix())
+    layout = convert.production.rggb_layout(hw)
+    noisy = convert.raw_frame(linear, neutral, layout, 0, "ab" * 32)
+    clean, _ = pipeline.cfa_samples(linear, neutral, layout, noise_seed=None)
+    signal = pipeline.stored_to_signal(clean)
+    added = pipeline.stored_to_signal(noisy) - signal
+    slope, read_variance = pipeline.camera_noise_dn16()
+    mid_grey = 0.18 * constants.SIGNAL_16
+    near = (signal > 0.7 * mid_grey) & (signal < 1.4 * mid_grey)
+    assert near.sum() > 10_000
+    assert added[near].var() / np.mean(slope * signal[near] + read_variance) == pytest.approx(1.0, abs=0.05)
+    # v6's top-up on the same frame shows the defect: the texture cancels the shot noise.
+    _, topped_up = pipeline.cfa_samples(linear, neutral, layout, noise_seed=6)
+    assert (pipeline.stored_to_signal(topped_up) - signal)[near].var() < 2 * read_variance
 
 
 @needs_ffmpeg
@@ -129,9 +170,9 @@ def test_the_mlv_holds_each_dng_mosaic_at_14_bits(converted):
 
 @needs_ffmpeg
 def test_by_default_no_dngs_are_kept_and_the_tiffs_and_mlv_are_the_same(converted, tmp_path, monkeypatch):
-    run_dir, _inputs, summary = converted
+    run_dir, inputs, summary = converted
     (tmp_path / "no_dng").mkdir()
-    other, _, without = _convert(tmp_path / "no_dng", monkeypatch, {})
+    other, _, without = _convert(tmp_path / "no_dng", monkeypatch, {}, clip_path=inputs["clip"].path)
     assert without["dng_written"] is False and without["sequence_dir"] is None and without["validation_failures"] == 0
     assert not (other / "dng").exists()
     for index in range(FRAMES):

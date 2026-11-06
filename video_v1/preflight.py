@@ -114,11 +114,15 @@ def run(run_dir, settings: dict, log=print) -> dict:
     if not tools["libx264"]:
         warnings.append("ffmpeg has no libx264: the preview uses MPEG-4 Part 2 at high quality instead")
         log(f"preflight warning: {warnings[-1]}")
-    build = json.loads((run_dir / DNG_VALIDATE_BUILD).read_text()) if (run_dir / DNG_VALIDATE_BUILD).exists() else {}
-    tool = find_dng_validate(build.get("binary")) if build.get("status") == "built" else None
-    if tool is None:
-        raise PreflightError(f"dng_validate is not available: {build.get('reason') or 'setup did not build it'}")
-    os.environ[ENV_VAR] = str(tool)
+    write_dng = bool(settings.get("WRITE_DNG"))
+    tool = None
+    if write_dng:  # only the DNG sequence is validated; setup skips the build otherwise
+        record = run_dir / DNG_VALIDATE_BUILD
+        build = json.loads(record.read_text()) if record.exists() else {}
+        tool = find_dng_validate(build.get("binary")) if build.get("status") == "built" else None
+        if tool is None:
+            raise PreflightError(f"dng_validate is not available: {build.get('reason') or 'setup did not build it'}")
+        os.environ[ENV_VAR] = str(tool)
     path, origin = resolve_video(run_dir, settings.get("VIDEO"), log)
     try:
         clip = source.probe(path, tools["ffprobe"])
@@ -127,7 +131,7 @@ def run(run_dir, settings: dict, log=print) -> dict:
     except source.SourceError as error:
         raise PreflightError(f"{path.name}: {error}") from error
     hw = source.even_crop(clip.size)
-    need = disk_needed_gb(hw, clip.frames, write_dng=bool(settings.get("WRITE_DNG")))
+    need = disk_needed_gb(hw, clip.frames, write_dng=write_dng)
     free = shutil.disk_usage(run_dir).free / 1e9
     record = clip.as_dict()
     record.update(
@@ -135,7 +139,7 @@ def run(run_dir, settings: dict, log=print) -> dict:
         output_size=list(hw),
         cropped_to_even=tuple(hw) != tuple(clip.size),
         first_frame={"min": float(first.min()), "max": float(first.max()), "mean": float(first.mean())},
-        audio="dropped: the DNG sequence has no audio" if clip.audio_streams else "none in the source",
+        audio="dropped: the MLV, TIFF and DNG outputs carry no audio" if clip.audio_streams else "none in the source",
     )
     _write_json(run_dir / "source.json", record)
     log(
@@ -147,7 +151,7 @@ def run(run_dir, settings: dict, log=print) -> dict:
         log(f"source warning: {warning}")
     environment.update(
         tools=tools,
-        dng_validate=str(tool),
+        dng_validate=str(tool) if tool else None,
         disk={"free_gb": free, "needed_gb": need, "frames": clip.frames},
     )
     _write_json(run_dir / "environment.json", environment)
@@ -155,4 +159,4 @@ def run(run_dir, settings: dict, log=print) -> dict:
         raise PreflightError(
             f"free disk {free:.1f} GB < {need:.1f} GB needed for {clip.frames} frames at {hw[1]}x{hw[0]}"
         )
-    return {"clip": clip, "tools": tools, "dng_validate": str(tool), "path": path}
+    return {"clip": clip, "tools": tools, "dng_validate": str(tool) if tool else None, "path": path}

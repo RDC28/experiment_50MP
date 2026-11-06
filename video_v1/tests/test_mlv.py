@@ -34,11 +34,8 @@ def _write(tmp_path, frames, bits=14, chunk_bytes=0):
 
 
 def _expected(frames, bits=14) -> dict:
-    info = _info(bits)
     return {
-        **{k: getattr(info, k) for k in ("width", "height", "bits", "black", "white", "cfa_pattern")},
-        "color_matrix": MATRIX,
-        "frame_rate": info.frame_rate,
+        **mlv.expected_metadata(_info(bits)),
         "frames": len(frames),
         "frame_sha256": [mlv.samples_sha256(f) for f in frames],
     }
@@ -131,6 +128,34 @@ def test_the_check_catches_a_wrong_header(tmp_path):
     result = mlv.verify(writer.paths[0], {**_expected(frames), "frames": 3, "white": 16383})
     assert result["status"] == "failed"
     assert any("white" in p for p in result["problems"]) and any("expected 3" in p for p in result["problems"])
+
+
+def test_the_check_reads_back_the_exposure_and_white_balance(tmp_path):
+    frames = _frames(2, 14)
+    with mlv.Writer(tmp_path, "clip", _info(shutter_us=16683, kelvin=6504, wb_gains=(2100, 1024, 1500))) as writer:
+        for frame in frames:
+            writer.write(frame)
+    expected = {**_expected(frames), "shutter_us": 16683, "kelvin": 6504, "wb_gains": [2100, 1024, 1500]}
+    assert mlv.verify(writer.paths[0], expected)["status"] == "passed"
+    result = mlv.verify(writer.paths[0], {**expected, "iso": 200, "kelvin": 5000, "wb_gains": [1, 2, 3]})
+    assert result["status"] == "failed" and [p.split()[:2] for p in result["problems"]] == [
+        ["EXPO", "iso"],
+        ["WBAL", "kelvin"],
+        ["WBAL", "wb_gains"],
+    ]
+
+
+def test_the_check_catches_a_wrong_vidf_timestamp(tmp_path):
+    frames = _frames(3, 14)
+    writer = _write(tmp_path, frames)
+    data = bytearray(writer.paths[0].read_bytes())
+    clip = mlv.read(writer.paths[0])
+    header = clip.frames[1][2] - mlv.VIDF.size - mlv.BLOCK_HEADER.size  # frame 1's block header
+    struct.pack_into("<Q", data, header + 8, writer.timestamp(1) + 1000)
+    writer.paths[0].write_bytes(bytes(data))
+    result = mlv.verify(writer.paths[0], _expected(frames))
+    assert result["status"] == "failed"
+    assert result["problems"] == ["1 VIDF timestamps do not match the frame rate (first [1])"]
 
 
 def test_writer_rejects_what_mlv_app_cannot_read(tmp_path):

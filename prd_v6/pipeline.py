@@ -187,11 +187,20 @@ def linear_raw_samples(linear: np.ndarray, neutral) -> np.ndarray:
     return quantize_clean(to_camera(linear, neutral))
 
 
-def cfa_samples(linear: np.ndarray, neutral, layout: np.ndarray, *, noise_seed: int | np.random.SeedSequence | None):
+def cfa_samples(
+    linear: np.ndarray,
+    neutral,
+    layout: np.ndarray,
+    *,
+    noise_seed: int | np.random.SeedSequence | None,
+    top_up: bool = True,
+):
     """50 MP output: (clean, noisy) CFA samples; noisy is None when noise_seed is None.
 
     The noisy mosaic tops each CFA position up to the camera noise model: the clean mosaic's own
-    noise is measured first and only the remainder is added (section 5.1).
+    noise is measured first and only the remainder is added (section 5.1). With `top_up` off the full
+    model is added: for a mosaic that carries no camera-like noise to measure, such as a video frame at
+    source resolution, where the fit reads scene texture as noise and would cancel the shot noise.
     """
     signal = np.clip(mosaic(to_camera(linear, neutral), layout), 0, constants.SIGNAL_16)
     clean = quantize_clean(signal)
@@ -200,7 +209,8 @@ def cfa_samples(linear: np.ndarray, neutral, layout: np.ndarray, *, noise_seed: 
     noisy = np.empty(signal.shape, dtype=np.float32)
     root = noise_seed if isinstance(noise_seed, np.random.SeedSequence) else np.random.SeedSequence(noise_seed)
     seeds = root.spawn(4)
-    for seed, (position, existing) in zip(seeds, sorted(existing_noise(signal).items()), strict=True):
+    measured = existing_noise(signal) if top_up else {(row, column): None for row in range(2) for column in range(2)}
+    for seed, (position, existing) in zip(seeds, sorted(measured.items()), strict=True):
         row, column = position
         noisy[row::2, column::2] = add_noise(signal[row::2, column::2], seed, existing=existing)
     return clean, quantize(noisy)

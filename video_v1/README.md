@@ -44,6 +44,9 @@ step 1-4 failed; it says which and why).
   - a primaries change when the stream is not BT.709.
 - Untagged streams are read the way players read them: HD as BT.709, SD as BT.601, limited range. The report
   lists every field that was assumed.
+- The tags are honoured even where players ignore them. An H.264 clip tagged with the sRGB transfer
+  (transfer_characteristics 13) is decoded with the sRGB curve, but many players show it as BT.709, so the
+  clip can look slightly different in a player than in the TIFFs.
 - HDR is decoded but not tone mapped:
   - HLG uses its inverse OETF, so the nominal peak becomes the sensor clip.
   - PQ maps 1000 cd/m2 to the sensor clip.
@@ -77,7 +80,7 @@ from the same per-frame RGGB mosaic, noise included.
   time code), and BaselineExposure -0.5 EV. Every frame must open in LibRaw at the right size and pattern
   and pass Adobe `dng_validate`, as in v6. With `WRITE_DNG = False` (the default) the DNG is written to a
   temporary folder only to develop the TIFF, then deleted, and no DNG goes into the archives; the TIFFs and
-  the MLV are identical either way.
+  the MLV are identical either way. Setup then skips building dng_validate.
 - The TIFF manifest, `tiff/<clip>/<clip>_manifest.json`, holds each frame's time code and TIFF read-back
   result. With `WRITE_DNG = True` the DNG manifest, `dng/<clip>/<clip>_manifest.json`, adds each frame's seed,
   timings and LibRaw and dng_validate results.
@@ -90,8 +93,12 @@ from the same per-frame RGGB mosaic, noise included.
 - The illuminant, white balance and exposure are fixed once per clip, never per frame. A video is display
   referred, so its white is the sRGB (D65) white: the as-shot neutral is the camera's response to D65, not
   v6's still-photo illuminant prior, and render white is the sensor clip. `calibration.json` records them.
-- Every frame gets fresh v6 shot and read noise from its own seed (the v6 noise seed plus the frame index), so
-  a frame is reproducible but grain is never repeated between frames.
+- Every frame gets the full A1 II shot and read noise of the v6 camera model from its own seed: the v6 noise
+  seed, the source file's sha256 and the frame index. The same clip always gets the same grain, but grain
+  never repeats between frames, nor between frame N of two clips. convert.json records the sha256.
+- Unlike v6's 50 MP output, the noise is not topped up from what the frame already carries. A video frame has
+  no super-resolution noise to measure, and the photon-transfer fit reads fur, hair and motion blur as noise:
+  run 20261106T043244Z_415d571 lost all shot noise that way and kept only the 4 e- read noise.
 
 ### 4. Proof
 
@@ -128,7 +135,7 @@ from the same per-frame RGGB mosaic, noise included.
 - Preflight (step 3) stops the run before any frame is converted if:
   - host RAM is under 8 GB;
   - ffmpeg or ffprobe is missing;
-  - dng_validate was not built;
+  - dng_validate was not built (only with `WRITE_DNG = True`);
   - the clip cannot be probed or its first frame cannot be decoded;
   - free disk is short for the outputs (the TIFFs counted uncompressed, the DNGs only when written), their
     zip copies and a reserve.
@@ -187,5 +194,5 @@ built only on Colab. The notebook runs only on Colab.
 - **No PyPI MLV parser in the tests.** The only PyPI package named `mlv` has no description, author or
   project page, so it is not a maintained parser; the tests use the project's own reader, written from
   Magic Lantern's `mlv.h` and `raw.h`.
-- **Known v6 limit carries over.** The 50 MP grain was cleaner than the real camera. The noise model is the
-  same one at source resolution.
+- **Grain.** The noise is the A1 II model at base ISO: about 1% at mid grey, rising with brightness. It is
+  added on top of whatever noise the source already has, such as codec noise or film grain.
